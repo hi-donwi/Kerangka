@@ -1,0 +1,34 @@
+{
+  "kerangka": "0.1",
+  "app": "todo",
+  "meta": { "title": "Todo List", "timezone": "UTC" },
+  "entities": {
+    "Todo": {
+      "fields": {
+        "title": "string!",
+        "completed": { "type": "bool", "default": false },
+        "priority": { "type": "enum", "values": ["low", "medium", "high"], "default": "medium" }
+      },
+      "actions": {
+        "toggle": {
+          "run": { "completed": "!completed" }
+        }
+      }
+    }
+  },
+  "views": {
+    "home": {
+      "type": "list",
+      "entity": "Todo",
+      "columns": ["title", "priority", "completed"]
+    }
+  },
+  "examples": [
+    {
+      "name": "toggle completion state",
+      "run": "Todo.toggle",
+      "record": { "title": "Buy milk", "completed": false, "priority": "medium" },
+      "expect": { "ok": true, "record": { "completed": true } }
+    }
+  ]
+}

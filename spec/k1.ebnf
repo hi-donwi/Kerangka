@@ -1,0 +1,73 @@
+(* ==========================================================================
+   Kerangka K1 Expression Grammar (EBNF)
+   Specification Version: 0.1
+   Status: Draft
+   License: CC BY 4.0
+   ========================================================================== *)
+
+Expression          ::= LogicalOr ;
+
+LogicalOr           ::= LogicalAnd { "||" LogicalAnd } ;
+LogicalAnd          ::= Equality { "&&" Equality } ;
+Equality            ::= Relational { ( "==" | "!=" ) Relational } ;
+Relational          ::= Additive { ( "<" | "<=" | ">" | ">=" ) Additive } ;
+Additive            ::= Multiplicative { ( "+" | "-" ) Multiplicative } ;
+Multiplicative      ::= Unary { ( "*" | "/" | "%" ) Unary } ;
+
+Unary               ::= ( "!" | "-" ) Unary
+                      | Primary ;
+
+Primary             ::= Literal
+                      | FunctionCall
+                      | Grouping
+                      | Path ;
+
+Grouping            ::= "(" Expression ")" ;
+
+FunctionCall        ::= Identifier "(" [ ArgumentList ] ")" ;
+ArgumentList        ::= Expression { "," Expression } ;
+
+Path                ::= Identifier { ( "." Identifier ) | Indexer } ;
+Indexer             ::= "[" ( IntegerLiteral | StringLiteral ) "]" ;
+
+(* --------------------------------------------------------------------------
+   Literals and Tokens
+   -------------------------------------------------------------------------- *)
+
+Literal             ::= NullLiteral
+                      | BooleanLiteral
+                      | DecimalLiteral
+                      | IntegerLiteral
+                      | StringLiteral ;
+
+NullLiteral         ::= "null" ;
+BooleanLiteral      ::= "true" | "false" ;
+
+IntegerLiteral      ::= [ "-" ] Digit { Digit } ;
+DecimalLiteral      ::= [ "-" ] Digit { Digit } "." Digit { Digit } ;
+
+StringLiteral       ::= '"' { DoubleStringChar } '"'
+                      | "'" { SingleStringChar } "'" ;
+
+DoubleStringChar    ::= [^"\\\n\r] | EscapeSequence ;
+SingleStringChar    ::= [^'\\\n\r] | EscapeSequence ;
+EscapeSequence      ::= "\\" ( [btnfru"'\\] | "u" HexDigit HexDigit HexDigit HexDigit ) ;
+
+Identifier          ::= ( Letter | "_" ) { Letter | Digit | "_" } ;
+
+Letter              ::= "a" .. "z" | "A" .. "Z" ;
+Digit               ::= "0" .. "9" ;
+HexDigit            ::= Digit | "a" .. "f" | "A" .. "F" ;
+
+(* --------------------------------------------------------------------------
+   Built-in Function Names (K1 Extension Set)
+   --------------------------------------------------------------------------
+   Mathematical:
+     abs(n), round(n, decimals), ceil(n), floor(n), min(a, b), max(a, b)
+   String:
+     lower(s), upper(s), trim(s), concat(s1, s2, ...), len(s), contains(s, substr)
+   Collection:
+     count(list), sum(list, 'field'), avg(list, 'field'), filter(list, 'predicate')
+   Contextual & State:
+     isSet(val), isUnchanged(field), now()
+   -------------------------------------------------------------------------- *)

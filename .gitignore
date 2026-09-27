@@ -1,0 +1,60 @@
+# Node & TypeScript
+node_modules/
+dist/
+dist-*/
+build/
+out/
+coverage/
+*.tsbuildinfo
+.npm
+.yarn/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Java / JVM
+target/
+*.class
+.gradle/
+*.jar
+*.war
+
+# Go
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Dart / Flutter
+.dart_tool/
+.packages
+
+# Environments and Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Operating System
+.DS_Store
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.sublime-project
+*.sublime-workspace

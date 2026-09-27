@@ -1,0 +1,86 @@
+{
+  "kerangka": "0.1",
+  "app": "leave-request",
+  "meta": { "title": "HR Leave Requests", "timezone": "Asia/Jakarta" },
+  "roles": ["employee", "team-lead", "department-manager", "hr-director", "admin"],
+
+  "decisions": {
+    "approverRouting": {
+      "hitPolicy": "first",
+      "inputs": [{ "name": "days", "type": "int" }],
+      "outputs": [{ "name": "approverRole", "type": "string" }],
+      "rows": [
+        { "days": "<= 2", "approverRole": "team-lead" },
+        { "days": "<= 5", "approverRole": "department-manager" },
+        { "days": "> 5",  "approverRole": "hr-director" }
+      ]
+    }
+  },
+
+  "entities": {
+    "LeaveRequest": {
+      "fields": {
+        "employeeId": "string!",
+        "leaveType": "enum(annual, sick, unpaid)! = annual",
+        "startDate": "date!",
+        "endDate": "date!",
+        "days": "int! >= 1",
+        "reason": "string",
+        "status": "enum(draft, submitted, approved, rejected, escalated) = draft",
+        "assignedApproverRole": { "type": "string", "compute": "approverRouting(days)" }
+      },
+      "rules": [
+        { "id": "valid-date-range", "check": "endDate >= startDate", "field": "endDate",
+          "message": "End date must be on or after start date" }
+      ],
+      "workflow": {
+        "field": "status",
+        "tasks": {
+          "reviewLeave": {
+            "state": "submitted",
+            "assign": { "role": "assignedApproverRole" },
+            "actions": ["approve", "reject"],
+            "due": "P3D",
+            "onOverdue": "escalate"
+          }
+        },
+        "transitions": {
+          "submit": {
+            "from": "draft", "to": "submitted",
+            "roles": ["employee"]
+          },
+          "approve": {
+            "from": ["submitted", "escalated"], "to": "approved",
+            "roles": ["team-lead", "department-manager", "hr-director", "admin"],
+            "when": "actor.role == assignedApproverRole || actor.role == 'admin'"
+          },
+          "reject": {
+            "from": ["submitted", "escalated"], "to": "rejected",
+            "roles": ["team-lead", "department-manager", "hr-director", "admin"]
+          },
+          "escalate": {
+            "from": "submitted", "to": "escalated",
+            "roles": ["admin"]
+          }
+        }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "name": "routing for 2 days routes to team lead",
+      "run": "LeaveRequest.submit",
+      "record": { "employeeId": "emp-1", "days": 2, "status": "draft", "startDate": "2026-10-01", "endDate": "2026-10-02" },
+      "actor": { "roles": ["employee"] },
+      "expect": { "ok": true, "record": { "status": "submitted", "assignedApproverRole": "team-lead" } }
+    },
+    {
+      "name": "routing for 6 days routes to hr director",
+      "run": "LeaveRequest.submit",
+      "record": { "employeeId": "emp-1", "days": 6, "status": "draft", "startDate": "2026-10-01", "endDate": "2026-10-07" },
+      "actor": { "roles": ["employee"] },
+      "expect": { "ok": true, "record": { "status": "submitted", "assignedApproverRole": "hr-director" } }
+    }
+  ]
+}

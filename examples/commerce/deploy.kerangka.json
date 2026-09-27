@@ -1,0 +1,36 @@
+{
+  "topologies": {
+    "monolith": {
+      "services": {
+        "commerce-api": {
+          "contexts": ["orders", "billing", "inventory"],
+          "profile": "Starter",
+          "storage": "sqlite",
+          "events": "in-process"
+        }
+      }
+    },
+    "distributed": {
+      "services": {
+        "orders-service": {
+          "contexts": ["orders"],
+          "profile": "Distributed",
+          "storage": "postgres",
+          "events": "broker"
+        },
+        "billing-service": {
+          "contexts": ["billing"],
+          "profile": "Distributed",
+          "storage": "postgres",
+          "events": "broker"
+        },
+        "inventory-service": {
+          "contexts": ["inventory"],
+          "profile": "Distributed",
+          "storage": "postgres",
+          "events": "broker"
+        }
+      }
+    }
+  }
+}

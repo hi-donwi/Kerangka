@@ -1,0 +1,71 @@
+{
+  "kerangka": "0.1",
+  "app": "inventory",
+  "meta": { "title": "Warehouse Inventory", "timezone": "UTC" },
+  "roles": ["warehouse-staff", "inventory-manager", "system"],
+
+  "multitenancy": {
+    "strategy": "discriminator",
+    "field": "tenantId"
+  },
+
+  "entities": {
+    "StockItem": {
+      "fields": {
+        "sku": "string! unique",
+        "name": "string!",
+        "quantity": "int! >= 0 = 0",
+        "reserved": "int! >= 0 = 0",
+        "unitCost": "decimal(12,2)! >= 0",
+        "available": { "type": "int", "compute": "quantity - reserved" }
+      },
+
+      "invariants": [
+        {
+          "id": "quantity-exceeds-reserved",
+          "assert": "quantity >= reserved",
+          "message": "Physical stock quantity cannot be less than reserved quantity"
+        }
+      ],
+
+      "actions": {
+        "restock": {
+          "roles": ["warehouse-staff", "inventory-manager"],
+          "input": { "amount": "int! >= 1" },
+          "run": { "quantity": "quantity + input.amount" }
+        },
+        "reserve": {
+          "roles": ["system", "inventory-manager"],
+          "input": { "amount": "int! >= 1" },
+          "when": "available >= input.amount",
+          "run": { "reserved": "reserved + input.amount" }
+        },
+        "release": {
+          "roles": ["system", "inventory-manager"],
+          "input": { "amount": "int! >= 1" },
+          "when": "reserved >= input.amount",
+          "run": { "reserved": "reserved - input.amount" }
+        }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "name": "reserving stock increases reserved and reduces available",
+      "run": "StockItem.reserve",
+      "record": { "sku": "SKU-A", "quantity": 100, "reserved": 20 },
+      "input": { "amount": 30 },
+      "actor": { "roles": ["system"] },
+      "expect": { "ok": true, "record": { "reserved": 50, "available": 50 } }
+    },
+    {
+      "name": "cannot reserve more than available stock",
+      "run": "StockItem.reserve",
+      "record": { "sku": "SKU-B", "quantity": 10, "reserved": 5 },
+      "input": { "amount": 10 },
+      "actor": { "roles": ["system"] },
+      "expect": { "ok": false, "error": "GUARD_FAILED" }
+    }
+  ]
+}

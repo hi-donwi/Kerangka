@@ -1,0 +1,54 @@
+{
+  "context": "billing",
+  "glossary": {
+    "Invoice": "A formal financial demand for payment associated with an order"
+  },
+  "dependsOn": ["orders"],
+  "exports": {
+    "events": ["InvoicePaid"],
+    "queries": ["getInvoice"]
+  },
+  "entities": {
+    "Invoice": {
+      "fields": {
+        "invoiceNumber": "string! unique",
+        "orderId": "uuid!",
+        "customerId": "uuid!",
+        "amountDue": "decimal(12,2)!",
+        "status": "enum(issued, paid, cancelled) = issued",
+        "paidAt": "datetime"
+      },
+      "workflow": {
+        "field": "status",
+        "transitions": {
+          "markPaid": {
+            "from": "issued", "to": "paid",
+            "then": [
+              { "set": { "paidAt": "now()" } },
+              { "emit": "InvoicePaid", "data": { "invoiceId": "id", "orderId": "orderId" } }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "policies": {
+    "onOrderPlaced": {
+      "on": "orders.OrderPlaced",
+      "run": "Invoice.create",
+      "with": {
+        "invoiceNumber": "concat('INV-', event.data.orderId)",
+        "orderId": "event.data.orderId",
+        "customerId": "event.data.customerId",
+        "amountDue": "event.data.amount",
+        "status": "issued"
+      }
+    }
+  },
+  "events": {
+    "InvoicePaid": {
+      "invoiceId": "uuid!",
+      "orderId": "uuid!"
+    }
+  }
+}

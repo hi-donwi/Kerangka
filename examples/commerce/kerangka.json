@@ -1,0 +1,13 @@
+{
+  "kerangka": "0.1",
+  "app": "commerce",
+  "meta": {
+    "title": "Modular E-Commerce Reference System",
+    "timezone": "UTC"
+  },
+  "contexts": [
+    "orders",
+    "billing",
+    "inventory"
+  ]
+}

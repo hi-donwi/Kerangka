@@ -1,0 +1,41 @@
+{
+  "context": "inventory",
+  "glossary": {
+    "StockReservation": "Temporary hold placed on warehouse stock for a pending order"
+  },
+  "dependsOn": ["orders"],
+  "exports": {
+    "queries": ["getStockLevel"]
+  },
+  "entities": {
+    "StockReservation": {
+      "fields": {
+        "orderId": "uuid!",
+        "status": "enum(active, fulfilled, cancelled) = active",
+        "reservedAt": "datetime"
+      },
+      "workflow": {
+        "field": "status",
+        "transitions": {
+          "fulfill": {
+            "from": "active", "to": "fulfilled"
+          },
+          "cancel": {
+            "from": "active", "to": "cancelled"
+          }
+        }
+      }
+    }
+  },
+  "policies": {
+    "onOrderPlaced": {
+      "on": "orders.OrderPlaced",
+      "run": "StockReservation.create",
+      "with": {
+        "orderId": "event.data.orderId",
+        "status": "active",
+        "reservedAt": "now()"
+      }
+    }
+  }
+}
