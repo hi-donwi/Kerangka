@@ -1,0 +1,385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kerangka.org/spec/0.1/kir.schema.json",
+  "title": "Kerangka Intermediate Representation (KIR) Schema v0.1",
+  "description": "The canonical, typed, fully-resolved Intermediate Representation consumed by all Kerangka runtime engines.",
+  "type": "object",
+  "required": ["kir", "app", "entities"],
+  "additionalProperties": false,
+  "properties": {
+    "kir": {
+      "type": "string",
+      "const": "0.1",
+      "description": "The specification version of the Intermediate Representation format."
+    },
+    "app": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Unique identifier for the application (kebab-case)."
+    },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "timezone": { "type": "string", "default": "UTC" },
+        "locale": { "type": "string", "default": "en" }
+      },
+      "additionalProperties": false
+    },
+    "roles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "Declared security and authorization role names."
+    },
+    "multitenancy": {
+      "type": "object",
+      "required": ["strategy", "field"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["discriminator", "schema", "database"]
+        },
+        "field": {
+          "type": "string",
+          "default": "tenantId"
+        }
+      }
+    },
+    "entities": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/entity"
+      }
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/event"
+      }
+    },
+    "policies": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/policy"
+      }
+    },
+    "queries": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/query"
+      }
+    },
+    "decisions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/decisionTable"
+      }
+    },
+    "schedules": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/schedule"
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/extension"
+      }
+    }
+  },
+  "$defs": {
+    "expression": {
+      "type": "object",
+      "description": "Canonical UIDL AST expression node.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["literal"],
+          "additionalProperties": false,
+          "properties": {
+            "literal": {}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["$bind"],
+          "additionalProperties": false,
+          "properties": {
+            "$bind": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["$expr", "args"],
+          "additionalProperties": false,
+          "properties": {
+            "$expr": { "type": "string" },
+            "args": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/expression" }
+            }
+          }
+        }
+      ]
+    },
+    "entity": {
+      "type": "object",
+      "required": ["fields"],
+      "additionalProperties": false,
+      "properties": {
+        "embedded": { "type": "boolean", "default": false },
+        "key": { "type": "string", "default": "id" },
+        "fields": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/field" }
+        },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rule" }
+        },
+        "invariants": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/invariant" }
+        },
+        "permissions": {
+          "$ref": "#/$defs/permissions"
+        },
+        "workflow": {
+          "$ref": "#/$defs/workflow"
+        },
+        "actions": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/action" }
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": ["type", "required"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "string", "int", "decimal", "bool", "date", "instant", "uuid", "email", "enum", "object", "list", "ref"
+          ]
+        },
+        "required": { "type": "boolean", "default": true },
+        "default": {},
+        "unique": { "type": "boolean", "default": false },
+        "immutable": { "type": "boolean", "default": false },
+        "sensitive": { "type": "boolean", "default": false },
+        "personal": { "type": "boolean", "default": false },
+        "renamedFrom": { "type": "string" },
+        "target": { "type": "string", "description": "Target entity for ref types." },
+        "scale": { "type": "integer", "minimum": 0, "maximum": 28 },
+        "precision": { "type": "integer", "minimum": 1, "maximum": 28 },
+        "values": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Allowed string values for enum types."
+        },
+        "item": {
+          "$ref": "#/$defs/field",
+          "description": "Item type for list collections."
+        },
+        "compute": {
+          "$ref": "#/$defs/expression",
+          "description": "Deterministic computation expression."
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["id", "check", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "field": { "type": "string" },
+        "check": { "$ref": "#/$defs/expression" },
+        "message": { "type": "string" }
+      }
+    },
+    "invariant": {
+      "type": "object",
+      "required": ["id", "assert", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "when": { "$ref": "#/$defs/expression" },
+        "assert": { "$ref": "#/$defs/expression" },
+        "message": { "type": "string" }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "array", "items": { "type": "string" } },
+          { "type": "boolean" },
+          { "$ref": "#/$defs/expression" }
+        ]
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "required": ["field", "transitions"],
+      "additionalProperties": false,
+      "properties": {
+        "field": { "type": "string" },
+        "tasks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["state", "actions"],
+            "additionalProperties": false,
+            "properties": {
+              "state": { "type": "string" },
+              "assign": { "type": "object" },
+              "actions": { "type": "array", "items": { "type": "string" } },
+              "due": { "type": "string" },
+              "onOverdue": { "type": "string" }
+            }
+          }
+        },
+        "transitions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["to"],
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "array", "items": { "type": "string" } }
+                ]
+              },
+              "to": { "type": "string" },
+              "roles": { "type": "array", "items": { "type": "string" } },
+              "when": { "$ref": "#/$defs/expression" },
+              "then": {
+                "type": "array",
+                "items": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "input": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/field" }
+        },
+        "when": { "$ref": "#/$defs/expression" },
+        "run": { "type": "object" },
+        "then": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/field" }
+    },
+    "policy": {
+      "type": "object",
+      "required": ["on", "run"],
+      "additionalProperties": false,
+      "properties": {
+        "on": { "type": "string" },
+        "when": { "$ref": "#/$defs/expression" },
+        "run": { "type": "string" },
+        "with": { "type": "object" }
+      }
+    },
+    "query": {
+      "type": "object",
+      "required": ["from"],
+      "additionalProperties": false,
+      "properties": {
+        "from": { "type": "string" },
+        "where": { "$ref": "#/$defs/expression" },
+        "orderBy": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "select": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "pageSize": { "type": "integer", "default": 20 }
+      }
+    },
+    "decisionTable": {
+      "type": "object",
+      "required": ["hitPolicy", "inputs", "outputs", "rows"],
+      "additionalProperties": false,
+      "properties": {
+        "hitPolicy": {
+          "type": "string",
+          "enum": ["first", "unique", "collect"]
+        },
+        "effectiveDate": { "type": "string" },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" }
+            }
+          }
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" }
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "schedule": {
+      "type": "object",
+      "required": ["cron", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "cron": { "type": "string" },
+        "action": { "type": "string" },
+        "input": { "type": "object" }
+      }
+    },
+    "extension": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "connector": { "type": "string" },
+        "input": { "type": "object" },
+        "output": { "type": "object" },
+        "request": { "type": "object" },
+        "map": { "type": "object" },
+        "mode": { "type": "string", "enum": ["sync", "after-commit"] }
+      }
+    }
+  }
+}
