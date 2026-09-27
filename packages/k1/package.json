@@ -1,0 +1,19 @@
+{
+  "name": "@kerangka/k1",
+  "version": "0.1.0",
+  "description": "K1 expression tokenizer, parser, and evaluator for Kerangka",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist"
+  },
+  "license": "Apache-2.0"
+}
