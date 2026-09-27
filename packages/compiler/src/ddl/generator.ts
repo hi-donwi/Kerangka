@@ -82,7 +82,13 @@ export class DDLGenerator {
         colDefs.push(`  ${tenantColName} VARCHAR(64) NOT NULL`);
       }
 
-      // 2. Entity fields
+      // 2. Ensure primary key column exists even if implicit (e.g. default 'id')
+      const pkCol = toSnakeCase(pkField);
+      if (!entity.fields[pkField] && !entity.fields[pkCol]) {
+        colDefs.push(`  ${pkCol} TEXT NOT NULL`);
+      }
+
+      // 3. Entity fields
       for (const [fieldName, field] of Object.entries(entity.fields)) {
         const colName = toSnakeCase(fieldName);
         const isPk = fieldName === pkField;
