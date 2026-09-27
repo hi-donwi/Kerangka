@@ -1,11 +1,8 @@
 {
-  "name": "kerangka",
+  "name": "@kerangka/server",
   "version": "0.1.0",
-  "description": "Kerangka CLI compiler, checker, and inspection tool",
+  "description": "Zero-config development and API server for Kerangka models",
   "type": "module",
-  "bin": {
-    "kerangka": "./dist/bin/kerangka.js"
-  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -15,14 +12,14 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && chmod +x dist/bin/kerangka.js",
+    "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@kerangka/k1": "*",
     "@kerangka/compiler": "*",
     "@kerangka/engine-ts": "*",
-    "@kerangka/server": "*"
+    "@kerangka/ports": "*",
+    "@kerangka/adapter-sqlite": "*"
   },
   "license": "Apache-2.0"
 }

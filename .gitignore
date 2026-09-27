@@ -29,7 +29,8 @@ target/
 *.war
 
 # Go
-bin/
+/bin/
+sdk/go/bin/
 *.exe
 *.exe~
 *.dll

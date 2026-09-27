@@ -2,10 +2,10 @@
 
 **One JSON skeleton. Every stack.**
 
-*Kerangka* is Indonesian for *framework* or *skeleton*. It turns one small JSON document
-into application **logic** — validation, computed values, business rules, actions,
-workflows, and permissions — and **frontend** screens, with identical behaviour in every
-language.
+*Kerangka* (Indonesian for *skeleton* or *framework*) turns a declarative JSON model
+into production application **logic** (validation, computed expressions, business rules,
+workflows, actions, permissions) and **frontend** screens, running with identical semantics
+across stacks.
 
 ```json
 {
@@ -24,24 +24,68 @@ language.
 }
 ```
 
-- **Logic** runs in a small, pure engine available natively in TypeScript, Java/Kotlin,
-  Python, Dart, and Go — and in any other language through a sidecar.
-- **Frontend** is emitted as [UIDL](https://github.com/hi-donwi/UIDL-Runtime) documents,
-  rendered on React, Flutter, and Android.
-- **Same answer everywhere**, proven by a language-neutral conformance suite.
-- **Modular by design:** bounded contexts, aggregates, events, and reusable packages, with
-  boundaries enforced by the compiler. The same model runs as a modular monolith or as
-  microservices on different stacks.
-- **Any storage, any API, same rules:** PostgreSQL, SQLite, MySQL, Redis/Valkey, REST,
-  GraphQL, MCP, and more are adapters and projections of one model. Start with a single
-  database; add the rest by configuration.
-- **Complex logic without code:** decision tables, schedules and timers, connectors, and
-  tools that explain and verify your logic.
+## Features
 
-**Ambition:** an open standard for building software — by hand or with AI assistants — from
-a single-file tool to a very large, very complex system that scales without a rewrite.
+- **Pure Reference Engine:** Executes computations, rules, invariants, and state transitions deterministically without direct I/O.
+- **Runtime Ports & Adapters:** Pluggable store contracts (`StorePort`, `CachePort`, `BusPort`, etc.) with out-of-the-box adapters for PostgreSQL and zero-dependency SQLite (Node 22 `node:sqlite`).
+- **Declarative Projections:**
+  - **OpenAPI 3.1 & REST API:** Generates comprehensive OpenAPI specifications and RFC 9457 Problem Details error schemas.
+  - **GraphQL SDL:** Generates complete GraphQL schemas with queries, mutations, and filter inputs.
+  - **Model Context Protocol (MCP):** Generates tool schemas for AI coding agents (`list_*`, `get_*`, `create_*`, `update_*`, `delete_*`, `transition_*`).
+  - **UIDL Screens:** Co-evolved with [UIDL-Runtime](https://github.com/hi-donwi/UIDL-Runtime) to project declarative dashboards, tables, forms, and navigation shells directly into valid UIDL documents.
+- **Zero-Config Dev Server:** Instant local server (`kerangka dev`) providing REST endpoints, MCP dispatch, and an interactive developer playground.
+- **Cross-Platform Conformance:** Validated by language-neutral cross-platform test fixtures.
+
+## CLI Usage
+
+Install or run via `npx kerangka`:
+
+```bash
+# Check model syntax, types, and expression validity
+kerangka check examples/invoicing.kerangka.json
+
+# Compile model into canonical Intermediate Representation (KIR)
+kerangka build examples/invoicing.kerangka.json -o build/invoicing.kir.json
+
+# Generate SQL DDL for PostgreSQL or SQLite
+kerangka ddl examples/invoicing.kerangka.json --dialect postgres -o schema.sql
+
+# Generate OpenAPI 3.1 specification
+kerangka openapi examples/invoicing.kerangka.json -o openapi.json
+
+# Generate GraphQL SDL schema
+kerangka graphql examples/invoicing.kerangka.json -o schema.graphql
+
+# Generate Model Context Protocol (MCP) tool declarations
+kerangka mcp examples/invoicing.kerangka.json -o mcp-tools.json
+
+# Generate UIDL screen documents for UIDL-Runtime
+kerangka uidl examples/invoicing.kerangka.json -o uidl-screens/
+
+# Launch zero-config dev server with interactive playground
+kerangka dev examples/invoicing.kerangka.json --port 3000
+```
+
+## Monorepo Packages
+
+| Package | Path | Description |
+|---|---|---|
+| `@kerangka/k1` | `packages/k1` | Pratt expression parser, exact decimal arithmetic, three-valued logic |
+| `@kerangka/compiler` | `packages/compiler` | Shorthand expander, DDL generator, OpenAPI, GraphQL, MCP, and UIDL projectors |
+| `@kerangka/engine-ts` | `packages/engine-ts` | Pure reference execution engine |
+| `@kerangka/ports` | `packages/ports` | 10 runtime port contracts and memory adapters |
+| `@kerangka/adapter-sqlite` | `packages/adapter-sqlite` | Native SQLite adapter using Node 22 `node:sqlite` |
+| `@kerangka/adapter-postgres` | `packages/adapter-postgres` | Parameterized PostgreSQL query builder and store adapter |
+| `@kerangka/server` | `packages/server` | Dev server with REST, MCP dispatcher, and UIDL playground |
+| `kerangka` | `packages/cli` | Command-line developer interface |
+| `conformance` | `conformance/` | Language-neutral cross-platform conformance fixtures |
+| `sdk/*` | `sdk/{go,java,python}` | Multi-platform SDK scaffolding |
 
 ## Status
 
-Planning. Nothing is implemented or published yet. Read [PLAN.md](PLAN.md) for the design,
-the roadmap, and the decisions still to be made.
+Phase 0 (Foundations), Phase 1 (Spec & Core Engine), Phase 2 (Ports & Adapters), and Phase 3 (Projections, UIDL & Dev Server) are completed. See [PLAN.md](PLAN.md) for the long-term roadmap.
+
+## License
+
+- Code: [Apache-2.0](LICENSE-APACHE)
+- Specifications: [CC BY 4.0](LICENSE-CC-BY)
