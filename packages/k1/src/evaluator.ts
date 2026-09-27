@@ -307,16 +307,20 @@ function evaluateCall(node: CallNode, ctx: EvalContext): unknown {
     }
     case "sum": {
       if (!Array.isArray(left)) return 0;
-      const field = typeof right === "string" ? right : undefined;
+      const mapperNode = args[1];
       let total = 0;
       for (const item of left) {
-        if (item && typeof item === "object") {
-          const val = field ? (item as Record<string, unknown>)[field] : item;
-          if (typeof val === "number" && !isNaN(val)) {
-            total = DecimalMath.add(total, val);
+        let val: unknown = item;
+        if (mapperNode) {
+          if ("literal" in mapperNode && typeof mapperNode.literal === "string") {
+            val = typeof item === "object" && item !== null ? (item as Record<string, unknown>)[mapperNode.literal] : item;
+          } else {
+            const itemScope = typeof item === "object" && item !== null ? { ...(item as Record<string, unknown>), record: item } : { item };
+            val = evaluate(mapperNode, { ...ctx, ...itemScope });
           }
-        } else if (typeof item === "number" && !isNaN(item)) {
-          total = DecimalMath.add(total, item);
+        }
+        if (typeof val === "number" && !isNaN(val)) {
+          total = DecimalMath.add(total, val);
         }
       }
       return total;
