@@ -149,13 +149,17 @@ export class Compiler {
     entityName: string,
     entity: EntityDefinition
   ): KIRDocument["entities"][string] {
-    const key = entity.key ?? "id";
     const embedded = Boolean(entity.embedded);
 
     // Normalize and compile fields
     const compiledFields: Record<string, FieldDefinition> = {};
+    let uniqueCandidate: string | undefined = undefined;
+
     for (const [fieldName, fieldDef] of Object.entries(entity.fields ?? {})) {
       const normalized = normalizeField(fieldDef);
+      if (normalized.unique && !uniqueCandidate) {
+        uniqueCandidate = fieldName;
+      }
 
       if (normalized.compute && typeof normalized.compute === "string") {
         try {
@@ -170,6 +174,8 @@ export class Compiler {
 
       compiledFields[fieldName] = normalized;
     }
+
+    const key = entity.key ?? (compiledFields.id ? "id" : (uniqueCandidate ?? "id"));
 
     // Compile rules
     const compiledRules = (entity.rules ?? []).map((rule) => {
