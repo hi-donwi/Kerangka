@@ -11,7 +11,9 @@ import {
   mcpCommand,
   uidlCommand,
   codegenCommand,
-  diffCommand
+  diffCommand,
+  composeCommand,
+  emitCommand
 } from "../src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -100,5 +102,22 @@ describe("Kerangka CLI Commands", () => {
   it("diffCommand analyzes differences between two models", () => {
     const success = diffCommand(examplePath, examplePath);
     expect(success).toBe(true);
+  });
+
+  it("composeCommand generates docker-compose.yml file", () => {
+    const outCompose = path.join(tmpDir, "docker-compose.yml");
+    const success = composeCommand(examplePath, { output: outCompose });
+    expect(success).toBe(true);
+    expect(fs.existsSync(outCompose)).toBe(true);
+    const content = fs.readFileSync(outCompose, "utf-8");
+    expect(content).toContain("postgres:16-alpine");
+    expect(content).toContain("valkey/valkey:8-alpine");
+  });
+
+  it("emitCommand dispatches to targets", () => {
+    const outEmit = path.join(tmpDir, "emitted-compose.yml");
+    const success = emitCommand("compose", examplePath, { output: outEmit });
+    expect(success).toBe(true);
+    expect(fs.existsSync(outEmit)).toBe(true);
   });
 });

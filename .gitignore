@@ -40,6 +40,7 @@ sdk/go/bin/
 # Dart / Flutter
 .dart_tool/
 .packages
+pubspec.lock
 
 # Environments and Secrets
 .env

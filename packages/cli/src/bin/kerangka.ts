@@ -21,6 +21,8 @@ import { uidlCommand } from "../commands/uidl.js";
 import { devCommand } from "../commands/dev.js";
 import { codegenCommand } from "../commands/codegen.js";
 import { diffCommand } from "../commands/diff.js";
+import { composeCommand } from "../commands/compose.js";
+import { emitCommand } from "../commands/emit.js";
 
 function printHelp(): void {
   console.log(`
@@ -29,6 +31,7 @@ One JSON skeleton. Every stack.
 
 USAGE:
   kerangka <command> <file> [options]
+  kerangka emit <target> <file> [options]
 
 COMMANDS:
   check <file>            Verify model syntax, references, and expressions
@@ -38,6 +41,8 @@ COMMANDS:
   graphql <file>          Generate GraphQL Schema Definition Language (SDL)
   mcp <file>              Generate Model Context Protocol (MCP) tool declarations
   uidl <file>             Generate UIDL screen documents for UIDL-Runtime
+  compose <file>          Generate production-ready Docker Compose infrastructure
+  emit <target> <file>    Unified projector (compose, openapi, graphql, mcp, uidl, sql:*, types:*)
   dev <file>              Run zero-config dev server with REST, MCP, and UIDL playground
   codegen <file>          Generate typed models (TypeScript, Java 21, Python, Go)
   diff <file1> <file2>    Analyze structural and breaking changes between two model versions
@@ -133,6 +138,23 @@ async function main(): Promise<void> {
       case "uidl":
         success = uidlCommand(file!, values.output);
         break;
+      case "compose":
+        success = composeCommand(file!, { output: values.output });
+        break;
+      case "emit": {
+        const target = positionals[1];
+        const targetFile = positionals[2];
+        if (!target || !targetFile) {
+          console.error("Error: 'emit' requires a target and file: kerangka emit <target> <file>");
+          process.exit(1);
+        }
+        success = emitCommand(target, targetFile, {
+          output: values.output,
+          dialect: values.dialect,
+          packageName: values.package,
+        });
+        break;
+      }
       case "codegen":
         success = codegenCommand(file!, {
           target: values.target,

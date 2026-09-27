@@ -1,0 +1,12 @@
+name: kerangka
+description: Pure reference execution engine and SDK for Kerangka models in Dart and Flutter.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.0.0
+
+dependencies:
+
+dev_dependencies:
+  test: ^1.25.0

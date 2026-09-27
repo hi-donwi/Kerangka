@@ -71,28 +71,40 @@ kerangka codegen examples/invoicing.kerangka.json --target go -o models.go
 # Analyze breaking and structural changes between model versions
 kerangka diff old.json new.json --check-breaking
 
+# Generate production-ready Docker Compose infrastructure
+kerangka compose examples/invoicing.kerangka.json -o docker-compose.yml
+
+# Unified emission for any target
+kerangka emit compose examples/invoicing.kerangka.json -o docker-compose.yml
+kerangka emit openapi examples/invoicing.kerangka.json -o openapi.json
+kerangka emit sql:postgres examples/invoicing.kerangka.json -o schema.sql
+
 # Launch zero-config dev server with interactive playground
 kerangka dev examples/invoicing.kerangka.json --port 3000
 ```
 
-## Monorepo Packages
+## Monorepo Packages & SDKs
 
 | Package | Path | Description |
 |---|---|---|
 | `@kerangka/k1` | `packages/k1` | Pratt expression parser, exact decimal arithmetic, three-valued logic |
-| `@kerangka/compiler` | `packages/compiler` | Shorthand expander, DDL generator, OpenAPI, GraphQL, MCP, and UIDL projectors |
-| `@kerangka/engine-ts` | `packages/engine-ts` | Pure reference execution engine |
+| `@kerangka/compiler` | `packages/compiler` | Shorthand expander, DDL generator, OpenAPI, GraphQL, MCP, UIDL, and Compose projectors |
+| `@kerangka/engine-ts` | `packages/engine-ts` | Pure reference execution engine in TypeScript |
 | `@kerangka/ports` | `packages/ports` | 10 runtime port contracts and memory adapters |
+| `@kerangka/client` | `packages/client` | Offline-first client runtime, mutation outbox, and action replay sync |
 | `@kerangka/adapter-sqlite` | `packages/adapter-sqlite` | Native SQLite adapter using Node 22 `node:sqlite` |
 | `@kerangka/adapter-postgres` | `packages/adapter-postgres` | Parameterized PostgreSQL query builder and store adapter |
 | `@kerangka/server` | `packages/server` | Dev server with REST, MCP dispatcher, and UIDL playground |
 | `kerangka` | `packages/cli` | Command-line developer interface |
 | `conformance` | `conformance/` | Language-neutral cross-platform conformance fixtures |
-| `sdk/*` | `sdk/{go,java,python}` | Multi-platform SDK scaffolding |
+| `sdk/go` | `sdk/go` | Go SDK with reference engine and `net/http` REST server adapter |
+| `sdk/dart` | `sdk/dart` | Dart & Flutter SDK with pure reference engine |
+| `sdk/python` | `sdk/python` | Python SDK with pure reference engine |
+| `sdk/java` | `sdk/java` | Java 21 SDK scaffolding |
 
 ## Status
 
-Phase 0 (Foundations), Phase 1 (Spec & Core Engine), Phase 2 (Ports & Adapters), and Phase 3 (Projections, UIDL & Dev Server) are completed. See [PLAN.md](PLAN.md) for the long-term roadmap.
+Phase 0 (Foundations), Phase 1 (Spec & Core Engine), Phase 2 (Ports & Adapters), Phase 3 (Projections, UIDL & Dev Server), Phase 4 (Multi-Language Codegen & Model Differ), and Phase 5 (Dart SDK, Offline Outbox, Go Server & Compose Emission) are completed. See [PLAN.md](PLAN.md) for the long-term roadmap.
 
 ## License
 

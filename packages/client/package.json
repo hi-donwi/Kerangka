@@ -1,0 +1,22 @@
+{
+  "name": "@kerangka/client",
+  "version": "0.1.0",
+  "description": "Offline-first client runtime, mutation outbox, and action replay engine for Kerangka",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@kerangka/ports": "*"
+  },
+  "license": "Apache-2.0"
+}

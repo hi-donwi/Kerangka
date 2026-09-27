@@ -13,6 +13,7 @@ The Kerangka Go SDK provides high-performance, idiomatic Go bindings for executi
 - `pkg/kir`: Intermediate Representation document loader.
 - `pkg/ports`: Standard runtime port interfaces for persistence, caching, and event buses.
 - `pkg/engine`: Pure in-memory reference execution engine without direct I/O dependencies.
+- `pkg/server`: Standard `net/http` REST adapter and server handler with RFC 9457 error support.
 
 ## Usage
 

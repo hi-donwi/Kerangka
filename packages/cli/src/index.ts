@@ -20,3 +20,5 @@ export * from "./commands/uidl.js";
 export * from "./commands/dev.js";
 export * from "./commands/codegen.js";
 export * from "./commands/diff.js";
+export * from "./commands/compose.js";
+export * from "./commands/emit.js";
