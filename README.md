@@ -62,6 +62,15 @@ kerangka mcp examples/invoicing.kerangka.json -o mcp-tools.json
 # Generate UIDL screen documents for UIDL-Runtime
 kerangka uidl examples/invoicing.kerangka.json -o uidl-screens/
 
+# Generate typed language models (TypeScript, Java 21, Python, Go)
+kerangka codegen examples/invoicing.kerangka.json --target ts -o models.ts
+kerangka codegen examples/invoicing.kerangka.json --target java -o Invoice.java
+kerangka codegen examples/invoicing.kerangka.json --target python -o models.py
+kerangka codegen examples/invoicing.kerangka.json --target go -o models.go
+
+# Analyze breaking and structural changes between model versions
+kerangka diff old.json new.json --check-breaking
+
 # Launch zero-config dev server with interactive playground
 kerangka dev examples/invoicing.kerangka.json --port 3000
 ```

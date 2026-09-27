@@ -18,3 +18,5 @@ export * from "./commands/graphql.js";
 export * from "./commands/mcp.js";
 export * from "./commands/uidl.js";
 export * from "./commands/dev.js";
+export * from "./commands/codegen.js";
+export * from "./commands/diff.js";

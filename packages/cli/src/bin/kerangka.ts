@@ -19,6 +19,8 @@ import { graphqlCommand } from "../commands/graphql.js";
 import { mcpCommand } from "../commands/mcp.js";
 import { uidlCommand } from "../commands/uidl.js";
 import { devCommand } from "../commands/dev.js";
+import { codegenCommand } from "../commands/codegen.js";
+import { diffCommand } from "../commands/diff.js";
 
 function printHelp(): void {
   console.log(`
@@ -37,12 +39,17 @@ COMMANDS:
   mcp <file>              Generate Model Context Protocol (MCP) tool declarations
   uidl <file>             Generate UIDL screen documents for UIDL-Runtime
   dev <file>              Run zero-config dev server with REST, MCP, and UIDL playground
+  codegen <file>          Generate typed models (TypeScript, Java 21, Python, Go)
+  diff <file1> <file2>    Analyze structural and breaking changes between two model versions
   expand <file>           Display expanded entity models with resolved shorthands
   stats <file>            Display architectural metrics and complexity analysis
   test <file>             Execute declarative examples against the reference engine
 
 OPTIONS:
   -d, --dialect <name>    SQL dialect for 'ddl' (postgres | sqlite, default: postgres)
+  -t, --target <lang>     Target language for 'codegen' (ts | java | python | go, default: ts)
+  --package <name>        Package namespace for generated Java or Go code
+  --check-breaking        Exit with error code if breaking changes are detected in 'diff'
   -o, --output <path>     Output file or directory path (use '-' for stdout)
   -p, --port <number>     Port for dev server (default: 3000)
   --drop                  Include DROP TABLE IF EXISTS statements in DDL
@@ -53,14 +60,10 @@ OPTIONS:
 EXAMPLES:
   kerangka check examples/invoicing.kerangka.json
   kerangka build examples/invoicing.kerangka.json -o build/invoicing.kir.json
-  kerangka ddl examples/invoicing.kerangka.json --dialect postgres
-  kerangka openapi examples/invoicing.kerangka.json -o openapi.json
-  kerangka graphql examples/invoicing.kerangka.json -o schema.graphql
-  kerangka mcp examples/invoicing.kerangka.json -o mcp-tools.json
-  kerangka uidl examples/invoicing.kerangka.json -o uidl-screens/
+  kerangka codegen examples/invoicing.kerangka.json --target java -o InvoiceModel.java
+  kerangka codegen examples/invoicing.kerangka.json --target python -o models.py
+  kerangka diff old.json new.json --check-breaking
   kerangka dev examples/invoicing.kerangka.json --port 3000
-  kerangka test examples/inventory.kerangka.json
-  kerangka stats examples/leave-request.kerangka.json
 `);
 }
 
@@ -73,9 +76,12 @@ async function main(): Promise<void> {
         version: { type: "boolean", short: "v" },
         output: { type: "string", short: "o" },
         dialect: { type: "string", short: "d" },
+        target: { type: "string", short: "t" },
+        package: { type: "string" },
         port: { type: "string", short: "p" },
         drop: { type: "boolean" },
         audit: { type: "boolean", default: true },
+        "check-breaking": { type: "boolean" },
       },
       allowPositionals: true,
     });
@@ -126,6 +132,23 @@ async function main(): Promise<void> {
         break;
       case "uidl":
         success = uidlCommand(file!, values.output);
+        break;
+      case "codegen":
+        success = codegenCommand(file!, {
+          target: values.target,
+          output: values.output,
+          packageName: values.package,
+        });
+        break;
+      case "diff":
+        const secondFile = positionals[2];
+        if (!secondFile) {
+          console.error("Error: 'diff' requires two model files to compare: kerangka diff <old> <new>");
+          process.exit(1);
+        }
+        success = diffCommand(file!, secondFile, {
+          checkBreaking: values["check-breaking"],
+        });
         break;
       case "dev":
         success = await devCommand(file!, {

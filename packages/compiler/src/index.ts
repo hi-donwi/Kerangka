@@ -14,6 +14,8 @@ export * from "./projections/openapi.js";
 export * from "./projections/graphql.js";
 export * from "./projections/mcp.js";
 export * from "./projections/uidl.js";
+export * from "./codegen/index.js";
+export * from "./diff/differ.js";
 
 import { Compiler } from "./compiler.js";
 import { DDLGenerator, DDLOptions } from "./ddl/generator.js";
@@ -21,6 +23,8 @@ import { OpenAPIGenerator, OpenAPIOptions } from "./projections/openapi.js";
 import { GraphQLGenerator } from "./projections/graphql.js";
 import { McpGenerator, McpToolDefinition } from "./projections/mcp.js";
 import { UIDLGenerator, UIDLDocument } from "./projections/uidl.js";
+import { CodeGenerator, TargetLanguage, CodegenOptions } from "./codegen/index.js";
+import { ModelDiffer, ModelDiffResult } from "./diff/differ.js";
 import { CompilerOptions, KIRDocument, RawKerangkaDocument } from "./types.js";
 
 /**
@@ -64,4 +68,19 @@ export function generateMcpTools(kir: KIRDocument): McpToolDefinition[] {
 export function generateUIDL(kir: KIRDocument): Record<string, UIDLDocument> {
   return UIDLGenerator.generate(kir);
 }
+
+/**
+ * Generates target language model definitions (TypeScript, Java 21, Python, Go) from a compiled KIR document.
+ */
+export function generateCode(kir: KIRDocument, target: TargetLanguage, options?: CodegenOptions): string {
+  return CodeGenerator.generate(kir, target, options);
+}
+
+/**
+ * Analyzes differences between two model versions and classifies breaking vs additive changes.
+ */
+export function diffModels(oldKir: KIRDocument, newKir: KIRDocument): ModelDiffResult {
+  return ModelDiffer.diff(oldKir, newKir);
+}
+
 

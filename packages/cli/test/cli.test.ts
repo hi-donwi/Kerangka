@@ -9,7 +9,9 @@ import {
   openapiCommand,
   graphqlCommand,
   mcpCommand,
-  uidlCommand
+  uidlCommand,
+  codegenCommand,
+  diffCommand
 } from "../src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -84,5 +86,19 @@ describe("Kerangka CLI Commands", () => {
     expect(fs.existsSync(outUidlDir)).toBe(true);
     expect(fs.existsSync(path.join(outUidlDir, "invoices.uidl.json"))).toBe(true);
     expect(fs.existsSync(path.join(outUidlDir, "home.uidl.json"))).toBe(true);
+  });
+
+  it("codegenCommand generates TypeScript code", () => {
+    const outTs = path.join(tmpDir, "models.ts");
+    const success = codegenCommand(examplePath, { target: "ts", output: outTs });
+    expect(success).toBe(true);
+    expect(fs.existsSync(outTs)).toBe(true);
+    const content = fs.readFileSync(outTs, "utf-8");
+    expect(content).toContain("export interface Invoice {");
+  });
+
+  it("diffCommand analyzes differences between two models", () => {
+    const success = diffCommand(examplePath, examplePath);
+    expect(success).toBe(true);
   });
 });
