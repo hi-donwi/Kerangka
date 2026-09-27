@@ -9,6 +9,7 @@
   "scripts": {
     "build": "npm run --workspaces --if-present build",
     "test": "vitest run",
+    "test:conformance": "vitest run conformance",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "clean": "npm run --workspaces --if-present clean"

@@ -1,0 +1,136 @@
+{
+  "suite": "workflow-transitions",
+  "description": "Workflow state machine transitions, actor permissions, and guard evaluations",
+  "cases": [
+    {
+      "id": "workflow-guard-pass",
+      "description": "Transition succeeds when guard expression evaluates to true",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": {
+                "status": "string!",
+                "score": "int!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "approve": {
+                    "from": "pending",
+                    "to": "approved",
+                    "when": "score >= 80"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "pending", "score": 90 },
+        "transition": "approve"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "approved", "score": 90 }
+      }
+    },
+    {
+      "id": "workflow-guard-fail",
+      "description": "Transition fails with GUARD_FAILED when guard evaluates to false",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": {
+                "status": "string!",
+                "score": "int!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "approve": {
+                    "from": "pending",
+                    "to": "approved",
+                    "when": "score >= 80"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "pending", "score": 75 },
+        "transition": "approve"
+      },
+      "expect": {
+        "ok": false,
+        "error": "GUARD_FAILED"
+      }
+    },
+    {
+      "id": "workflow-role-denied",
+      "description": "Transition fails with PERMISSION_DENIED when actor lacks required role",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "publish": {
+                    "from": "draft",
+                    "to": "published",
+                    "roles": ["publisher"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "draft" },
+        "transition": "publish",
+        "actor": { "roles": ["writer"] }
+      },
+      "expect": {
+        "ok": false,
+        "error": "PERMISSION_DENIED"
+      }
+    },
+    {
+      "id": "workflow-invalid-from-state",
+      "description": "Transition fails with INVALID_STATE_TRANSITION when current state doesn't match 'from'",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "publish": {
+                    "from": "draft",
+                    "to": "published"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "archived" },
+        "transition": "publish"
+      },
+      "expect": {
+        "ok": false,
+        "error": "INVALID_STATE_TRANSITION"
+      }
+    }
+  ]
+}

@@ -1,0 +1,140 @@
+{
+  "suite": "k1-expressions",
+  "description": "K1 expression grammar, AST compilation, and evaluation rules",
+  "cases": [
+    {
+      "id": "expr-add-mul-precedence",
+      "description": "Multiplication binds tighter than addition",
+      "input": { "expr": "2 + 3 * 4" },
+      "expect": {
+        "ast": {
+          "$expr": "+",
+          "args": [
+            { "literal": 2 },
+            { "$expr": "*", "args": [{ "literal": 3 }, { "literal": 4 }] }
+          ]
+        },
+        "value": 14
+      }
+    },
+    {
+      "id": "expr-grouped-add-mul",
+      "description": "Parentheses override operator precedence",
+      "input": { "expr": "(2 + 3) * 4" },
+      "expect": {
+        "ast": {
+          "$expr": "*",
+          "args": [
+            { "$expr": "+", "args": [{ "literal": 2 }, { "literal": 3 }] },
+            { "literal": 4 }
+          ]
+        },
+        "value": 20
+      }
+    },
+    {
+      "id": "expr-exact-decimal-add",
+      "description": "0.1 + 0.2 must equal 0.3 without binary floating point artifacts",
+      "input": { "expr": "0.1 + 0.2" },
+      "expect": { "value": 0.3 }
+    },
+    {
+      "id": "expr-null-arithmetic",
+      "description": "Arithmetic with null propagates null",
+      "input": { "expr": "100 + null" },
+      "expect": { "value": null }
+    },
+    {
+      "id": "expr-null-equality",
+      "description": "null == null evaluates to true",
+      "input": { "expr": "null == null" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-null-inequality",
+      "description": "42 != null evaluates to true",
+      "input": { "expr": "42 != null" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-null-relational",
+      "description": "Comparisons against null evaluate to false",
+      "input": { "expr": "50 > null" },
+      "expect": { "value": false }
+    },
+    {
+      "id": "expr-logical-and-or",
+      "description": "Logical AND and OR short circuit evaluation",
+      "input": { "expr": "true || false" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-unary-negation",
+      "description": "Unary minus negates numbers",
+      "input": { "expr": "-15 + 20" },
+      "expect": { "value": 5 }
+    },
+    {
+      "id": "expr-unary-not",
+      "description": "Unary exclamation inverts boolean",
+      "input": { "expr": "!false" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-path-binding",
+      "description": "Paths resolve against context",
+      "input": {
+        "expr": "user.address.city",
+        "context": { "user": { "address": { "city": "Jakarta" } } }
+      },
+      "expect": {
+        "ast": { "$bind": "user.address.city" },
+        "value": "Jakarta"
+      }
+    },
+    {
+      "id": "expr-builtin-math-abs",
+      "description": "abs() returns absolute value",
+      "input": { "expr": "abs(-99)" },
+      "expect": { "value": 99 }
+    },
+    {
+      "id": "expr-builtin-math-round",
+      "description": "round() rounds to specified decimals",
+      "input": { "expr": "round(123.456, 2)" },
+      "expect": { "value": 123.46 }
+    },
+    {
+      "id": "expr-builtin-string-upper",
+      "description": "upper() converts string to uppercase",
+      "input": { "expr": "upper('kerangka')" },
+      "expect": { "value": "KERANGKA" }
+    },
+    {
+      "id": "expr-builtin-collection-sum",
+      "description": "sum() aggregates a collection field",
+      "input": {
+        "expr": "sum(items, 'price')",
+        "context": {
+          "items": [{ "price": 10.5 }, { "price": 20.25 }, { "price": 4.25 }]
+        }
+      },
+      "expect": { "value": 35 }
+    },
+    {
+      "id": "expr-builtin-collection-count",
+      "description": "count() returns list item count",
+      "input": {
+        "expr": "count(items)",
+        "context": { "items": ["a", "b", "c", "d"] }
+      },
+      "expect": { "value": 4 }
+    },
+    {
+      "id": "expr-coalesce",
+      "description": "coalesce() returns first non-null argument",
+      "input": { "expr": "coalesce(null, null, 'fallback')" },
+      "expect": { "value": "fallback" }
+    }
+  ]
+}

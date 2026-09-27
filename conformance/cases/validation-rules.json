@@ -1,0 +1,114 @@
+{
+  "suite": "validation-rules",
+  "description": "Field constraints, business rules, and domain invariant validation",
+  "cases": [
+    {
+      "id": "val-required-field-missing",
+      "description": "Validation flags missing required fields",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Item": {
+              "fields": {
+                "sku": "string!",
+                "name": "string"
+              }
+            }
+          }
+        },
+        "record": { "name": "Widget" }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "REQUIRED_FIELD",
+        "errorField": "sku"
+      }
+    },
+    {
+      "id": "val-min-constraint-violation",
+      "description": "Validation flags numeric values below minimum",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Item": {
+              "fields": {
+                "quantity": "int! >= 1"
+              }
+            }
+          }
+        },
+        "record": { "quantity": 0 }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "MIN_CONSTRAINT"
+      }
+    },
+    {
+      "id": "val-business-rule-failure",
+      "description": "Validation flags records failing a declared business rule",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Period": {
+              "fields": {
+                "start": "date!",
+                "end": "date!"
+              },
+              "rules": [
+                {
+                  "id": "end-after-start",
+                  "check": "end >= start",
+                  "field": "end",
+                  "message": "End date must be on or after start date"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "start": "2026-10-01", "end": "2026-09-01" }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "RULE_FAILED",
+        "errorField": "end"
+      }
+    },
+    {
+      "id": "val-invariant-failure",
+      "description": "Validation flags records violating domain invariants",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Account": {
+              "fields": {
+                "balance": "int!",
+                "creditLimit": "int!"
+              },
+              "invariants": [
+                {
+                  "id": "balance-within-limit",
+                  "assert": "balance >= -creditLimit",
+                  "message": "Balance cannot exceed credit limit"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "balance": -600, "creditLimit": 500 }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "INVARIANT_FAILED"
+      }
+    }
+  ]
+}

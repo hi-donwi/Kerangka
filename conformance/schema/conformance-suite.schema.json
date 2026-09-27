@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kerangka.dev/conformance/suite.schema.json",
+  "title": "Kerangka Conformance Test Suite",
+  "type": "object",
+  "required": ["suite", "description", "cases"],
+  "properties": {
+    "suite": { "type": "string" },
+    "description": { "type": "string" },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "description"],
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "input": {},
+          "expect": {}
+        }
+      }
+    }
+  }
+}

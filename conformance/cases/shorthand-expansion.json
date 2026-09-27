@@ -1,0 +1,82 @@
+{
+  "suite": "shorthand-expansion",
+  "description": "Field shorthand normalization into canonical FieldDefinition",
+  "cases": [
+    {
+      "id": "shorthand-string-required",
+      "description": "string! expands to required string",
+      "input": "string!",
+      "expect": { "type": "string", "required": true }
+    },
+    {
+      "id": "shorthand-string-optional",
+      "description": "string? expands to optional string",
+      "input": "string?",
+      "expect": { "type": "string", "required": false }
+    },
+    {
+      "id": "shorthand-string-unique",
+      "description": "string! unique expands to required unique string",
+      "input": "string! unique",
+      "expect": { "type": "string", "required": true, "unique": true }
+    },
+    {
+      "id": "shorthand-decimal-precision",
+      "description": "decimal(12,2)! >= 0 expands with precision, scale, required and min",
+      "input": "decimal(12,2)! >= 0",
+      "expect": {
+        "type": "decimal",
+        "precision": 12,
+        "scale": 2,
+        "required": true,
+        "min": 0
+      }
+    },
+    {
+      "id": "shorthand-int-min-default",
+      "description": "int! >= 0 = 0 expands with min and default",
+      "input": "int! >= 0 = 0",
+      "expect": {
+        "type": "int",
+        "required": true,
+        "min": 0,
+        "default": 0
+      }
+    },
+    {
+      "id": "shorthand-enum-values",
+      "description": "enum(draft, sent, paid) = draft expands with values and default",
+      "input": "enum(draft, sent, paid) = draft",
+      "expect": {
+        "type": "enum",
+        "values": ["draft", "sent", "paid"],
+        "required": false,
+        "default": "draft"
+      }
+    },
+    {
+      "id": "shorthand-ref-entity",
+      "description": "ref(Customer)! expands to entity reference",
+      "input": "ref(Customer)!",
+      "expect": {
+        "type": "ref",
+        "target": "Customer",
+        "required": true
+      }
+    },
+    {
+      "id": "shorthand-list-entity",
+      "description": "list(Line) expands to list of entity references",
+      "input": "list(Line)",
+      "expect": {
+        "type": "list",
+        "element": {
+          "type": "ref",
+          "target": "Line",
+          "required": true
+        },
+        "required": false
+      }
+    }
+  ]
+}
