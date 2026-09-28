@@ -3,7 +3,8 @@
  * Validates document syntax, shorthand, references, and expressions.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { compile, CompilerDiagnostic, CompilerError, KIRDocument } from "@kerangka/compiler";
 
 export interface CheckOptions {
@@ -14,9 +15,10 @@ export interface CheckOptions {
 export function checkCommand(filePath: string, options: CheckOptions = {}): boolean {
   let kir: KIRDocument | undefined;
   let diagnostics: CompilerDiagnostic[] = [];
+  const targetFile = resolveTargetFile(filePath);
 
   try {
-    kir = compile(readFileSync(filePath, "utf8"), { sourcePath: filePath });
+    kir = compile(readFileSync(targetFile, "utf8"), { sourcePath: targetFile });
   } catch (err) {
     diagnostics =
       err instanceof CompilerError
@@ -69,4 +71,15 @@ function jsonReport(filePath: string, kir: KIRDocument | undefined, diagnostics:
     ...(kir ? { app: kir.app } : {}),
     diagnostics,
   };
+}
+
+function resolveTargetFile(pathStr: string): string {
+  const abs = resolve(pathStr);
+  if (existsSync(abs) && statSync(abs).isDirectory()) {
+    for (const name of ["kerangka.json", "kerangka.yaml", "kerangka.yml"]) {
+      const cand = join(abs, name);
+      if (existsSync(cand)) return cand;
+    }
+  }
+  return abs;
 }

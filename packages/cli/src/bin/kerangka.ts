@@ -25,6 +25,8 @@ import { diffCommand } from "../commands/diff.js";
 import { composeCommand } from "../commands/compose.js";
 import { emitCommand } from "../commands/emit.js";
 import { graphCommand } from "../commands/graph.js";
+import { initCommand } from "../commands/init.js";
+import { addCommand } from "../commands/add.js";
 
 function printHelp(): void {
   console.log(`
@@ -36,6 +38,8 @@ USAGE:
   kerangka emit <target> <file> [options]
 
 COMMANDS:
+  init [template]         Scaffold a workspace or single-file starter (todo, invoicing, commerce, workspace)
+  add <type> <name>       Generate files in standard structure (context, aggregate, action, policy, query, view)
   check <file>            Verify model syntax, references, and expressions
   lint <path>             Report boundaries, naming rules, and complexity budgets
   build <file>            Compile model into canonical KIR JSON
@@ -63,6 +67,10 @@ OPTIONS:
   --preset <name>         Lint preset for 'lint' (kerangka:recommended | kerangka:off)
   --topology <name>       Deployment topology for 'lint' and 'graph'
   --direction <TD|LR>     Layout direction for 'graph' (default: TD)
+  --context <name>        Target bounded context for 'add'
+  --on <event>            Event trigger for 'add policy' (e.g. orders.OrderPlaced)
+  --run <action>          Target action for 'add policy' (e.g. Invoice.create)
+  --name <id>             Application name for 'init'
   --fail-on <severity>    Lowest severity that fails 'lint' (error | warning, default: error)
   -o, --output <path>     Output file or directory path (use '-' for stdout)
   -p, --port <number>     Port for dev server (default: 3000)
@@ -105,6 +113,10 @@ async function main(): Promise<void> {
         preset: { type: "string" },
         topology: { type: "string" },
         direction: { type: "string" },
+        context: { type: "string" },
+        on: { type: "string" },
+        run: { type: "string" },
+        name: { type: "string" },
         "fail-on": { type: "string" },
       },
       allowPositionals: true,
@@ -123,14 +135,37 @@ async function main(): Promise<void> {
     const command = positionals[0]!;
     const file = positionals[1];
 
-    if (!file && command !== "help" && command !== "version") {
-      console.error(`Error: Missing file argument for command '${command}'`);
+    if (!file && command !== "help" && command !== "version" && command !== "init") {
+      console.error(`Error: Missing argument for command '${command}'`);
       printHelp();
       process.exit(1);
     }
 
     let success = false;
     switch (command) {
+      case "init": {
+        success = initCommand(positionals[1], {
+          output: values.output,
+          name: values.name,
+          format: values.format === "yaml" ? "yaml" : "json",
+        });
+        break;
+      }
+      case "add": {
+        const type = positionals[1];
+        const name = positionals[2];
+        if (!type || !name) {
+          console.error("Error: 'add' requires both a component type and a name: kerangka add <context|aggregate|action|policy|query|view> <name>");
+          process.exit(1);
+        }
+        success = addCommand(type, name, {
+          context: values.context,
+          on: values.on,
+          run: values.run,
+          format: values.format === "yaml" ? "yaml" : "json",
+        });
+        break;
+      }
       case "check": {
         const format = values.format ?? "text";
         if (format !== "text" && format !== "json") {

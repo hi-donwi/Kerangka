@@ -24,3 +24,5 @@ export * from "./commands/diff.js";
 export * from "./commands/compose.js";
 export * from "./commands/emit.js";
 export * from "./commands/graph.js";
+export * from "./commands/init.js";
+export * from "./commands/add.js";
