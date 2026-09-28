@@ -28,6 +28,8 @@ import { graphCommand } from "../commands/graph.js";
 import { initCommand } from "../commands/init.js";
 import { addCommand } from "../commands/add.js";
 import { serveCommand } from "../commands/serve.js";
+import { verifyCommand } from "../commands/verify.js";
+import { decisionsExportCommand, decisionsImportCommand } from "../commands/decisions.js";
 
 function printHelp(): void {
   console.log(`
@@ -53,6 +55,8 @@ COMMANDS:
   emit <target> <file>    Unified projector (compose, openapi, graphql, mcp, uidl, sql:*, types:*)
   dev <file>              Run zero-config dev server with REST, MCP, and UIDL playground
   serve <file>            Run production/sidecar server with REST and metadata endpoints
+  verify <file>           Static analysis of workflows, permissions, decision tables, and events
+  decisions <subcommand>  Import or export decision tables (decisions export | decisions import)
   codegen <file>          Generate typed models (TypeScript, Java 21, Python, Go)
   diff <file1> <file2>    Analyze structural and breaking changes between two model versions
   graph <file>            Draw the architecture / context map as Mermaid
@@ -120,6 +124,9 @@ async function main(): Promise<void> {
         run: { type: "string" },
         name: { type: "string" },
         "fail-on": { type: "string" },
+        from: { type: "string" },
+        into: { type: "string" },
+        "hit-policy": { type: "string" },
       },
       allowPositionals: true,
     });
@@ -137,7 +144,7 @@ async function main(): Promise<void> {
     const command = positionals[0]!;
     const file = positionals[1];
 
-    if (!file && command !== "help" && command !== "version" && command !== "init") {
+    if (!file && command !== "help" && command !== "version" && command !== "init" && command !== "decisions") {
       console.error(`Error: Missing argument for command '${command}'`);
       printHelp();
       process.exit(1);
@@ -258,6 +265,50 @@ async function main(): Promise<void> {
           port: values.port ? parseInt(values.port, 10) : 3000,
         });
         break;
+      case "verify":
+        success = verifyCommand(file!, {
+          format: values.format as "text" | "json",
+        });
+        break;
+      case "decisions": {
+        const sub = positionals[1];
+        if (sub === "export") {
+          const tableName = positionals[2];
+          if (!tableName) {
+            console.error("Error: 'decisions export' requires a table name: kerangka decisions export <tableName> --from <doc>");
+            process.exit(1);
+          }
+          const fromDoc = values.from || positionals[3];
+          if (!fromDoc) {
+            console.error("Error: 'decisions export' requires a source document: --from <doc.json>");
+            process.exit(1);
+          }
+          success = decisionsExportCommand(tableName, {
+            from: fromDoc,
+            output: values.output,
+          });
+        } else if (sub === "import") {
+          const tableName = positionals[2];
+          const csvFile = positionals[3];
+          if (!tableName || !csvFile) {
+            console.error("Error: 'decisions import' requires table name and CSV file: kerangka decisions import <tableName> <csvFile> --into <doc>");
+            process.exit(1);
+          }
+          const intoDoc = values.into || positionals[4];
+          if (!intoDoc) {
+            console.error("Error: 'decisions import' requires a target document: --into <doc.json>");
+            process.exit(1);
+          }
+          success = decisionsImportCommand(tableName, csvFile, {
+            into: intoDoc,
+            hitPolicy: values["hit-policy"] as "first" | "unique" | "collect" | "priority",
+          });
+        } else {
+          console.error(`Error: Unknown decisions subcommand '${sub}'. Use 'export' or 'import'.`);
+          process.exit(1);
+        }
+        break;
+      }
       case "graph": {
         const format = values.format === "json" ? "json" : "mermaid";
         const direction = values.direction === "LR" ? "LR" : "TD";
