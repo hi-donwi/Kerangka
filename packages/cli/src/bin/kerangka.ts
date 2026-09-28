@@ -27,6 +27,7 @@ import { emitCommand } from "../commands/emit.js";
 import { graphCommand } from "../commands/graph.js";
 import { initCommand } from "../commands/init.js";
 import { addCommand } from "../commands/add.js";
+import { serveCommand } from "../commands/serve.js";
 
 function printHelp(): void {
   console.log(`
@@ -51,6 +52,7 @@ COMMANDS:
   compose <file>          Generate production-ready Docker Compose infrastructure
   emit <target> <file>    Unified projector (compose, openapi, graphql, mcp, uidl, sql:*, types:*)
   dev <file>              Run zero-config dev server with REST, MCP, and UIDL playground
+  serve <file>            Run production/sidecar server with REST and metadata endpoints
   codegen <file>          Generate typed models (TypeScript, Java 21, Python, Go)
   diff <file1> <file2>    Analyze structural and breaking changes between two model versions
   graph <file>            Draw the architecture / context map as Mermaid
@@ -248,6 +250,11 @@ async function main(): Promise<void> {
         break;
       case "dev":
         success = await devCommand(file!, {
+          port: values.port ? parseInt(values.port, 10) : 3000,
+        });
+        break;
+      case "serve":
+        success = await serveCommand(file!, {
           port: values.port ? parseInt(values.port, 10) : 3000,
         });
         break;

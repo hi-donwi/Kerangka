@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  createBusTestKit,
   DatabaseOutboxBus,
   MemoryStore,
 } from "../src/index.js";
+import { createBusTestKit } from "../src/test-kits/index.js";
 
 // Certify DatabaseOutboxBus with standard BusPort test kit
 createBusTestKit("DatabaseOutboxBus (immediate)", () => {

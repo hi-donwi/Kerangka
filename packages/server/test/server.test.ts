@@ -150,4 +150,58 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     expect(html).toContain("Kerangka Dev Playground");
     expect(html).toContain("Invoicing");
   });
+
+  it("returns RFC 9457 Problem Details on invalid input", async () => {
+    const res = await fetch(`${baseUrl}/api/customer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // Missing required 'name'
+        creditLimit: 1000
+      })
+    });
+    expect(res.status).toBe(422);
+    expect(res.headers.get("content-type")).toContain("application/problem+json");
+    const problem = await res.json();
+    expect(problem.type).toBe("https://kerangka.dev/errors/INPUT_INVALID");
+    expect(problem.code).toBe("INPUT_INVALID");
+    expect(problem.status).toBe(422);
+    expect(problem.title).toBe("Validation Failed");
+  });
+
+  it("replays response when Idempotency-Key is provided", async () => {
+    const key = "server-idem-key-1";
+    const res1 = await fetch(`${baseUrl}/api/customer`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": key
+      },
+      body: JSON.stringify({
+        id: "cust-idem-1",
+        name: "Idempotent Corp",
+        email: "idem@corp.com"
+      })
+    });
+    expect(res1.status).toBe(201);
+    const body1 = await res1.json();
+
+    const res2 = await fetch(`${baseUrl}/api/customer`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": key
+      },
+      body: JSON.stringify({
+        id: "cust-idem-1",
+        name: "Idempotent Corp",
+        email: "idem@corp.com"
+      })
+    });
+    expect(res2.status).toBe(201);
+    expect(res2.headers.get("x-cache-lookup")).toBe("HIT");
+    const body2 = await res2.json();
+    expect(body2).toEqual(body1);
+  });
 });
+

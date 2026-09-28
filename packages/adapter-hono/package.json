@@ -1,7 +1,7 @@
 {
-  "name": "@kerangka/ports",
+  "name": "@kerangka/adapter-hono",
   "version": "0.1.0",
-  "description": "Standard runtime port interfaces and contracts for Kerangka",
+  "description": "Standard Hono HTTP adapter for Kerangka applications with RFC 9457 Problem Details and Idempotency-Key",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,15 +9,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./test-kits": {
-      "types": "./dist/test-kits/index.d.ts",
-      "default": "./dist/test-kits/index.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@kerangka/compiler": "*",
+    "@kerangka/engine-ts": "*",
+    "@kerangka/ports": "*",
+    "hono": "^4.7.0"
   },
   "license": "Apache-2.0"
 }

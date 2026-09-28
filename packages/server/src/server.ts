@@ -1,6 +1,6 @@
 /**
  * Kerangka Zero-Config Development & API Server
- * Specification Version: 0.1
+ * Specification Version: 0.2
  * Status: Draft
  * License: Apache-2.0
  */
@@ -14,9 +14,9 @@ import {
   generateMcpTools,
   generateUIDL,
   McpToolDefinition,
-  UIDLDocument
+  UIDLDocument,
 } from "@kerangka/compiler";
-import { StorePort, MemoryStore } from "@kerangka/ports";
+import { StorePort, MemoryStore, VersionConflictError } from "@kerangka/ports";
 import { Engine } from "@kerangka/engine-ts";
 
 export interface ServerOptions {
@@ -39,6 +39,7 @@ export class KerangkaServer {
 
   private httpServer: http.Server | null = null;
   private quiet: boolean;
+  private idempotencyCache = new Map<string, { status: number; body: unknown }>();
 
   constructor(kir: KIRDocument, options: ServerOptions = {}) {
     this.kir = kir;
@@ -49,7 +50,7 @@ export class KerangkaServer {
     this.engine = new Engine(kir);
 
     this.openApiSpec = generateOpenAPI(kir, {
-      serverUrl: `http://${this.host}:${this.port}`
+      serverUrl: `http://${this.host}:${this.port}`,
     });
     this.graphqlSchema = generateGraphQL(kir);
     this.mcpTools = generateMcpTools(kir);
@@ -61,8 +62,9 @@ export class KerangkaServer {
       this.httpServer = http.createServer(async (req, res) => {
         try {
           await this.handleRequest(req, res);
-        } catch (err: any) {
-          this.sendProblem(res, 500, "Internal Server Error", err?.message || String(err));
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.sendProblem(res, 500, "Internal Server Error", message);
         }
       });
 
@@ -98,7 +100,10 @@ export class KerangkaServer {
     // Set CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, Idempotency-Key, X-Tenant-Id, X-Actor-Id, X-Actor-Roles, X-Expected-Version, If-Match"
+    );
 
     if (method === "OPTIONS") {
       res.statusCode = 204;
@@ -140,7 +145,6 @@ export class KerangkaServer {
     if (pathname.startsWith("/uidl")) {
       const parts = pathname.split("/").filter(Boolean);
       if (parts.length === 1) {
-        // List all UIDL doc keys
         this.sendJson(res, 200, { documents: Object.keys(this.uidlDocs) });
         return;
       }
@@ -149,7 +153,7 @@ export class KerangkaServer {
       if (doc) {
         this.sendJson(res, 200, doc);
       } else {
-        this.sendProblem(res, 404, "Not Found", `UIDL document '${docId}' not found.`);
+        this.sendProblem(res, 404, "Not Found", `UIDL document '${docId}' not found.`, "NOT_FOUND");
       }
       return;
     }
@@ -160,7 +164,7 @@ export class KerangkaServer {
       return;
     }
 
-    this.sendProblem(res, 404, "Not Found", `Route '${pathname}' not found.`);
+    this.sendProblem(res, 404, "Not Found", `Route '${pathname}' not found.`, "NOT_FOUND");
   }
 
   private async handleRestApi(
@@ -172,7 +176,7 @@ export class KerangkaServer {
   ): Promise<void> {
     const parts = pathname.replace(/^\/api\//, "").split("/").filter(Boolean);
     if (parts.length === 0) {
-      this.sendProblem(res, 404, "Not Found", "Missing entity in API route.");
+      this.sendProblem(res, 404, "Not Found", "Missing entity in API route.", "NOT_FOUND");
       return;
     }
 
@@ -182,9 +186,26 @@ export class KerangkaServer {
     );
 
     if (!entityName) {
-      this.sendProblem(res, 404, "Entity Not Found", `Entity '${entityParam}' does not exist.`);
+      this.sendProblem(res, 404, "Entity Not Found", `Entity '${entityParam}' does not exist.`, "UNKNOWN_ENTITY");
       return;
     }
+
+    // Idempotency check for mutating methods
+    const idempotencyKey = req.headers["idempotency-key"] as string | undefined;
+    if (idempotencyKey && (method === "POST" || method === "PUT" || method === "DELETE")) {
+      const cached = this.idempotencyCache.get(idempotencyKey);
+      if (cached) {
+        res.setHeader("X-Cache-Lookup", "HIT");
+        this.sendJson(res, cached.status, cached.body);
+        return;
+      }
+    }
+
+    const tenantId = (req.headers["x-tenant-id"] as string | undefined) || url.searchParams.get("tenantId") || undefined;
+    const actorId = req.headers["x-actor-id"] as string | undefined;
+    const rolesHeader = req.headers["x-actor-roles"] as string | undefined;
+    const actorRoles = rolesHeader ? rolesHeader.split(",").map((r) => r.trim()).filter(Boolean) : undefined;
+    const actor = actorId || actorRoles || tenantId ? { id: actorId, roles: actorRoles ?? [], tenantId } : undefined;
 
     // Collection endpoint: /api/{entity}
     if (parts.length === 1) {
@@ -193,19 +214,44 @@ export class KerangkaServer {
         const offset = parseInt(url.searchParams.get("offset") || "0", 10);
         const queryResult = await this.store.find(entityName, undefined, {
           limit,
-          offset
+          offset,
+          tenantId,
         });
+        res.setHeader("X-Total-Count", String(queryResult.total));
         this.sendJson(res, 200, queryResult.items);
         return;
       }
 
       if (method === "POST") {
         const body = await this.readJsonBody(req);
+
+        // Validation
+        const validation = this.engine.validate(entityName, body);
+        if (!validation.valid) {
+          this.sendProblem(
+            res,
+            422,
+            "Validation Failed",
+            "Record fails validation against entity rules and constraints",
+            "INPUT_INVALID",
+            validation.errors
+          );
+          return;
+        }
+
         const entityDef = this.kir.entities[entityName];
         const keyField = entityDef?.key || "id";
         const id = body[keyField] || `${entityName.toLowerCase()}_${Date.now()}`;
         const recordWithComputed = this.engine.compute(entityName, { ...body, [keyField]: id });
-        const created = await this.store.create(entityName, recordWithComputed);
+        const created = await this.store.create(entityName, recordWithComputed, {
+          tenantId,
+          actor: actor?.id ? { id: actor.id } : undefined,
+        });
+
+        if (idempotencyKey) {
+          this.idempotencyCache.set(idempotencyKey, { status: 201, body: created });
+        }
+
         this.sendJson(res, 201, created);
         return;
       }
@@ -216,9 +262,9 @@ export class KerangkaServer {
       const id = parts[1] || "";
 
       if (method === "GET") {
-        const item = await this.store.get(entityName, id);
+        const item = await this.store.get(entityName, id, { tenantId });
         if (!item) {
-          this.sendProblem(res, 404, "Not Found", `${entityName} with id '${id}' not found.`);
+          this.sendProblem(res, 404, "Not Found", `${entityName} with id '${id}' not found.`, "NOT_FOUND");
           return;
         }
         this.sendJson(res, 200, item);
@@ -227,19 +273,60 @@ export class KerangkaServer {
 
       if (method === "PUT") {
         const body = await this.readJsonBody(req);
-        const existing = await this.store.get(entityName, id);
+        const existing = await this.store.get<Record<string, unknown>>(entityName, id, { tenantId });
         if (!existing) {
-          this.sendProblem(res, 404, "Not Found", `${entityName} with id '${id}' not found.`);
+          this.sendProblem(res, 404, "Not Found", `${entityName} with id '${id}' not found.`, "NOT_FOUND");
           return;
         }
-        const updatedWithCompute = this.engine.compute(entityName, { ...existing, ...body });
-        const updated = await this.store.update(entityName, id, updatedWithCompute);
-        this.sendJson(res, 200, updated);
-        return;
+
+        const rawExpectedVersion = (req.headers["if-match"] as string) || (req.headers["x-expected-version"] as string);
+        const expectedVersion = rawExpectedVersion ? parseInt(rawExpectedVersion.replace(/"/g, ""), 10) : undefined;
+
+        const merged = { ...existing, ...body };
+        const validation = this.engine.validate(entityName, merged);
+        if (!validation.valid) {
+          this.sendProblem(
+            res,
+            422,
+            "Validation Failed",
+            "Updated record fails validation",
+            "INPUT_INVALID",
+            validation.errors
+          );
+          return;
+        }
+
+        const updatedWithCompute = this.engine.compute(entityName, merged);
+
+        try {
+          const updated = await this.store.update(entityName, id, updatedWithCompute, {
+            tenantId,
+            actor: actor?.id ? { id: actor.id } : undefined,
+            expectedVersion: isNaN(expectedVersion as number) ? undefined : expectedVersion,
+          });
+
+          if (idempotencyKey) {
+            this.idempotencyCache.set(idempotencyKey, { status: 200, body: updated });
+          }
+
+          this.sendJson(res, 200, updated);
+          return;
+        } catch (err: unknown) {
+          if (err instanceof VersionConflictError) {
+            this.sendProblem(res, 409, "Version Conflict", err.message, "VERSION_CONFLICT");
+            return;
+          }
+          throw err;
+        }
       }
 
       if (method === "DELETE") {
-        await this.store.delete(entityName, id);
+        const soft = url.searchParams.get("soft") === "true";
+        await this.store.delete(entityName, id, {
+          tenantId,
+          soft,
+          actor: actor?.id ? { id: actor.id } : undefined,
+        });
         res.statusCode = 204;
         res.end();
         return;
@@ -253,75 +340,92 @@ export class KerangkaServer {
 
       if (method === "POST") {
         const body = (await this.readJsonBody(req).catch(() => ({}))) || {};
-        const existing = await this.store.get(entityName, id);
+        const existing = await this.store.get<Record<string, unknown>>(entityName, id, { tenantId });
         if (!existing) {
-          this.sendProblem(res, 404, "Not Found", `${entityName} with id '${id}' not found.`);
+          this.sendProblem(res, 404, "Not Found", `${entityName} with id '${id}' not found.`, "NOT_FOUND");
           return;
         }
 
-        const actor = { id: "dev-user", roles: body.roles || ["admin", "billing"] };
+        const actionActor = actor ?? { id: "dev-user", roles: body.roles || ["admin", "billing"] };
 
         // Check if transition or custom action
         const entityDef = this.kir.entities[entityName];
-        let result = this.engine.transition(entityName, existing, actionName, actor);
+        let result = this.engine.transition(entityName, existing, actionName, actionActor);
 
         if (!result.ok && entityDef?.actions?.[actionName]) {
-          result = this.engine.executeAction(entityName, existing, actionName, body, actor);
+          result = this.engine.executeAction(entityName, existing, actionName, body, actionActor);
         }
 
         if (!result.ok) {
-          this.sendProblem(res, 400, "Action Execution Failed", result.message || result.error || "Guard or validation failed.");
+          const status = result.error === "PERMISSION_DENIED" || result.error === "FORBIDDEN" ? 403 : 422;
+          this.sendProblem(
+            res,
+            status,
+            "Action Execution Failed",
+            result.message || result.error || "Guard or validation failed.",
+            result.code ?? result.error ?? "ACTION_FAILED"
+          );
           return;
         }
 
         const updatedState = result.record || existing;
-        await this.store.update(entityName, id, updatedState);
+        await this.store.update(entityName, id, updatedState, {
+          tenantId,
+          actor: actionActor?.id ? { id: actionActor.id } : undefined,
+        });
 
-        this.sendJson(res, 200, {
+        const resPayload = {
           ok: true,
           action: actionName,
           record: updatedState,
-          events: result.events
-        });
+          events: result.events,
+        };
+
+        if (idempotencyKey) {
+          this.idempotencyCache.set(idempotencyKey, { status: 200, body: resPayload });
+        }
+
+        this.sendJson(res, 200, resPayload);
         return;
       }
     }
 
-    this.sendProblem(res, 404, "Not Found", `No matching route for ${pathname}`);
+    this.sendProblem(res, 404, "Not Found", `No matching route for ${pathname}`, "NOT_FOUND");
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async handleMcpCall(body: any): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
     const { name, arguments: args = {} } = body;
     try {
       if (name.startsWith("list_")) {
         const entityKey = name.replace("list_", "");
-        const entityName = Object.keys(this.kir.entities).find(k => k.toLowerCase() === entityKey);
+        const entityName = Object.keys(this.kir.entities).find((k) => k.toLowerCase() === entityKey);
         if (!entityName) throw new Error(`Unknown entity for list tool: ${entityKey}`);
 
         const results = await this.store.find(entityName, args.filter, {
           limit: args.limit || 50,
-          offset: args.offset || 0
+          offset: args.offset || 0,
         });
         return {
-          content: [{ type: "text", text: JSON.stringify(results.items, null, 2) }]
+          content: [{ type: "text", text: JSON.stringify(results.items, null, 2) }],
         };
       }
 
       if (name.startsWith("get_")) {
         const entityKey = name.replace("get_", "");
-        const entityName = Object.keys(this.kir.entities).find(k => k.toLowerCase() === entityKey);
+        const entityName = Object.keys(this.kir.entities).find((k) => k.toLowerCase() === entityKey);
         if (!entityName) throw new Error(`Unknown entity for get tool: ${entityKey}`);
 
         const item = await this.store.get(entityName, args.id);
         if (!item) throw new Error(`${entityName} with id '${args.id}' not found.`);
         return {
-          content: [{ type: "text", text: JSON.stringify(item, null, 2) }]
+          content: [{ type: "text", text: JSON.stringify(item, null, 2) }],
         };
       }
 
       if (name.startsWith("create_")) {
         const entityKey = name.replace("create_", "");
-        const entityName = Object.keys(this.kir.entities).find(k => k.toLowerCase() === entityKey);
+        const entityName = Object.keys(this.kir.entities).find((k) => k.toLowerCase() === entityKey);
         if (!entityName) throw new Error(`Unknown entity for create tool: ${entityKey}`);
 
         const entityDef = this.kir.entities[entityName];
@@ -330,13 +434,18 @@ export class KerangkaServer {
         const record = this.engine.compute(entityName, { ...args, [keyField]: id });
         const created = await this.store.create(entityName, record);
         return {
-          content: [{ type: "text", text: `Created ${entityName} with ID '${id}':\n${JSON.stringify(created, null, 2)}` }]
+          content: [
+            {
+              type: "text",
+              text: `Created ${entityName} with ID '${id}':\n${JSON.stringify(created, null, 2)}`,
+            },
+          ],
         };
       }
 
       if (name.startsWith("update_")) {
         const entityKey = name.replace("update_", "");
-        const entityName = Object.keys(this.kir.entities).find(k => k.toLowerCase() === entityKey);
+        const entityName = Object.keys(this.kir.entities).find((k) => k.toLowerCase() === entityKey);
         if (!entityName) throw new Error(`Unknown entity for update tool: ${entityKey}`);
 
         const existing = await this.store.get(entityName, args.id);
@@ -345,58 +454,94 @@ export class KerangkaServer {
         const updatedWithCompute = this.engine.compute(entityName, { ...existing, ...(args.patch || {}) });
         const updated = await this.store.update(entityName, args.id, updatedWithCompute);
         return {
-          content: [{ type: "text", text: `Updated ${entityName} '${args.id}':\n${JSON.stringify(updated, null, 2)}` }]
+          content: [
+            {
+              type: "text",
+              text: `Updated ${entityName} '${args.id}':\n${JSON.stringify(updated, null, 2)}`,
+            },
+          ],
         };
       }
 
-      if (name.startsWith("delete_")) {
-        const entityKey = name.replace("delete_", "");
-        const entityName = Object.keys(this.kir.entities).find(k => k.toLowerCase() === entityKey);
-        if (!entityName) throw new Error(`Unknown entity for delete tool: ${entityKey}`);
+      if (name.startsWith("action_")) {
+        const parts = name.replace("action_", "").split("_");
+        const actionName = parts.pop()!;
+        const entityKey = parts.join("_");
+        const entityName = Object.keys(this.kir.entities).find((k) => k.toLowerCase() === entityKey);
+        if (!entityName) throw new Error(`Unknown entity for action tool: ${entityKey}`);
 
-        await this.store.delete(entityName, args.id);
+        const item = await this.store.get(entityName, args.id);
+        if (!item) throw new Error(`${entityName} with id '${args.id}' not found.`);
+
+        const result = this.engine.run(entityName, actionName, item as Record<string, unknown>, args);
+        if (!result.ok) {
+          return {
+            isError: true,
+            content: [{ type: "text", text: `Action execution failed: ${result.message || result.error}` }],
+          };
+        }
+
+        const updatedState = result.record || item;
+        await this.store.update(entityName, args.id, updatedState as Record<string, unknown>);
+
         return {
-          content: [{ type: "text", text: `Deleted ${entityName} '${args.id}'.` }]
+          content: [
+            {
+              type: "text",
+              text: `Action '${actionName}' executed successfully on ${entityName} ${args.id}.\nNew State:\n${JSON.stringify(
+                updatedState,
+                null,
+                2
+              )}`,
+            },
+          ],
         };
       }
 
       if (name.startsWith("transition_")) {
         const parts = name.replace("transition_", "").split("_");
-        const entityKey = parts[0] || "";
-        const actionName = parts.slice(1).join("_");
-        const entityName = Object.keys(this.kir.entities).find(k => k.toLowerCase() === entityKey);
-        if (!entityName) throw new Error(`Unknown entity for transition: ${entityKey}`);
+        const actionName = parts.pop()!;
+        const entityKey = parts.join("_");
+        const entityName = Object.keys(this.kir.entities).find((k) => k.toLowerCase() === entityKey);
+        if (!entityName) throw new Error(`Unknown entity for transition tool: ${entityKey}`);
 
         const item = await this.store.get(entityName, args.id);
         if (!item) throw new Error(`${entityName} with id '${args.id}' not found.`);
 
-        const result = this.engine.transition(
-          entityName,
-          item,
-          actionName,
-          { id: "mcp-agent", roles: args.actorRoles || ["admin", "billing"] }
-        );
-
+        const result = this.engine.transition(entityName, item as Record<string, unknown>, actionName, {
+          id: "mcp-user",
+          roles: ["admin"],
+        });
         if (!result.ok) {
           return {
             isError: true,
-            content: [{ type: "text", text: `Transition failed: ${result.message || result.error}` }]
+            content: [{ type: "text", text: `Transition failed: ${result.message || result.error}` }],
           };
         }
 
         const updatedState = result.record || item;
-        await this.store.update(entityName, args.id, updatedState);
+        await this.store.update(entityName, args.id, updatedState as Record<string, unknown>);
 
         return {
-          content: [{ type: "text", text: `Transition '${actionName}' executed successfully on ${entityName} ${args.id}.\nNew State:\n${JSON.stringify(updatedState, null, 2)}` }]
+          content: [
+            {
+              type: "text",
+              text: `Transition '${actionName}' executed successfully on ${entityName} ${args.id}.\nNew State:\n${JSON.stringify(
+                updatedState,
+                null,
+                2
+              )}`,
+            },
+          ],
         };
       }
 
       throw new Error(`Tool '${name}' is not recognized.`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       return {
         isError: true,
-        content: [{ type: "text", text: `Error: ${err?.message || String(err)}` }]
+        content: [{ type: "text", text: `Error: ${message}` }],
       };
     }
   }
@@ -407,15 +552,39 @@ export class KerangkaServer {
     res.end(JSON.stringify(data, null, 2));
   }
 
-  private sendProblem(res: http.ServerResponse, status: number, title: string, detail: string): void {
+  private sendProblem(
+    res: http.ServerResponse,
+    status: number,
+    title: string,
+    detail: string,
+    code?: string,
+    errors?: unknown[]
+  ): void {
     res.setHeader("Content-Type", "application/problem+json; charset=utf-8");
     res.statusCode = status;
-    res.end(JSON.stringify({
-      type: "about:blank",
+    const errorCode =
+      code ??
+      (status === 404
+        ? "NOT_FOUND"
+        : status === 403
+        ? "FORBIDDEN"
+        : status === 409
+        ? "CONFLICT"
+        : status === 422
+        ? "INPUT_INVALID"
+        : "INTERNAL_ERROR");
+
+    const problem: Record<string, unknown> = {
+      type: `https://kerangka.dev/errors/${errorCode}`,
       title,
       status,
-      detail
-    }, null, 2));
+      detail,
+      code: errorCode,
+    };
+    if (errors && errors.length > 0) {
+      problem.errors = errors;
+    }
+    res.end(JSON.stringify(problem, null, 2));
   }
 
   private sendHtml(res: http.ServerResponse, html: string): void {
@@ -424,15 +593,18 @@ export class KerangkaServer {
     res.end(html);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async readJsonBody(req: http.IncomingMessage): Promise<any> {
     return new Promise((resolve, reject) => {
       let data = "";
-      req.on("data", (chunk) => { data += chunk; });
+      req.on("data", (chunk) => {
+        data += chunk;
+      });
       req.on("end", () => {
         if (!data.trim()) return resolve({});
         try {
           resolve(JSON.parse(data));
-        } catch (e) {
+        } catch {
           reject(new Error("Invalid JSON body"));
         }
       });
@@ -444,7 +616,9 @@ export class KerangkaServer {
     const title = this.kir.meta?.title || this.kir.app;
     const entities = Object.keys(this.kir.entities || {});
     const views = Object.keys(this.uidlDocs);
-    const mcpToolList = this.mcpTools.map(t => `<li><code>${t.name}</code>: ${t.description}</li>`).join("");
+    const mcpToolList = this.mcpTools
+      .map((t) => `<li><code>${t.name}</code>: ${t.description}</li>`)
+      .join("");
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -470,14 +644,19 @@ export class KerangkaServer {
 </head>
 <body>
   <header>
-    <h1>${title} <span class="badge">v0.1</span></h1>
+    <h1>${title} <span class="badge">v0.2</span></h1>
     <p>Kerangka Zero-Config Development & API Playground</p>
   </header>
   <div class="grid">
     <div class="card">
       <h2>Entities & REST APIs</h2>
       <ul>
-        ${entities.map(e => `<li><a href="/api/${e.toLowerCase()}">GET /api/${e.toLowerCase()}</a> <code>${e}</code></li>`).join("")}
+        ${entities
+          .map(
+            (e) =>
+              `<li><a href="/api/${e.toLowerCase()}">GET /api/${e.toLowerCase()}</a> <code>${e}</code></li>`
+          )
+          .join("")}
       </ul>
       <p style="margin-top: 16px;"><a href="/openapi.json" target="_blank">View OpenAPI 3.1 Specification &rarr;</a></p>
       <p><a href="/schema.graphql" target="_blank">View GraphQL Schema SDL &rarr;</a></p>
@@ -486,7 +665,7 @@ export class KerangkaServer {
       <h2>UIDL Screen Documents</h2>
       <p style="margin-bottom: 12px; font-size: 13px;">Targeting <code>@kerangka/uidl-runtime</code>:</p>
       <ul>
-        ${views.map(v => `<li><a href="/uidl/${v}" target="_blank">/uidl/${v}</a></li>`).join("")}
+        ${views.map((v) => `<li><a href="/uidl/${v}" target="_blank">/uidl/${v}</a></li>`).join("")}
       </ul>
     </div>
     <div class="card">

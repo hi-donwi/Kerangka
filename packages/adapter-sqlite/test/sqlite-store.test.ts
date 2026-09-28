@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { compile } from "@kerangka/compiler";
-import { createStoreTestKit } from "@kerangka/ports";
+import { createStoreTestKit } from "@kerangka/ports/test-kits";
 import { SqliteStore } from "../src/index.js";
 
 // Reusable standard certification test kit
