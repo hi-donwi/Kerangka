@@ -5,9 +5,11 @@
  * License: Apache-2.0
  */
 
+import * as path from "node:path";
 import { compileExpression, ExprNode } from "@kerangka/k1";
 import { parse as parseYaml } from "yaml";
 import { offsetToPosition, pointer, SourceLocator, suggestion } from "./diagnostics.js";
+import { LOCKFILE_NAME, PackageResolver, readLockfile, verifyLockfile } from "./packages/index.js";
 import { normalizeField } from "./shorthand.js";
 import {
   CompilerDiagnostic,
@@ -15,8 +17,10 @@ import {
   CompilerOptions,
   EntityDefinition,
   FieldDefinition,
+  InvariantDefinition,
   KIRDocument,
   RawKerangkaDocument,
+  RuleDefinition,
   WorkflowDefinition,
 } from "./types.js";
 import { EntityOrigins, ModelValidator } from "./validate.js";
@@ -94,6 +98,45 @@ export class Compiler {
       doc.traits = wsResult.flattenedTraits;
     }
 
+    // 0b. Resolve packages (@kerangka/std and any declared in doc.packages)
+    const basePath = this.options.sourcePath
+      ? path.dirname(path.resolve(this.options.sourcePath))
+      : process.cwd();
+    const pkgResolver = new PackageResolver(doc, basePath);
+    const pkgResolution = pkgResolver.resolve();
+    for (const diag of pkgResolution.diagnostics) {
+      this.addError(diag.code, diag.message, diag.path, diag.hint);
+    }
+
+    // Verify kerangka.lock if present or requested
+    const lockfilePath = path.join(basePath, LOCKFILE_NAME);
+    const lockfile = readLockfile(lockfilePath);
+    if (lockfile) {
+      const lockVerification = verifyLockfile(lockfile, pkgResolution);
+      for (const diag of lockVerification.diagnostics) {
+        this.addError(diag.code, diag.message, diag.path, diag.hint);
+      }
+    } else if (this.options.checkLockfile) {
+      this.addError(
+        "LOCKFILE_MISSING",
+        `Missing '${LOCKFILE_NAME}' lockfile in '${basePath}'`,
+        "",
+        "Run 'kerangka pkg lock' to generate kerangka.lock."
+      );
+    }
+
+    // Merge traits: package traits + workspace traits + document traits
+    const allTraits: Record<string, any> = {
+      ...pkgResolution.traits,
+      ...((doc.traits as Record<string, any>) ?? {}),
+    };
+
+    // Merge types: package types + document types
+    const allTypes: Record<string, any> = {
+      ...pkgResolution.types,
+      ...((doc.types as Record<string, any>) ?? {}),
+    };
+
     // Process Entities
     const compiledEntities: KIRDocument["entities"] = {};
     const inlinedEntities: Record<string, EntityDefinition> = {};
@@ -101,10 +144,8 @@ export class Compiler {
     const rawEntities = doc.entities ?? {};
 
     // 1. Inlining traits
-    const traits = (doc.traits as Record<string, EntityDefinition>) ?? {};
-
     for (const [entityName, rawEntity] of Object.entries(rawEntities)) {
-      const inlined = this.inlineTraits(entityName, rawEntity, traits);
+      const inlined = this.inlineTraits(entityName, rawEntity, allTraits);
       inlinedEntities[entityName] = inlined.entity;
       origins[entityName] = inlined.origins;
       compiledEntities[entityName] = this.compileEntity(entityName, inlined.entity, inlined.origins);
@@ -116,7 +157,7 @@ export class Compiler {
         entities: compiledEntities,
         rawEntities: inlinedEntities,
         origins,
-        valueTypes: Object.keys((doc.types as Record<string, unknown> | undefined) ?? {}),
+        valueTypes: Object.keys(allTypes),
         decisions: Object.keys(doc.decisions ?? {}),
       },
       (diagnostic) => this.addError(diagnostic.code, diagnostic.message, diagnostic.path, diagnostic.hint)
@@ -146,6 +187,8 @@ export class Compiler {
       },
       ...(doc.roles ? { roles: doc.roles } : {}),
       ...(doc.multitenancy ? { multitenancy: doc.multitenancy } : {}),
+      ...(doc.packages ? { packages: doc.packages } : {}),
+      ...(Object.keys(allTypes).length > 0 ? { types: allTypes } : {}),
       entities: compiledEntities,
       ...(doc.events ? { events: doc.events } : {}),
       ...(doc.policies ? { policies: doc.policies } : {}),
@@ -163,7 +206,7 @@ export class Compiler {
   private inlineTraits(
     entityName: string,
     entity: EntityDefinition,
-    traits: Record<string, EntityDefinition>
+    traits: Record<string, any>
   ): { entity: EntityDefinition; origins: EntityOrigins } {
     const origins: EntityOrigins = {
       fields: Object.fromEntries(
@@ -173,35 +216,134 @@ export class Compiler {
       invariants: (entity.invariants ?? []).map((_, i) => pointer("entities", entityName, "invariants", i)),
     };
 
-    const uses = (entity as { uses?: string[] }).uses;
-    if (!uses || !Array.isArray(uses)) {
+    const rawUses = entity.traits ?? entity.uses;
+    if (!rawUses || !Array.isArray(rawUses) || rawUses.length === 0) {
       return { entity, origins };
     }
 
-    const mergedFields = { ...entity.fields };
+    const mergedFields: Record<string, any> = { ...entity.fields };
     const mergedRules = [...(entity.rules ?? [])];
     const mergedInvariants = [...(entity.invariants ?? [])];
+    let mergedReadFilter = entity.readFilter;
 
-    uses.forEach((traitName, i) => {
-      const trait = traits[traitName];
-      if (!trait) {
-        this.addError("UNKNOWN_TRAIT", `Entity uses unknown trait '${traitName}'`,
-          pointer("entities", entityName, "uses", i), suggestion(traitName, Object.keys(traits), "traits"));
+    const globalExclude = new Set(entity.exclude ?? []);
+
+    rawUses.forEach((useItem, i) => {
+      let traitName: string;
+      const itemExclude = new Set<string>();
+
+      if (typeof useItem === "string") {
+        traitName = useItem;
+      } else if (useItem && typeof useItem === "object") {
+        traitName = (useItem as any).trait ?? (useItem as any).name ?? "";
+        if (Array.isArray((useItem as any).exclude)) {
+          (useItem as any).exclude.forEach((e: string) => itemExclude.add(e));
+        }
+      } else {
         return;
       }
 
-      for (const fieldName of Object.keys(trait.fields ?? {})) {
-        origins.fields[fieldName] = pointer("traits", traitName, "fields", fieldName);
+      // Lookup trait: direct name, or with "std:" prefix, or without "std:" prefix
+      let trait = traits[traitName];
+      if (!trait && !traitName.includes(":")) {
+        trait = traits[`std:${traitName}`];
       }
-      Object.assign(mergedFields, trait.fields ?? {});
-      (trait.rules ?? []).forEach((rule, j) => {
-        mergedRules.push(rule);
+      if (!trait && traitName.startsWith("std:")) {
+        trait = traits[traitName.slice(4)];
+      }
+
+      if (!trait) {
+        this.addError(
+          "UNKNOWN_TRAIT",
+          `Entity '${entityName}' uses unknown trait '${traitName}'`,
+          pointer("entities", entityName, entity.traits ? "traits" : "uses", i),
+          suggestion(traitName, Object.keys(traits), "traits")
+        );
+        return;
+      }
+
+      const isExcluded = (field: string) => globalExclude.has(field) || itemExclude.has(field);
+
+      // Trait fields
+      for (const [fieldName, fieldDef] of Object.entries(trait.fields ?? {})) {
+        if (isExcluded(fieldName)) {
+          continue;
+        }
+
+        // Collision check
+        if (fieldName in (entity.fields ?? {})) {
+          this.addError(
+            "TRAIT_FIELD_COLLISION",
+            `Field '${fieldName}' already defined on entity '${entityName}'; trait '${traitName}' cannot override it silently. Exclude the trait member explicitly or rename the field.`,
+            pointer("entities", entityName, "fields", fieldName),
+            `Add '${fieldName}' to 'exclude' or rename the field.`
+          );
+          continue;
+        }
+
+        if (fieldName in mergedFields && !(fieldName in (entity.fields ?? {}))) {
+          this.addError(
+            "TRAIT_FIELD_COLLISION",
+            `Field '${fieldName}' on entity '${entityName}' defined by multiple traits. Exclude it explicitly.`,
+            pointer("entities", entityName, entity.traits ? "traits" : "uses", i),
+            `Add '${fieldName}' to 'exclude' in trait declaration.`
+          );
+          continue;
+        }
+
+        origins.fields[fieldName] = pointer("traits", traitName, "fields", fieldName);
+
+        // Mix in default from trait if present
+        let fObj: any = typeof fieldDef === "object" && fieldDef !== null ? { ...fieldDef } : { type: fieldDef };
+        if (trait.defaults && trait.defaults[fieldName] !== undefined && fObj.default === undefined) {
+          fObj.default = trait.defaults[fieldName];
+        }
+        mergedFields[fieldName] = fObj;
+      }
+
+      // Trait rules
+      (trait.rules ?? []).forEach((rule: any, j: number) => {
+        let ruleDef: RuleDefinition;
+        if (typeof rule === "string") {
+          ruleDef = {
+            id: `${traitName}_rule_${j + 1}`,
+            message: `Rule from trait ${traitName}`,
+            check: rule,
+          };
+        } else {
+          ruleDef = rule as RuleDefinition;
+        }
+        if (ruleDef.field && isExcluded(ruleDef.field)) {
+          return;
+        }
+        mergedRules.push(ruleDef);
         origins.rules.push(pointer("traits", traitName, "rules", j));
       });
-      (trait.invariants ?? []).forEach((inv, j) => {
-        mergedInvariants.push(inv);
+
+      // Trait invariants
+      (trait.invariants ?? []).forEach((inv: any, j: number) => {
+        let invDef: InvariantDefinition;
+        if (typeof inv === "string") {
+          invDef = {
+            id: `${traitName}_inv_${j + 1}`,
+            message: `Invariant from trait ${traitName}`,
+            assert: inv,
+          };
+        } else {
+          invDef = inv as InvariantDefinition;
+        }
+        mergedInvariants.push(invDef);
         origins.invariants.push(pointer("traits", traitName, "invariants", j));
       });
+
+      // Trait readFilter
+      if (trait.readFilter && typeof trait.readFilter === "string") {
+        if (!mergedReadFilter) {
+          mergedReadFilter = trait.readFilter;
+        } else {
+          mergedReadFilter = `(${mergedReadFilter}) && (${trait.readFilter})`;
+        }
+      }
     });
 
     return {
@@ -210,6 +352,7 @@ export class Compiler {
         fields: mergedFields,
         rules: mergedRules,
         invariants: mergedInvariants,
+        ...(mergedReadFilter ? { readFilter: mergedReadFilter } : {}),
       },
       origins,
     };
@@ -367,6 +510,7 @@ export class Compiler {
       fields: compiledFields,
       ...(compiledRules.length > 0 ? { rules: compiledRules } : {}),
       ...(compiledInvariants.length > 0 ? { invariants: compiledInvariants } : {}),
+      ...(entity.readFilter ? { readFilter: entity.readFilter } : {}),
       ...(entity.permissions ? { permissions: entity.permissions } : {}),
       ...(compiledWorkflow ? { workflow: compiledWorkflow } : {}),
       ...(compiledActions ? { actions: compiledActions } : {}),

@@ -11,6 +11,7 @@ export interface CompilerOptions {
   sourcePath?: string;
   sourceFile?: string;
   validateSchema?: boolean;
+  checkLockfile?: boolean;
 }
 
 export interface CompilerDiagnostic {
@@ -89,9 +90,21 @@ export interface ActionDefinition {
   run?: Record<string, ExprNode | string | unknown>;
 }
 
+export interface TraitUseObject {
+  trait?: string;
+  name?: string;
+  exclude?: string[];
+}
+
+export type TraitDeclaration = string | TraitUseObject;
+
 export interface EntityDefinition {
   key?: string;
   embedded?: boolean;
+  traits?: TraitDeclaration[];
+  uses?: TraitDeclaration[];
+  exclude?: string[];
+  readFilter?: string;
   fields: Record<string, FieldDefinition | string>;
   rules?: RuleDefinition[];
   invariants?: InvariantDefinition[];
@@ -117,6 +130,8 @@ export interface RawKerangkaDocument {
     header?: string;
     claim?: string;
   };
+  packages?: Record<string, string>;
+  types?: Record<string, unknown>;
   contexts?: string[];
   traits?: Record<string, unknown>;
   entities?: Record<string, EntityDefinition>;
@@ -154,6 +169,7 @@ export interface KIRDocument {
     key: string;
     embedded: boolean;
     fields: Record<string, FieldDefinition>;
+    readFilter?: string;
     rules?: { id: string; field?: string; message: string; check: ExprNode }[];
     invariants?: { id: string; message: string; assert: ExprNode }[];
     permissions?: Record<string, unknown>;
@@ -178,6 +194,8 @@ export interface KIRDocument {
       run?: Record<string, ExprNode | unknown>;
     }>;
   }>;
+  packages?: Record<string, string>;
+  types?: Record<string, unknown>;
   events?: Record<string, unknown>;
   policies?: Record<string, unknown>;
   decisions?: Record<string, unknown>;

@@ -15,7 +15,9 @@ import {
   composeCommand,
   emitCommand,
   lintCommand,
-  graphCommand
+  graphCommand,
+  expandCommand,
+  pkgCommand,
 } from "../src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -250,6 +252,42 @@ describe("Kerangka CLI Commands", () => {
     const output = lines.join("\n");
     expect(output).toContain("flowchart TD");
     expect(output).toContain("Invoice");
+  });
+
+  it("pkgCommand generates lockfile and lists packages", () => {
+    const lockPath = path.join(tmpDir, "kerangka.lock");
+    const ok = pkgCommand("lock", examplePath, { output: lockPath });
+    expect(ok).toBe(true);
+    expect(fs.existsSync(lockPath)).toBe(true);
+
+    const lock = JSON.parse(fs.readFileSync(lockPath, "utf-8"));
+    expect(lock.lockfileVersion).toBe(1);
+    expect(lock.packages["@kerangka/std"]).toBeDefined();
+
+    const listOk = pkgCommand("list", examplePath);
+    expect(listOk).toBe(true);
+  });
+
+  it("expandCommand resolves traits and prints expanded fields", () => {
+    const testModel = path.join(tmpDir, "trait-test.kerangka.json");
+    fs.writeFileSync(
+      testModel,
+      JSON.stringify({
+        kerangka: "0.1",
+        app: "expand-test",
+        entities: {
+          Document: {
+            traits: ["std:auditable", "std:tenantScoped"],
+            fields: {
+              title: "string!",
+            },
+          },
+        },
+      })
+    );
+
+    const ok = expandCommand(testModel);
+    expect(ok).toBe(true);
   });
 });
 

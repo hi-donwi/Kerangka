@@ -78,8 +78,8 @@ export function parseFieldShorthand(shorthand: string): FieldDefinition {
   }
 
   // 6. Parse base type and parameters
-  // Ref: ref(Customer) or ref<Customer>
-  const refMatch = text.match(/^ref(?:<|\()([a-zA-Z0-9_]+)(?:>|\))$/);
+  // Ref: ref(Customer) or ref<Customer> or ref(ordering:Order)
+  const refMatch = text.match(/^ref(?:<|\()([a-zA-Z0-9_:]+)(?:>|\))$/);
   if (refMatch) {
     return {
       type: "ref",
@@ -90,8 +90,8 @@ export function parseFieldShorthand(shorthand: string): FieldDefinition {
     };
   }
 
-  // List: list(Line) or list<Line> or list<string>
-  const listMatch = text.match(/^list(?:<|\()([a-zA-Z0-9_]+)(?:>|\))$/);
+  // List: list(Line) or list<Line> or list<string> or list(billing:Line)
+  const listMatch = text.match(/^list(?:<|\()([a-zA-Z0-9_:]+)(?:>|\))$/);
   if (listMatch) {
     const innerName = listMatch[1]!;
     const isPrimitive = PRIMITIVE_TYPES.includes(innerName);
@@ -141,6 +141,7 @@ export function parseFieldShorthand(shorthand: string): FieldDefinition {
   // Normalize aliases
   let baseType = text;
   if (baseType === "bool") baseType = "boolean";
+  if (baseType === "timestamp") baseType = "datetime";
 
   return {
     type: baseType,

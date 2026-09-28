@@ -30,6 +30,7 @@ import { addCommand } from "../commands/add.js";
 import { serveCommand } from "../commands/serve.js";
 import { verifyCommand } from "../commands/verify.js";
 import { decisionsExportCommand, decisionsImportCommand } from "../commands/decisions.js";
+import { pkgCommand } from "../commands/pkg.js";
 
 function printHelp(): void {
   console.log(`
@@ -46,6 +47,7 @@ COMMANDS:
   check <file>            Verify model syntax, references, and expressions
   lint <path>             Report boundaries, naming rules, and complexity budgets
   build <file>            Compile model into canonical KIR JSON
+  pkg <subcommand>        Manage packages and lockfile (pkg lock | install | list)
   ddl <file>              Generate SQL DDL schema statements (PostgreSQL or SQLite)
   openapi <file>          Generate OpenAPI 3.1 specification JSON
   graphql <file>          Generate GraphQL Schema Definition Language (SDL)
@@ -144,7 +146,7 @@ async function main(): Promise<void> {
     const command = positionals[0]!;
     const file = positionals[1];
 
-    if (!file && command !== "help" && command !== "version" && command !== "init" && command !== "decisions") {
+    if (!file && command !== "help" && command !== "version" && command !== "init" && command !== "decisions" && command !== "pkg") {
       console.error(`Error: Missing argument for command '${command}'`);
       printHelp();
       process.exit(1);
@@ -323,6 +325,14 @@ async function main(): Promise<void> {
       case "expand":
         success = expandCommand(file!);
         break;
+      case "pkg": {
+        const sub = positionals[1] ?? "lock";
+        const targetDoc = positionals[2];
+        success = pkgCommand(sub, targetDoc, {
+          output: values.output,
+        });
+        break;
+      }
       case "stats":
         success = statsCommand(file!);
         break;

@@ -1,7 +1,7 @@
 {
-  "name": "@kerangka/compiler",
+  "name": "@kerangka/std",
   "version": "0.1.0",
-  "description": "Compiler pipeline transforming Kerangka models to canonical intermediate representation (KIR)",
+  "description": "Standard library for Kerangka: value types, traits, workflow templates, and lint presets",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,11 +14,6 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist"
-  },
-  "dependencies": {
-    "@kerangka/k1": "*",
-    "@kerangka/std": "*",
-    "yaml": "^2.7.0"
   },
   "license": "Apache-2.0"
 }

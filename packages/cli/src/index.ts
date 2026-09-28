@@ -27,3 +27,4 @@ export * from "./commands/graph.js";
 export * from "./commands/init.js";
 export * from "./commands/add.js";
 export * from "./commands/serve.js";
+export * from "./commands/pkg.js";
