@@ -1,6 +1,6 @@
 /**
  * Kerangka Hono HTTP Adapter
- * Specification Version: 0.2
+ * Specification Version: 0.3
  * Status: Draft
  * License: Apache-2.0
  */
@@ -26,7 +26,13 @@ import {
   StoreScheduler,
 } from "@kerangka/ports";
 import { createProblemDetails, ProblemDetails } from "./problem.js";
-import { IdempotencyStore, MemoryIdempotencyStore } from "./idempotency.js";
+import {
+  CachedResponse,
+  computeRequestFingerprint,
+  IdempotencyStore,
+  MemoryIdempotencyStore,
+} from "./idempotency.js";
+import { buildNextCursor, decodeCursor, parseSortParam } from "./cursor.js";
 
 export interface KerangkaHonoOptions {
   store?: StorePort;
@@ -121,6 +127,86 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     );
   }
 
+  async function readJsonBody(c: Context): Promise<Record<string, unknown>> {
+    return (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  }
+
+  /**
+   * Idempotency gate for mutating endpoints (PLAN.md §8.4: `Idempotency-Key` support).
+   * Replays the original response (with its original status) for identical retries,
+   * rejects key reuse with a different payload, and rejects concurrent duplicates.
+   */
+  async function beginIdempotentRequest(
+    c: Context,
+    method: string
+  ): Promise<Response | null> {
+    const key = c.req.header("Idempotency-Key");
+    if (!key) return null;
+
+    const fingerprint = computeRequestFingerprint(method, c.req.path, await readJsonBody(c));
+    const begin = idempotencyStore.begin?.bind(idempotencyStore);
+
+    if (!begin) {
+      // Store without begin(): replay completed responses only.
+      const cached = await idempotencyStore.get(key);
+      if (cached) {
+        c.header("X-Cache-Lookup", "HIT");
+        return c.json(cached.body, cached.status as 200, cached.headers);
+      }
+      return null;
+    }
+
+    const outcome = await begin(key, fingerprint);
+    switch (outcome.kind) {
+      case "replay": {
+        c.header("X-Cache-Lookup", "HIT");
+        c.header("X-Idempotent-Replayed", "true");
+        return c.json(outcome.res.body, outcome.res.status as 200, outcome.res.headers);
+      }
+      case "conflict":
+        return sendProblem(
+          c,
+          422,
+          "IDEMPOTENCY_CONFLICT",
+          "Idempotency-Key was already used with a different request payload"
+        );
+      case "in-flight":
+        return sendProblem(
+          c,
+          409,
+          "IDEMPOTENCY_IN_PROGRESS",
+          "A request with this Idempotency-Key is still being processed; retry after it completes"
+        );
+      default:
+        return null;
+    }
+  }
+
+  async function completeIdempotentRequest(
+    c: Context,
+    status: number,
+    body: unknown
+  ): Promise<void> {
+    const key = c.req.header("Idempotency-Key");
+    if (!key) return;
+    const cached: CachedResponse = {
+      status,
+      headers: { "X-Idempotent-Replayed": "true" },
+      body,
+      timestamp: Date.now(),
+    };
+    if (idempotencyStore.complete) {
+      await idempotencyStore.complete(key, cached);
+    } else {
+      await idempotencyStore.set(key, cached);
+    }
+  }
+
+  async function failIdempotentRequest(c: Context): Promise<void> {
+    const key = c.req.header("Idempotency-Key");
+    if (key && idempotencyStore.fail) await idempotencyStore.fail(key);
+  }
+
   // ---------------------------------------------------------------------------
   // Metadata & System Endpoints
   // ---------------------------------------------------------------------------
@@ -189,24 +275,46 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
     const tenantId = getTenantId(c);
     const limit = c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : 50;
-    const offset = c.req.query("offset") ? parseInt(c.req.query("offset")!, 10) : 0;
+    const sort = parseSortParam(c.req.query("sort"));
+    const cursor = decodeCursor(c.req.query("cursor"));
 
-    // Filters from query params
+    // A cursor carries the offset and echoes the sort contract it was minted under.
+    const offset = cursor ? cursor.offset : c.req.query("offset") ? parseInt(c.req.query("offset")!, 10) : 0;
+    const effectiveSort = cursor?.sort ?? sort;
+
     const queryParams = c.req.query();
     const filter: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(queryParams)) {
-      if (["limit", "offset", "sort", "tenantId"].includes(k)) continue;
+      if (["limit", "offset", "sort", "cursor", "tenantId"].includes(k)) continue;
       filter[k] = v;
     }
 
     const res = await store.find(entityName, Object.keys(filter).length > 0 ? filter : undefined, {
       limit,
       offset,
+      sort: effectiveSort,
       tenantId,
     });
 
     c.header("X-Total-Count", String(res.total));
-    return c.json(res);
+
+    const links = buildNextCursor({
+      items: res.items as Record<string, unknown>[],
+      limit,
+      total: res.total,
+      offset,
+      sort: effectiveSort,
+      makeUrl: (cursorValue: string) => cursorValue,
+    });
+
+    return c.json({
+      items: res.items,
+      total: res.total,
+      limit,
+      offset,
+      // Opaque cursor token; clients pass it back as ?cursor= on the next request.
+      ...(links.next ? { nextCursor: links.next } : {}),
+    });
   });
 
   app.post("/api/:entity", async (c) => {
@@ -216,49 +324,41 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       return sendProblem(c, 404, "UNKNOWN_ENTITY", `Entity '${entityParam}' does not exist`);
     }
 
-    // Idempotency check
-    const idempotencyKey = c.req.header("Idempotency-Key");
-    if (idempotencyKey) {
-      const cached = await idempotencyStore.get(idempotencyKey);
-      if (cached) {
-        c.header("X-Cache-Lookup", "HIT");
-        return c.json(cached.body, 200);
+    // Idempotency gate
+    const gated = await beginIdempotentRequest(c, "POST");
+    if (gated) return gated;
+
+    try {
+      const tenantId = getTenantId(c);
+      const actor = getActorContext(c);
+      const body = await readJsonBody(c);
+
+      // Validation
+      const validation = engine.validate(entityName, body);
+      if (!validation.valid) {
+        return sendProblem(
+          c,
+          422,
+          "INPUT_INVALID",
+          "Record fails validation against entity rules and constraints",
+          validation.errors
+        );
       }
-    }
 
-    const tenantId = getTenantId(c);
-    const actor = getActorContext(c);
-    const body = await c.req.json().catch(() => ({}));
-
-    // Validation
-    const validation = engine.validate(entityName, body);
-    if (!validation.valid) {
-      return sendProblem(
-        c,
-        422,
-        "INPUT_INVALID",
-        "Record fails validation against entity rules and constraints",
-        validation.errors
-      );
-    }
-
-    // Compute defaults & computed fields
-    const recordWithComputed = engine.compute(entityName, body);
-    const created = await store.create(entityName, recordWithComputed, {
-      tenantId,
-      actor: actor?.id ? { id: actor.id } : undefined,
-    });
-
-    if (idempotencyKey) {
-      await idempotencyStore.set(idempotencyKey, {
-        status: 201,
-        headers: { "X-Idempotent-Replayed": "true" },
-        body: created,
-        timestamp: Date.now(),
+      // Compute defaults & computed fields
+      const recordWithComputed = engine.compute(entityName, body);
+      const created = await store.create(entityName, recordWithComputed, {
+        tenantId,
+        actor: actor?.id ? { id: actor.id } : undefined,
       });
-    }
 
-    return c.json(created, 201);
+      await completeIdempotentRequest(c, 201, created);
+
+      return c.json(created, 201);
+    } catch (err: unknown) {
+      await failIdempotentRequest(c);
+      throw err;
+    }
   });
 
   // ---------------------------------------------------------------------------
@@ -290,64 +390,56 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       return sendProblem(c, 404, "UNKNOWN_ENTITY", `Entity '${entityParam}' does not exist`);
     }
 
-    // Idempotency check
-    const idempotencyKey = c.req.header("Idempotency-Key");
-    if (idempotencyKey) {
-      const cached = await idempotencyStore.get(idempotencyKey);
-      if (cached) {
-        c.header("X-Cache-Lookup", "HIT");
-        return c.json(cached.body, 200);
-      }
-    }
-
-    const tenantId = getTenantId(c);
-    const actor = getActorContext(c);
-    const existing = await store.get<Record<string, unknown>>(entityName, id, { tenantId });
-    if (!existing) {
-      return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
-    }
-
-    const body = await c.req.json().catch(() => ({}));
-
-    // Optimistic Concurrency version parsing
-    const rawExpectedVersion = c.req.header("If-Match") || c.req.header("X-Expected-Version");
-    const expectedVersion = rawExpectedVersion ? parseInt(rawExpectedVersion.replace(/"/g, ""), 10) : undefined;
-
-    const merged = { ...existing, ...body };
-    const validation = engine.validate(entityName, merged);
-    if (!validation.valid) {
-      return sendProblem(
-        c,
-        422,
-        "INPUT_INVALID",
-        "Updated record fails validation",
-        validation.errors
-      );
-    }
-
-    const computed = engine.compute(entityName, merged);
+    // Idempotency gate
+    const gated = await beginIdempotentRequest(c, "PUT");
+    if (gated) return gated;
 
     try {
-      const updated = await store.update(entityName, id, computed, {
-        tenantId,
-        actor: actor?.id ? { id: actor.id } : undefined,
-        expectedVersion: isNaN(expectedVersion as number) ? undefined : expectedVersion,
-      });
+      const tenantId = getTenantId(c);
+      const actor = getActorContext(c);
+      const existing = await store.get<Record<string, unknown>>(entityName, id, { tenantId });
+      if (!existing) {
+        return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
+      }
 
-      if (idempotencyKey) {
-        await idempotencyStore.set(idempotencyKey, {
-          status: 200,
-          headers: { "X-Idempotent-Replayed": "true" },
-          body: updated,
-          timestamp: Date.now(),
+      const body = await readJsonBody(c);
+
+      // Optimistic Concurrency version parsing
+      const rawExpectedVersion = c.req.header("If-Match") || c.req.header("X-Expected-Version");
+      const expectedVersion = rawExpectedVersion ? parseInt(rawExpectedVersion.replace(/"/g, ""), 10) : undefined;
+
+      const merged = { ...existing, ...body };
+      const validation = engine.validate(entityName, merged);
+      if (!validation.valid) {
+        return sendProblem(
+          c,
+          422,
+          "INPUT_INVALID",
+          "Updated record fails validation",
+          validation.errors
+        );
+      }
+
+      const computed = engine.compute(entityName, merged);
+
+      try {
+        const updated = await store.update(entityName, id, computed, {
+          tenantId,
+          actor: actor?.id ? { id: actor.id } : undefined,
+          expectedVersion: isNaN(expectedVersion as number) ? undefined : expectedVersion,
         });
-      }
 
-      return c.json(updated);
-    } catch (err: unknown) {
-      if (err instanceof VersionConflictError) {
-        return sendProblem(c, 409, "VERSION_CONFLICT", err.message);
+        await completeIdempotentRequest(c, 200, updated);
+
+        return c.json(updated);
+      } catch (err: unknown) {
+        if (err instanceof VersionConflictError) {
+          return sendProblem(c, 409, "VERSION_CONFLICT", err.message);
+        }
+        throw err;
       }
+    } catch (err: unknown) {
+      await failIdempotentRequest(c);
       throw err;
     }
   });
@@ -378,6 +470,111 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
   });
 
   // ---------------------------------------------------------------------------
+  // Shared action/transition response pipeline
+  // ---------------------------------------------------------------------------
+
+  interface EngineEffect {
+    type: string;
+    extension?: string;
+    input?: unknown;
+    recipient?: string;
+    template?: string;
+    params?: Record<string, unknown>;
+    action?: string;
+    at?: string;
+    payload?: Record<string, unknown>;
+    target?: string;
+    [key: string]: unknown;
+  }
+
+  interface EngineEvent {
+    type: string;
+    data: unknown;
+    id: string;
+    source: string;
+    time?: string;
+  }
+
+  async function dispatchEffects(
+    effects: EngineEffect[] | undefined,
+    id: string,
+    tenantId: string | undefined
+  ): Promise<void> {
+    if (!effects || effects.length === 0) return;
+    for (const effect of effects) {
+      if (effect.type === "call" && connectors) {
+        const extension = effect.extension ?? "";
+        const extDef = kir.extensions?.[extension] as Record<string, unknown> | undefined;
+        const targetConnector: string = (extDef?.connector as string) || extension;
+        const canHandle = typeof connectors.has === "function" ? connectors.has(targetConnector) : true;
+        if (canHandle) {
+          try {
+            await connectors.call({
+              connector: targetConnector,
+              operation: (extDef?.operation as string) || "call",
+              payload: {
+                ...(extDef || {}),
+                input: effect.input,
+                ...(typeof effect.input === "object" ? effect.input : {}),
+              },
+              tenantId,
+            });
+          } catch {
+            // Ignore or log unhandled external connector calls
+          }
+        }
+      } else if (effect.type === "notify" && connectors) {
+        const canEmail = typeof connectors.has === "function" ? connectors.has("email") : true;
+        if (canEmail) {
+          await connectors.call({
+            connector: "email",
+            operation: "send",
+            payload: {
+              to: effect.recipient ?? "",
+              template: effect.template ?? "",
+              params: effect.params,
+            },
+            tenantId,
+          });
+        }
+      } else if (effect.type === "timer") {
+        try {
+          await scheduler.scheduleAt(effect.action ?? "", effect.at ?? "", effect.payload ?? {}, {
+            target: effect.target || id,
+            action: effect.action ?? "",
+            tenantId,
+          });
+        } catch {
+          // Ignore
+        }
+      } else if (effect.type === "cancel-timer") {
+        try {
+          if (scheduler.cancelByTarget) {
+            await scheduler.cancelByTarget(effect.target || id, effect.action ?? "");
+          }
+        } catch {
+          // Ignore
+        }
+      }
+    }
+  }
+
+  async function dispatchEvents(
+    events: EngineEvent[] | undefined,
+    tenantId: string | undefined
+  ): Promise<void> {
+    if (!bus || !events || events.length === 0) return;
+    for (const ev of events) {
+      await bus.publish(ev.type, ev.data, {
+        id: ev.id,
+        source: ev.source,
+        tenantId,
+        timestamp: ev.time,
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Action Endpoints: /api/:entity/:id/actions/:actionName
   // ---------------------------------------------------------------------------
 
@@ -396,135 +593,59 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       return sendProblem(c, 404, "UNKNOWN_ACTION", `Action '${actionName}' not defined on entity '${entityName}'`);
     }
 
-    // Idempotency check
-    const idempotencyKey = c.req.header("Idempotency-Key");
-    if (idempotencyKey) {
-      const cached = await idempotencyStore.get(idempotencyKey);
-      if (cached) {
-        c.header("X-Cache-Lookup", "HIT");
-        return c.json(cached.body, 200);
+    // Idempotency gate
+    const gated = await beginIdempotentRequest(c, "POST");
+    if (gated) return gated;
+
+    try {
+      const tenantId = getTenantId(c);
+      const actor = getActorContext(c);
+      const existing = await store.get<Record<string, unknown>>(entityName, id, { tenantId });
+      if (!existing) {
+        return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
       }
-    }
 
-    const tenantId = getTenantId(c);
-    const actor = getActorContext(c);
-    const existing = await store.get<Record<string, unknown>>(entityName, id, { tenantId });
-    if (!existing) {
-      return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
-    }
+      const body = await readJsonBody(c);
 
-    const body = await c.req.json().catch(() => ({}));
+      // Permission and guard check
+      const can = engine.can(entityName, actionName, existing, body, actor);
+      if (!can.allowed) {
+        const status = can.code === "PERMISSION_DENIED" || can.code === "FORBIDDEN" ? 403 : 422;
+        return sendProblem(c, status, can.code ?? "GUARD_FAILED", can.reason);
+      }
 
-    // Permission and guard check
-    const can = engine.can(entityName, actionName, existing, body, actor);
-    if (!can.allowed) {
-      const status = can.code === "PERMISSION_DENIED" || can.code === "FORBIDDEN" ? 403 : 422;
-      return sendProblem(c, status, can.code ?? "GUARD_FAILED", can.reason);
-    }
+      // Execute action
+      const runResult = engine.run(entityName, actionName, existing, body, actor);
+      if (!runResult.ok) {
+        return sendProblem(c, 422, runResult.error ?? "ACTION_FAILED", runResult.error);
+      }
 
-    // Execute action
-    const runResult = engine.run(entityName, actionName, existing, body, actor);
-    if (!runResult.ok) {
-      return sendProblem(c, 422, runResult.error ?? "ACTION_FAILED", runResult.error);
-    }
-
-    // Persist mutation
-    let updatedRecord = existing;
-    if (runResult.record) {
-      updatedRecord = await store.update(entityName, id, runResult.record, {
-        tenantId,
-        actor: actor?.id ? { id: actor.id } : undefined,
-      });
-    }
-
-    // Dispatch events to bus if available
-    if (bus && runResult.events && runResult.events.length > 0) {
-      for (const ev of runResult.events) {
-        await bus.publish(ev.type, ev.data, {
-          id: ev.id,
-          source: ev.source,
+      // Persist mutation
+      let updatedRecord = existing;
+      if (runResult.record) {
+        updatedRecord = await store.update(entityName, id, runResult.record, {
           tenantId,
-          timestamp: ev.time,
+          actor: actor?.id ? { id: actor.id } : undefined,
         });
       }
+
+      await dispatchEvents(runResult.events as EngineEvent[] | undefined, tenantId);
+      await dispatchEffects(runResult.effects as EngineEffect[] | undefined, id, tenantId);
+
+      const responsePayload = {
+        ok: true,
+        record: updatedRecord,
+        trace: runResult.trace,
+        events: runResult.events,
+      };
+
+      await completeIdempotentRequest(c, 200, responsePayload);
+
+      return c.json(responsePayload);
+    } catch (err: unknown) {
+      await failIdempotentRequest(c);
+      throw err;
     }
-
-    // Dispatch side-effects (call, notify, timer, cancel-timer)
-    if (runResult.effects && runResult.effects.length > 0) {
-      for (const effect of runResult.effects) {
-        if (effect.type === "call" && connectors) {
-          const extDef = kir.extensions?.[effect.extension] as Record<string, unknown> | undefined;
-          const targetConnector = (extDef?.connector as string) || effect.extension;
-          const canHandle = typeof connectors.has === "function" ? connectors.has(targetConnector) : true;
-          if (canHandle) {
-            try {
-              await connectors.call({
-                connector: targetConnector,
-                operation: (extDef?.operation as string) || "call",
-                payload: {
-                  ...(extDef || {}),
-                  input: effect.input,
-                  ...(typeof effect.input === "object" ? effect.input : {}),
-                },
-                tenantId,
-              });
-            } catch {
-              // Ignore or log unhandled external connector calls
-            }
-          }
-        } else if (effect.type === "notify" && connectors) {
-          const canEmail = typeof connectors.has === "function" ? connectors.has("email") : true;
-          if (canEmail) {
-            await connectors.call({
-              connector: "email",
-              operation: "send",
-              payload: {
-                to: effect.recipient,
-                template: effect.template,
-                params: effect.params,
-              },
-              tenantId,
-            });
-          }
-        } else if (effect.type === "timer") {
-          try {
-            await scheduler.scheduleAt(effect.action, effect.at, effect.payload ?? {}, {
-              target: effect.target || id,
-              action: effect.action,
-              tenantId,
-            });
-          } catch {
-            // Ignore
-          }
-        } else if (effect.type === "cancel-timer") {
-          try {
-            if (scheduler.cancelByTarget) {
-              await scheduler.cancelByTarget(effect.target || id, effect.action);
-            }
-          } catch {
-            // Ignore
-          }
-        }
-      }
-    }
-
-    const responsePayload = {
-      ok: true,
-      record: updatedRecord,
-      trace: runResult.trace,
-      events: runResult.events,
-    };
-
-    if (idempotencyKey) {
-      await idempotencyStore.set(idempotencyKey, {
-        status: 200,
-        headers: { "X-Idempotent-Replayed": "true" },
-        body: responsePayload,
-        timestamp: Date.now(),
-      });
-    }
-
-    return c.json(responsePayload);
   });
 
   // ---------------------------------------------------------------------------
@@ -551,139 +672,63 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       );
     }
 
-    // Idempotency check
-    const idempotencyKey = c.req.header("Idempotency-Key");
-    if (idempotencyKey) {
-      const cached = await idempotencyStore.get(idempotencyKey);
-      if (cached) {
-        c.header("X-Cache-Lookup", "HIT");
-        return c.json(cached.body, 200);
+    // Idempotency gate
+    const gated = await beginIdempotentRequest(c, "POST");
+    if (gated) return gated;
+
+    try {
+      const tenantId = getTenantId(c);
+      const actor = getActorContext(c);
+      const existing = await store.get<Record<string, unknown>>(entityName, id, { tenantId });
+      if (!existing) {
+        return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
       }
-    }
 
-    const tenantId = getTenantId(c);
-    const actor = getActorContext(c);
-    const existing = await store.get<Record<string, unknown>>(entityName, id, { tenantId });
-    if (!existing) {
-      return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
-    }
+      // Permission and guard check
+      const can = engine.can(entityName, transitionName, existing, {}, actor);
+      if (!can.allowed) {
+        const status =
+          can.code === "PERMISSION_DENIED" || can.code === "FORBIDDEN"
+            ? 403
+            : can.code === "INVALID_STATE_TRANSITION"
+            ? 409
+            : 422;
+        return sendProblem(c, status, can.code ?? "GUARD_FAILED", can.reason);
+      }
 
-    // Permission and guard check
-    const can = engine.can(entityName, transitionName, existing, {}, actor);
-    if (!can.allowed) {
-      const status =
-        can.code === "PERMISSION_DENIED" || can.code === "FORBIDDEN"
-          ? 403
-          : can.code === "INVALID_STATE_TRANSITION"
-          ? 409
-          : 422;
-      return sendProblem(c, status, can.code ?? "GUARD_FAILED", can.reason);
-    }
+      // Execute transition
+      const transResult = engine.transition(entityName, existing, transitionName, actor);
+      if (!transResult.ok) {
+        const status = transResult.error === "INVALID_TRANSITION" ? 409 : 422;
+        return sendProblem(c, status, transResult.error ?? "TRANSITION_FAILED", transResult.error);
+      }
 
-    // Execute transition
-    const transResult = engine.transition(entityName, existing, transitionName, actor);
-    if (!transResult.ok) {
-      const status = transResult.error === "INVALID_TRANSITION" ? 409 : 422;
-      return sendProblem(c, status, transResult.error ?? "TRANSITION_FAILED", transResult.error);
-    }
-
-    // Persist status change
-    let updatedRecord = existing;
-    if (transResult.record) {
-      updatedRecord = await store.update(entityName, id, transResult.record, {
-        tenantId,
-        actor: actor?.id ? { id: actor.id } : undefined,
-      });
-    }
-
-    // Dispatch events to bus if available
-    if (bus && transResult.events && transResult.events.length > 0) {
-      for (const ev of transResult.events) {
-        await bus.publish(ev.type, ev.data, {
-          id: ev.id,
-          source: ev.source,
+      // Persist status change
+      let updatedRecord = existing;
+      if (transResult.record) {
+        updatedRecord = await store.update(entityName, id, transResult.record, {
           tenantId,
-          timestamp: ev.time,
+          actor: actor?.id ? { id: actor.id } : undefined,
         });
       }
+
+      await dispatchEvents(transResult.events as EngineEvent[] | undefined, tenantId);
+      await dispatchEffects(transResult.effects as EngineEffect[] | undefined, id, tenantId);
+
+      const responsePayload = {
+        ok: true,
+        record: updatedRecord,
+        trace: transResult.trace,
+        events: transResult.events,
+      };
+
+      await completeIdempotentRequest(c, 200, responsePayload);
+
+      return c.json(responsePayload);
+    } catch (err: unknown) {
+      await failIdempotentRequest(c);
+      throw err;
     }
-
-    // Dispatch side-effects (call, notify, timer, cancel-timer)
-    if (transResult.effects && transResult.effects.length > 0) {
-      for (const effect of transResult.effects) {
-        if (effect.type === "call" && connectors) {
-          const extDef = kir.extensions?.[effect.extension] as Record<string, unknown> | undefined;
-          const targetConnector = (extDef?.connector as string) || effect.extension;
-          const canHandle = typeof connectors.has === "function" ? connectors.has(targetConnector) : true;
-          if (canHandle) {
-            try {
-              await connectors.call({
-                connector: targetConnector,
-                operation: (extDef?.operation as string) || "call",
-                payload: {
-                  ...(extDef || {}),
-                  input: effect.input,
-                  ...(typeof effect.input === "object" ? effect.input : {}),
-                },
-                tenantId,
-              });
-            } catch {
-              // Ignore or log unhandled external connector calls
-            }
-          }
-        } else if (effect.type === "notify" && connectors) {
-          const canEmail = typeof connectors.has === "function" ? connectors.has("email") : true;
-          if (canEmail) {
-            await connectors.call({
-              connector: "email",
-              operation: "send",
-              payload: {
-                to: effect.recipient,
-                template: effect.template,
-                params: effect.params,
-              },
-              tenantId,
-            });
-          }
-        } else if (effect.type === "timer") {
-          try {
-            await scheduler.scheduleAt(effect.action, effect.at, effect.payload ?? {}, {
-              target: effect.target || id,
-              action: effect.action,
-              tenantId,
-            });
-          } catch {
-            // Ignore
-          }
-        } else if (effect.type === "cancel-timer") {
-          try {
-            if (scheduler.cancelByTarget) {
-              await scheduler.cancelByTarget(effect.target || id, effect.action);
-            }
-          } catch {
-            // Ignore
-          }
-        }
-      }
-    }
-
-    const responsePayload = {
-      ok: true,
-      record: updatedRecord,
-      trace: transResult.trace,
-      events: transResult.events,
-    };
-
-    if (idempotencyKey) {
-      await idempotencyStore.set(idempotencyKey, {
-        status: 200,
-        headers: { "X-Idempotent-Replayed": "true" },
-        body: responsePayload,
-        timestamp: Date.now(),
-      });
-    }
-
-    return c.json(responsePayload);
   });
 
   return app;

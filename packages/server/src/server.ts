@@ -57,7 +57,7 @@ export class KerangkaServer {
   private httpServer: http.Server | null = null;
   private quiet: boolean;
   private enableSchedulerRunner: boolean;
-  private idempotencyCache = new Map<string, { status: number; body: unknown }>();
+  private idempotencyCache = new Map<string, { status: number; body: unknown; headers?: Record<string, string> }>();
 
   constructor(kir: KIRDocument, options: ServerOptions = {}) {
     this.kir = kir;
@@ -234,6 +234,7 @@ export class KerangkaServer {
       const cached = this.idempotencyCache.get(idempotencyKey);
       if (cached) {
         res.setHeader("X-Cache-Lookup", "HIT");
+        res.setHeader("X-Idempotent-Replayed", "true");
         this.sendJson(res, cached.status, cached.body);
         return;
       }
@@ -287,7 +288,7 @@ export class KerangkaServer {
         });
 
         if (idempotencyKey) {
-          this.idempotencyCache.set(idempotencyKey, { status: 201, body: created });
+          this.idempotencyCache.set(idempotencyKey, { status: 201, body: created, headers: { "X-Idempotent-Replayed": "true" } });
         }
 
         this.sendJson(res, 201, created);
@@ -344,7 +345,7 @@ export class KerangkaServer {
           });
 
           if (idempotencyKey) {
-            this.idempotencyCache.set(idempotencyKey, { status: 200, body: updated });
+            this.idempotencyCache.set(idempotencyKey, { status: 200, body: updated, headers: { "X-Idempotent-Replayed": "true" } });
           }
 
           this.sendJson(res, 200, updated);
@@ -423,7 +424,7 @@ export class KerangkaServer {
         };
 
         if (idempotencyKey) {
-          this.idempotencyCache.set(idempotencyKey, { status: 200, body: resPayload });
+          this.idempotencyCache.set(idempotencyKey, { status: 200, body: resPayload, headers: { "X-Idempotent-Replayed": "true" } });
         }
 
         this.sendJson(res, 200, resPayload);

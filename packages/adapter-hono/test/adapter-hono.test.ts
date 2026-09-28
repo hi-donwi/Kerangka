@@ -190,8 +190,11 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
       }),
     });
 
-    expect(secondRes.status).toBe(200);
+    // Replay returns the ORIGINAL response status (201), matching server.ts and
+    // draft-ietf-httpapi-idempotency semantics.
+    expect(secondRes.status).toBe(201);
     expect(secondRes.headers.get("X-Cache-Lookup")).toBe("HIT");
+    expect(secondRes.headers.get("X-Idempotent-Replayed")).toBe("true");
     const secondBody = await secondRes.json();
     expect(secondBody).toEqual(firstBody);
 
@@ -290,5 +293,110 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
       connector: "sendInvoiceEmail",
       operation: "call",
     });
+  });
+
+
+  it("rejects Idempotency-Key reuse with a different payload (IDEMPOTENCY_CONFLICT)", async () => {
+    const app = createKerangkaHonoApp(kir);
+
+    const firstRes = await app.request("/api/todo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "conflict-1" },
+      body: JSON.stringify({ id: "td-c1", title: "First", completed: false, priority: "low" }),
+    });
+    expect(firstRes.status).toBe(201);
+
+    const secondRes = await app.request("/api/todo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "conflict-1" },
+      body: JSON.stringify({ id: "td-c1", title: "Different payload", completed: false, priority: "low" }),
+    });
+    expect(secondRes.status).toBe(422);
+    const problem = await secondRes.json();
+    expect(problem.code).toBe("IDEMPOTENCY_CONFLICT");
+    expect(problem.title).toBe("Idempotency Conflict");
+  });
+
+  it("rejects concurrent duplicates of an in-flight request (IDEMPOTENCY_IN_PROGRESS)", async () => {
+    const store = new MemoryStore();
+    const app = createKerangkaHonoApp(kir, { store });
+
+    // Begin (mark in flight) directly on the store to simulate a concurrent duplicate
+    // while the first request is still executing.
+    const { MemoryIdempotencyStore, computeRequestFingerprint } = await import("../src/index.js");
+    const idem = new MemoryIdempotencyStore();
+    const fingerprint = computeRequestFingerprint("POST", "/api/todo", { id: "td-flight" });
+    expect(idem.begin("flight-1", fingerprint).kind).toBe("new");
+
+    const app2 = createKerangkaHonoApp(kir, { store, idempotencyStore: idem });
+    const dupRes = await app2.request("/api/todo", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "flight-1" },
+      body: JSON.stringify({ id: "td-flight", title: "Concurrent", completed: false, priority: "low" }),
+    });
+    expect(dupRes.status).toBe(409);
+    const problem = await dupRes.json();
+    expect(problem.code).toBe("IDEMPOTENCY_IN_PROGRESS");
+  });
+
+  it("sorts collection results via the sort parameter", async () => {
+    const store = new MemoryStore();
+    const app = createKerangkaHonoApp(kir, { store });
+
+    for (const [id, priority] of [["td-a", "low"], ["td-b", "high"], ["td-c", "low"]]) {
+      await app.request("/api/todo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, title: `Task ${id}`, completed: false, priority }),
+      });
+    }
+
+    const asc = await app.request("/api/todo?sort=priority");
+    const ascJson = await asc.json();
+    const prioritiesAsc = ascJson.items.map((t: { priority: string }) => t.priority);
+    expect(prioritiesAsc).toEqual([...prioritiesAsc].sort());
+
+    const desc = await app.request("/api/todo?sort=-priority");
+    const descJson = await desc.json();
+    const prioritiesDesc = descJson.items.map((t: { priority: string }) => t.priority);
+    expect(prioritiesDesc).toEqual([...prioritiesAsc].reverse());
+  });
+
+  it("paginates collections with an opaque nextCursor", async () => {
+    const store = new MemoryStore();
+    const app = createKerangkaHonoApp(kir, { store });
+
+    for (let i = 1; i <= 5; i += 1) {
+      await app.request("/api/todo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: `td-${i}`, title: `Task ${i}`, completed: false, priority: "low" }),
+      });
+    }
+
+    const page1 = await app.request("/api/todo?limit=2");
+    const page1Json = await page1.json();
+    expect(page1Json.items).toHaveLength(2);
+    expect(page1Json.nextCursor).toBeDefined();
+    expect(typeof page1Json.nextCursor).toBe("string");
+
+    const page2 = await app.request(`/api/todo?limit=2&cursor=${encodeURIComponent(page1Json.nextCursor)}`);
+    const page2Json = await page2.json();
+    expect(page2Json.items).toHaveLength(2);
+    const seen = new Set([...page1Json.items, ...page2Json.items].map((t: { id: string }) => t.id));
+    expect(seen.size).toBe(4);
+
+    const page3 = await app.request(`/api/todo?limit=2&cursor=${encodeURIComponent(page2Json.nextCursor)}`);
+    const page3Json = await page3.json();
+    expect(page3Json.items).toHaveLength(1);
+    expect(page3Json.nextCursor).toBeUndefined();
+  });
+
+  it("rejects malformed cursors with a problem details response", async () => {
+    const app = createKerangkaHonoApp(kir);
+    const res = await app.request("/api/todo?cursor=!!!not-base64!!!");
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.items).toEqual([]);
   });
 });
