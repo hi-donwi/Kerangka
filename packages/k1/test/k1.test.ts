@@ -3,6 +3,9 @@ import {
   compileExpression,
   evalExpression,
   evaluate,
+  K1_FUNCTIONS,
+  K1_OPERATORS,
+  K1_ROW_AGGREGATES,
   K1SyntaxError,
   Parser,
 } from "../src/index.js";
@@ -159,5 +162,32 @@ describe("K1 Expression Lexer & Parser", () => {
   it("enforces complexity limit of 100 AST nodes", () => {
     const complex = Array(110).fill("1").join(" + ");
     expect(() => compileExpression(complex)).toThrowError(K1SyntaxError);
+  });
+});
+
+describe("K1 built-in names", () => {
+  // Unary operators dispatch only with one argument, so a name counts as known when
+  // either arity reaches it.
+  const isUnknownOperator = (op: string): boolean =>
+    [[{ literal: 1 }], [{ literal: 1 }, { literal: 2 }]].every((args) => {
+      try {
+        evaluate({ $expr: op, args });
+        return false;
+      } catch (err) {
+        return (err as { code?: string }).code === "UNKNOWN_OPERATOR";
+      }
+    });
+
+  it("lists exactly the functions and operators the evaluator implements", () => {
+    for (const name of [...K1_FUNCTIONS, ...K1_OPERATORS]) {
+      expect(isUnknownOperator(name), name).toBe(false);
+    }
+    expect(isUnknownOperator("notAFunction")).toBe(true);
+  });
+
+  it("marks only list aggregates as row aggregates", () => {
+    for (const name of K1_ROW_AGGREGATES) {
+      expect(K1_FUNCTIONS).toContain(name);
+    }
   });
 });

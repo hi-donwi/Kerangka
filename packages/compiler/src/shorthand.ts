@@ -7,6 +7,15 @@
 
 import { FieldDefinition } from "./types.js";
 
+/** Scalar field types (PLAN.md section 9.1), aliases included. */
+export const PRIMITIVE_TYPES: readonly string[] = [
+  "string", "text", "int", "integer", "decimal", "float", "bool", "boolean",
+  "date", "datetime", "instant", "time", "uuid", "email", "url", "json",
+];
+
+/** Types that take parameters: `enum(...)`, `ref(E)`, `list(T)`. */
+export const COMPOSITE_TYPES: readonly string[] = ["enum", "ref", "list"];
+
 /**
  * Parses a string shorthand into a canonical FieldDefinition.
  * Examples:
@@ -85,7 +94,7 @@ export function parseFieldShorthand(shorthand: string): FieldDefinition {
   const listMatch = text.match(/^list(?:<|\()([a-zA-Z0-9_]+)(?:>|\))$/);
   if (listMatch) {
     const innerName = listMatch[1]!;
-    const isPrimitive = ["string", "int", "decimal", "bool", "date", "datetime", "uuid"].includes(innerName);
+    const isPrimitive = PRIMITIVE_TYPES.includes(innerName);
     const element: FieldDefinition = isPrimitive
       ? { type: innerName, required: true }
       : { type: "ref", target: innerName, required: true };

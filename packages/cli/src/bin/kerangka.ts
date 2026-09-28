@@ -55,6 +55,7 @@ OPTIONS:
   -t, --target <lang>     Target language for 'codegen' (ts | java | python | go, default: ts)
   --package <name>        Package namespace for generated Java or Go code
   --check-breaking        Exit with error code if breaking changes are detected in 'diff'
+  --format <text|json>    Diagnostics format for 'check' (default: text)
   -o, --output <path>     Output file or directory path (use '-' for stdout)
   -p, --port <number>     Port for dev server (default: 3000)
   --drop                  Include DROP TABLE IF EXISTS statements in DDL
@@ -64,6 +65,7 @@ OPTIONS:
 
 EXAMPLES:
   kerangka check examples/invoicing.kerangka.json
+  kerangka check examples/invoicing.kerangka.json --format json
   kerangka build examples/invoicing.kerangka.json -o build/invoicing.kir.json
   kerangka codegen examples/invoicing.kerangka.json --target java -o InvoiceModel.java
   kerangka codegen examples/invoicing.kerangka.json --target python -o models.py
@@ -87,6 +89,7 @@ async function main(): Promise<void> {
         drop: { type: "boolean" },
         audit: { type: "boolean", default: true },
         "check-breaking": { type: "boolean" },
+        format: { type: "string" },
       },
       allowPositionals: true,
     });
@@ -112,9 +115,15 @@ async function main(): Promise<void> {
 
     let success = false;
     switch (command) {
-      case "check":
-        success = checkCommand(file!);
+      case "check": {
+        const format = values.format ?? "text";
+        if (format !== "text" && format !== "json") {
+          console.error(`Error: --format must be 'text' or 'json', got '${format}'`);
+          process.exit(1);
+        }
+        success = checkCommand(file!, { format });
         break;
+      }
       case "build":
         success = buildCommand(file!, values.output);
         break;

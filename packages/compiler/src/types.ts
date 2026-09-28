@@ -17,9 +17,13 @@ export interface CompilerDiagnostic {
   severity: "error" | "warning" | "info";
   message: string;
   code: string;
+  /** RFC 6901 JSON pointer into the source document. */
   path?: string;
+  /** 1-based; present when the compiler was given the document text. */
   line?: number;
   column?: number;
+  /** What to do about it. */
+  hint?: string;
 }
 
 export class CompilerError extends Error {

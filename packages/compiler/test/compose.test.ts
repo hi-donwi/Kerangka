@@ -11,7 +11,7 @@ describe('Docker Compose Generator', () => {
         fields: {
           id: { type: 'string', required: true },
           name: { type: 'string', required: true },
-          price: { type: 'number', required: true },
+          price: { type: 'decimal', precision: 12, scale: 2, required: true },
         },
       },
     },

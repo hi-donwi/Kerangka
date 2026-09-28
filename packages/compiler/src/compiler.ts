@@ -7,6 +7,7 @@
 
 import { compileExpression, ExprNode } from "@kerangka/k1";
 import { parse as parseYaml } from "yaml";
+import { offsetToPosition, pointer, SourceLocator, suggestion } from "./diagnostics.js";
 import { normalizeField } from "./shorthand.js";
 import {
   CompilerDiagnostic,
@@ -18,6 +19,9 @@ import {
   RawKerangkaDocument,
   WorkflowDefinition,
 } from "./types.js";
+import { EntityOrigins, ModelValidator } from "./validate.js";
+
+const EXPRESSION_HINT = "Expression syntax is in spec/k1.ebnf; string literals use single quotes.";
 
 export const COMPILER_VERSION = "0.1.0";
 
@@ -37,43 +41,77 @@ export class Compiler {
   compileDocument(input: string | RawKerangkaDocument): KIRDocument {
     this.diagnostics.length = 0;
 
+    const text = typeof input === "string" ? input : undefined;
     let doc: RawKerangkaDocument;
-    if (typeof input === "string") {
+    if (text !== undefined) {
       try {
-        doc = (input.trim().startsWith("{") ? JSON.parse(input) : parseYaml(input)) as RawKerangkaDocument;
+        doc = (text.trim().startsWith("{") ? JSON.parse(text) : parseYaml(text)) as RawKerangkaDocument;
       } catch (err) {
-        throw new CompilerError(
-          `Failed to parse document syntax: ${(err as Error).message}`,
-          [{ severity: "error", code: "PARSE_ERROR", message: (err as Error).message }]
-        );
+        const diagnostic: CompilerDiagnostic = {
+          severity: "error",
+          code: "PARSE_ERROR",
+          message: (err as Error).message,
+          path: "",
+          hint: "The document must be valid JSON or YAML.",
+          ...parseErrorPosition(text, err),
+        };
+        throw new CompilerError(`Failed to parse document syntax: ${diagnostic.message}`, [diagnostic]);
       }
     } else {
-      doc = input;
+      doc = input as RawKerangkaDocument;
+    }
+
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+      throw new CompilerError("Document root must be an object", [
+        {
+          severity: "error",
+          code: "SCHEMA_INVALID",
+          message: "Document root must be an object",
+          path: "",
+          hint: 'Start the document with { "kerangka": "0.1", "app": "<name>", ... }.',
+          ...(text !== undefined ? { line: 1, column: 1 } : {}),
+        },
+      ]);
     }
 
     if (!doc.app) {
-      this.addError("MISSING_APP_NAME", "Document root must declare an 'app' identifier");
+      this.addError("MISSING_APP_NAME", "Document root must declare an 'app' identifier", "/app",
+        'Add "app": "<name>" at the document root.');
     }
 
     // Process Entities
     const compiledEntities: KIRDocument["entities"] = {};
+    const inlinedEntities: Record<string, EntityDefinition> = {};
+    const origins: Record<string, EntityOrigins> = {};
     const rawEntities = doc.entities ?? {};
 
     // 1. Inlining traits
     const traits = (doc.traits as Record<string, EntityDefinition>) ?? {};
 
     for (const [entityName, rawEntity] of Object.entries(rawEntities)) {
-      const entity = this.inlineTraits(rawEntity, traits);
-      compiledEntities[entityName] = this.compileEntity(entityName, entity);
+      const inlined = this.inlineTraits(entityName, rawEntity, traits);
+      inlinedEntities[entityName] = inlined.entity;
+      origins[entityName] = inlined.origins;
+      compiledEntities[entityName] = this.compileEntity(entityName, inlined.entity, inlined.origins);
     }
 
-    // 2. Validate References across entities
-    this.validateReferences(compiledEntities);
+    // 2. Resolve every name: types, references, fields, functions, states
+    new ModelValidator(
+      {
+        entities: compiledEntities,
+        rawEntities: inlinedEntities,
+        origins,
+        valueTypes: Object.keys((doc.types as Record<string, unknown> | undefined) ?? {}),
+        decisions: Object.keys(doc.decisions ?? {}),
+      },
+      (diagnostic) => this.addError(diagnostic.code, diagnostic.message, diagnostic.path, diagnostic.hint)
+    ).validate();
 
     if (this.hasErrors()) {
+      this.attachPositions(text);
       throw new CompilerError(
         `Compilation failed with ${this.diagnostics.length} diagnostic error(s)`,
-        this.diagnostics
+        [...this.diagnostics]
       );
     }
 
@@ -107,47 +145,64 @@ export class Compiler {
   }
 
   private inlineTraits(
+    entityName: string,
     entity: EntityDefinition,
     traits: Record<string, EntityDefinition>
-  ): EntityDefinition {
+  ): { entity: EntityDefinition; origins: EntityOrigins } {
+    const origins: EntityOrigins = {
+      fields: Object.fromEntries(
+        Object.keys(entity.fields ?? {}).map((f) => [f, pointer("entities", entityName, "fields", f)])
+      ),
+      rules: (entity.rules ?? []).map((_, i) => pointer("entities", entityName, "rules", i)),
+      invariants: (entity.invariants ?? []).map((_, i) => pointer("entities", entityName, "invariants", i)),
+    };
+
     const uses = (entity as { uses?: string[] }).uses;
     if (!uses || !Array.isArray(uses)) {
-      return entity;
+      return { entity, origins };
     }
 
     const mergedFields = { ...entity.fields };
     const mergedRules = [...(entity.rules ?? [])];
     const mergedInvariants = [...(entity.invariants ?? [])];
 
-    for (const traitName of uses) {
+    uses.forEach((traitName, i) => {
       const trait = traits[traitName];
       if (!trait) {
-        this.addError("UNKNOWN_TRAIT", `Entity uses unknown trait '${traitName}'`);
-        continue;
+        this.addError("UNKNOWN_TRAIT", `Entity uses unknown trait '${traitName}'`,
+          pointer("entities", entityName, "uses", i), suggestion(traitName, Object.keys(traits), "traits"));
+        return;
       }
 
-      if (trait.fields) {
-        Object.assign(mergedFields, trait.fields);
+      for (const fieldName of Object.keys(trait.fields ?? {})) {
+        origins.fields[fieldName] = pointer("traits", traitName, "fields", fieldName);
       }
-      if (trait.rules) {
-        mergedRules.push(...trait.rules);
-      }
-      if (trait.invariants) {
-        mergedInvariants.push(...trait.invariants);
-      }
-    }
+      Object.assign(mergedFields, trait.fields ?? {});
+      (trait.rules ?? []).forEach((rule, j) => {
+        mergedRules.push(rule);
+        origins.rules.push(pointer("traits", traitName, "rules", j));
+      });
+      (trait.invariants ?? []).forEach((inv, j) => {
+        mergedInvariants.push(inv);
+        origins.invariants.push(pointer("traits", traitName, "invariants", j));
+      });
+    });
 
     return {
-      ...entity,
-      fields: mergedFields,
-      rules: mergedRules,
-      invariants: mergedInvariants,
+      entity: {
+        ...entity,
+        fields: mergedFields,
+        rules: mergedRules,
+        invariants: mergedInvariants,
+      },
+      origins,
     };
   }
 
   private compileEntity(
     entityName: string,
-    entity: EntityDefinition
+    entity: EntityDefinition,
+    origins: EntityOrigins
   ): KIRDocument["entities"][string] {
     const embedded = Boolean(entity.embedded);
 
@@ -167,7 +222,9 @@ export class Compiler {
         } catch (err) {
           this.addError(
             "EXPRESSION_ERROR",
-            `Invalid compute expression in ${entityName}.${fieldName}: ${(err as Error).message}`
+            `Invalid compute expression in ${entityName}.${fieldName}: ${(err as Error).message}`,
+            `${origins.fields[fieldName] ?? pointer("entities", entityName, "fields", fieldName)}/compute`,
+            EXPRESSION_HINT
           );
         }
       }
@@ -178,7 +235,7 @@ export class Compiler {
     const key = entity.key ?? (compiledFields.id ? "id" : (uniqueCandidate ?? "id"));
 
     // Compile rules
-    const compiledRules = (entity.rules ?? []).map((rule) => {
+    const compiledRules = (entity.rules ?? []).map((rule, i) => {
       let checkAst: ExprNode;
       if (typeof rule.check === "string") {
         try {
@@ -186,7 +243,9 @@ export class Compiler {
         } catch (err) {
           this.addError(
             "EXPRESSION_ERROR",
-            `Invalid rule check expression '${rule.check}' in ${entityName}: ${(err as Error).message}`
+            `Invalid rule check expression '${rule.check}' in ${entityName}: ${(err as Error).message}`,
+            `${origins.rules[i] ?? pointer("entities", entityName, "rules", i)}/check`,
+            EXPRESSION_HINT
           );
           checkAst = { literal: false };
         }
@@ -202,7 +261,7 @@ export class Compiler {
     });
 
     // Compile invariants
-    const compiledInvariants = (entity.invariants ?? []).map((inv) => {
+    const compiledInvariants = (entity.invariants ?? []).map((inv, i) => {
       let assertAst: ExprNode;
       if (typeof inv.assert === "string") {
         try {
@@ -210,7 +269,9 @@ export class Compiler {
         } catch (err) {
           this.addError(
             "EXPRESSION_ERROR",
-            `Invalid invariant assert expression '${inv.assert}' in ${entityName}: ${(err as Error).message}`
+            `Invalid invariant assert expression '${inv.assert}' in ${entityName}: ${(err as Error).message}`,
+            `${origins.invariants[i] ?? pointer("entities", entityName, "invariants", i)}/assert`,
+            EXPRESSION_HINT
           );
           assertAst = { literal: false };
         }
@@ -243,7 +304,9 @@ export class Compiler {
             } catch (err) {
               this.addError(
                 "EXPRESSION_ERROR",
-                `Invalid action 'when' expression in ${entityName}.${actionName}: ${(err as Error).message}`
+                `Invalid action 'when' expression in ${entityName}.${actionName}: ${(err as Error).message}`,
+                pointer("entities", entityName, "actions", actionName, "when"),
+                EXPRESSION_HINT
               );
             }
           } else {
@@ -325,7 +388,9 @@ export class Compiler {
           } catch (err) {
             this.addError(
               "EXPRESSION_ERROR",
-              `Invalid workflow transition 'when' guard in ${entityName}.${transName}: ${(err as Error).message}`
+              `Invalid workflow transition 'when' guard in ${entityName}.${transName}: ${(err as Error).message}`,
+              pointer("entities", entityName, "workflow", "transitions", transName, "when"),
+              EXPRESSION_HINT
             );
           }
         } else {
@@ -352,39 +417,40 @@ export class Compiler {
     };
   }
 
-  private validateReferences(entities: KIRDocument["entities"]): void {
-    const entityNames = new Set(Object.keys(entities));
-
-    for (const [entityName, entity] of Object.entries(entities)) {
-      for (const [fieldName, field] of Object.entries(entity.fields)) {
-        if (field.type === "ref" && field.target) {
-          if (!entityNames.has(field.target)) {
-            this.addError(
-              "UNKNOWN_REFERENCE",
-              `Field ${entityName}.${fieldName} references unknown entity '${field.target}'`
-            );
-          }
-        } else if (field.type === "list" && field.element?.target) {
-          if (!entityNames.has(field.element.target)) {
-            this.addError(
-              "UNKNOWN_REFERENCE",
-              `Field ${entityName}.${fieldName} lists unknown entity '${field.element.target}'`
-            );
-          }
-        }
-      }
-    }
-  }
-
-  private addError(code: string, message: string): void {
+  private addError(code: string, message: string, path?: string, hint?: string): void {
+    const duplicate = this.diagnostics.some(
+      (d) => d.code === code && d.path === path && d.message === message
+    );
+    if (duplicate) return;
     this.diagnostics.push({
       severity: "error",
       code,
       message,
+      ...(path !== undefined ? { path } : {}),
+      ...(hint !== undefined ? { hint } : {}),
     });
+  }
+
+  private attachPositions(text: string | undefined): void {
+    if (text === undefined) return;
+    const locator = SourceLocator.fromText(text);
+    if (!locator) return;
+    for (const diagnostic of this.diagnostics) {
+      if (diagnostic.path === undefined || diagnostic.line !== undefined) continue;
+      const position = locator.locate(diagnostic.path);
+      if (position) Object.assign(diagnostic, position);
+    }
   }
 
   private hasErrors(): boolean {
     return this.diagnostics.some((d) => d.severity === "error");
   }
+}
+
+/** Line and column of a JSON or YAML syntax error, when the parser reports one. */
+function parseErrorPosition(text: string, err: unknown): { line?: number; column?: number } {
+  const linePos = (err as { linePos?: { line: number; col: number }[] }).linePos?.[0];
+  if (linePos) return { line: linePos.line, column: linePos.col };
+  const offset = /position (\d+)/.exec((err as Error).message ?? "");
+  return offset ? offsetToPosition(text, Number(offset[1])) : {};
 }

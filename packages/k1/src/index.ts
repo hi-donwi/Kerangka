@@ -11,6 +11,7 @@ export * from "./types.js";
 export * from "./lexer.js";
 export * from "./parser.js";
 export * from "./evaluator.js";
+export * from "./builtins.js";
 
 import { Parser } from "./parser.js";
 import { evaluate } from "./evaluator.js";
