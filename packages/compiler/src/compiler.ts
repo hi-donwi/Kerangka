@@ -20,6 +20,7 @@ import {
   WorkflowDefinition,
 } from "./types.js";
 import { EntityOrigins, ModelValidator } from "./validate.js";
+import { WorkspaceLoader } from "./workspace.js";
 
 const EXPRESSION_HINT = "Expression syntax is in spec/k1.ebnf; string literals use single quotes.";
 
@@ -79,6 +80,20 @@ export class Compiler {
         'Add "app": "<name>" at the document root.');
     }
 
+    // 0. Load multi-context workspace if declared
+    if (doc.contexts && Array.isArray(doc.contexts)) {
+      const loader = new WorkspaceLoader(doc, this.options.sourcePath);
+      const wsResult = loader.load();
+      for (const diag of wsResult.diagnostics) {
+        this.addError(diag.code, diag.message, diag.path, diag.hint);
+      }
+      doc.entities = wsResult.flattenedEntities;
+      doc.events = wsResult.flattenedEvents;
+      doc.policies = wsResult.flattenedPolicies;
+      doc.decisions = wsResult.flattenedDecisions;
+      doc.traits = wsResult.flattenedTraits;
+    }
+
     // Process Entities
     const compiledEntities: KIRDocument["entities"] = {};
     const inlinedEntities: Record<string, EntityDefinition> = {};
@@ -133,6 +148,7 @@ export class Compiler {
       ...(doc.multitenancy ? { multitenancy: doc.multitenancy } : {}),
       entities: compiledEntities,
       ...(doc.events ? { events: doc.events } : {}),
+      ...(doc.policies ? { policies: doc.policies } : {}),
       ...(doc.decisions ? { decisions: doc.decisions } : {}),
       ...(doc.schedules ? { schedules: doc.schedules } : {}),
       ...(doc.extensions ? { extensions: doc.extensions } : {}),

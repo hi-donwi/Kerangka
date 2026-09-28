@@ -117,9 +117,11 @@ export interface RawKerangkaDocument {
     header?: string;
     claim?: string;
   };
+  contexts?: string[];
   traits?: Record<string, unknown>;
   entities?: Record<string, EntityDefinition>;
   events?: Record<string, unknown>;
+  policies?: Record<string, unknown>;
   decisions?: Record<string, unknown>;
   schedules?: Record<string, unknown>;
   extensions?: Record<string, unknown>;
@@ -177,6 +179,7 @@ export interface KIRDocument {
     }>;
   }>;
   events?: Record<string, unknown>;
+  policies?: Record<string, unknown>;
   decisions?: Record<string, unknown>;
   schedules?: Record<string, unknown>;
   extensions?: Record<string, unknown>;

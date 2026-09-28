@@ -17,6 +17,7 @@ export * from "./projections/uidl.js";
 export * from "./codegen/index.js";
 export * from "./diff/differ.js";
 export * from "./infra/compose.js";
+export * from "./workspace.js";
 
 import { Compiler } from "./compiler.js";
 import { DDLGenerator, DDLOptions } from "./ddl/generator.js";
