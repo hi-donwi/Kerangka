@@ -11,12 +11,15 @@
 /** Functions callable by name, e.g. `round(total, 2)`. */
 export const K1_FUNCTIONS: readonly string[] = [
   "abs",
+  "addDays",
+  "addDuration",
   "avg",
   "ceil",
   "coalesce",
   "concat",
   "contains",
   "count",
+  "diffDays",
   "floor",
   "isSet",
   "isUnchanged",
@@ -27,6 +30,7 @@ export const K1_FUNCTIONS: readonly string[] = [
   "now",
   "round",
   "sum",
+  "today",
   "trim",
   "upper",
 ];

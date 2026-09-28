@@ -16,7 +16,15 @@ import {
   UIDLDocument,
 } from "@kerangka/compiler";
 import { ActorContext, Engine } from "@kerangka/engine-ts";
-import { BusPort, ConnectorsPort, MemoryStore, StorePort, VersionConflictError } from "@kerangka/ports";
+import {
+  BusPort,
+  ConnectorsPort,
+  MemoryStore,
+  StorePort,
+  VersionConflictError,
+  SchedulerPort,
+  StoreScheduler,
+} from "@kerangka/ports";
 import { createProblemDetails, ProblemDetails } from "./problem.js";
 import { IdempotencyStore, MemoryIdempotencyStore } from "./idempotency.js";
 
@@ -25,6 +33,7 @@ export interface KerangkaHonoOptions {
   engine?: Engine;
   bus?: BusPort;
   connectors?: ConnectorsPort;
+  scheduler?: SchedulerPort;
   idempotencyStore?: IdempotencyStore;
   serverUrl?: string;
   cors?: boolean;
@@ -36,6 +45,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
   const engine = options.engine ?? new Engine(kir);
   const bus = options.bus;
   const connectors = options.connectors;
+  const scheduler = options.scheduler ?? new StoreScheduler(store);
   const idempotencyStore = options.idempotencyStore ?? new MemoryIdempotencyStore();
   const serverUrl = options.serverUrl ?? "http://localhost:3000";
 
@@ -439,10 +449,10 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       }
     }
 
-    // Dispatch side-effects (call, notify) to connectors if available
-    if (connectors && runResult.effects && runResult.effects.length > 0) {
+    // Dispatch side-effects (call, notify, timer, cancel-timer)
+    if (runResult.effects && runResult.effects.length > 0) {
       for (const effect of runResult.effects) {
-        if (effect.type === "call") {
+        if (effect.type === "call" && connectors) {
           const extDef = kir.extensions?.[effect.extension] as Record<string, unknown> | undefined;
           const targetConnector = (extDef?.connector as string) || effect.extension;
           const canHandle = typeof connectors.has === "function" ? connectors.has(targetConnector) : true;
@@ -462,7 +472,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
               // Ignore or log unhandled external connector calls
             }
           }
-        } else if (effect.type === "notify") {
+        } else if (effect.type === "notify" && connectors) {
           const canEmail = typeof connectors.has === "function" ? connectors.has("email") : true;
           if (canEmail) {
             await connectors.call({
@@ -475,6 +485,24 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
               },
               tenantId,
             });
+          }
+        } else if (effect.type === "timer") {
+          try {
+            await scheduler.scheduleAt(effect.action, effect.at, effect.payload ?? {}, {
+              target: effect.target || id,
+              action: effect.action,
+              tenantId,
+            });
+          } catch {
+            // Ignore
+          }
+        } else if (effect.type === "cancel-timer") {
+          try {
+            if (scheduler.cancelByTarget) {
+              await scheduler.cancelByTarget(effect.target || id, effect.action);
+            }
+          } catch {
+            // Ignore
           }
         }
       }
@@ -580,10 +608,10 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       }
     }
 
-    // Dispatch side-effects (call, notify) to connectors if available
-    if (connectors && transResult.effects && transResult.effects.length > 0) {
+    // Dispatch side-effects (call, notify, timer, cancel-timer)
+    if (transResult.effects && transResult.effects.length > 0) {
       for (const effect of transResult.effects) {
-        if (effect.type === "call") {
+        if (effect.type === "call" && connectors) {
           const extDef = kir.extensions?.[effect.extension] as Record<string, unknown> | undefined;
           const targetConnector = (extDef?.connector as string) || effect.extension;
           const canHandle = typeof connectors.has === "function" ? connectors.has(targetConnector) : true;
@@ -603,7 +631,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
               // Ignore or log unhandled external connector calls
             }
           }
-        } else if (effect.type === "notify") {
+        } else if (effect.type === "notify" && connectors) {
           const canEmail = typeof connectors.has === "function" ? connectors.has("email") : true;
           if (canEmail) {
             await connectors.call({
@@ -616,6 +644,24 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
               },
               tenantId,
             });
+          }
+        } else if (effect.type === "timer") {
+          try {
+            await scheduler.scheduleAt(effect.action, effect.at, effect.payload ?? {}, {
+              target: effect.target || id,
+              action: effect.action,
+              tenantId,
+            });
+          } catch {
+            // Ignore
+          }
+        } else if (effect.type === "cancel-timer") {
+          try {
+            if (scheduler.cancelByTarget) {
+              await scheduler.cancelByTarget(effect.target || id, effect.action);
+            }
+          } catch {
+            // Ignore
           }
         }
       }

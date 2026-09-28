@@ -52,7 +52,9 @@ export type Effect =
   | { type: "emit"; event: CloudEvent }
   | { type: "call"; extension: string; input: Record<string, unknown> }
   | { type: "persist"; entity: string; record: Record<string, unknown>; isNew?: boolean }
-  | { type: "notify"; recipient: string; template: string; params: Record<string, unknown> };
+  | { type: "notify"; recipient: string; template: string; params: Record<string, unknown> }
+  | { type: "timer"; at: string; action: string; target: string; payload?: Record<string, unknown> }
+  | { type: "cancel-timer"; target: string; action?: string };
 
 export interface TraceStep {
   step: "role_check" | "state_check" | "guard" | "compute" | "mutation" | "invariants" | "effects";

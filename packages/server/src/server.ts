@@ -16,14 +16,27 @@ import {
   McpToolDefinition,
   UIDLDocument,
 } from "@kerangka/compiler";
-import { StorePort, MemoryStore, VersionConflictError, ConnectorsPort, DefaultConnectors } from "@kerangka/ports";
-import { Engine } from "@kerangka/engine-ts";
+import {
+  StorePort,
+  MemoryStore,
+  VersionConflictError,
+  ConnectorsPort,
+  DefaultConnectors,
+  SchedulerPort,
+  StoreScheduler,
+  ScheduledJob,
+} from "@kerangka/ports";
+import { Engine, Effect } from "@kerangka/engine-ts";
+import { SchedulerRunner } from "./scheduler-runner.js";
 
 export interface ServerOptions {
   port?: number;
   host?: string;
   store?: StorePort;
   connectors?: ConnectorsPort;
+  scheduler?: SchedulerPort;
+  enableSchedulerRunner?: boolean;
+  runnerPollIntervalMs?: number;
   quiet?: boolean;
 }
 
@@ -33,6 +46,8 @@ export class KerangkaServer {
   readonly host: string;
   readonly store: StorePort;
   readonly connectors: ConnectorsPort;
+  readonly scheduler: SchedulerPort;
+  readonly runner: SchedulerRunner;
   readonly engine: Engine;
   readonly openApiSpec: Record<string, unknown>;
   readonly graphqlSchema: string;
@@ -41,6 +56,7 @@ export class KerangkaServer {
 
   private httpServer: http.Server | null = null;
   private quiet: boolean;
+  private enableSchedulerRunner: boolean;
   private idempotencyCache = new Map<string, { status: number; body: unknown }>();
 
   constructor(kir: KIRDocument, options: ServerOptions = {}) {
@@ -48,9 +64,24 @@ export class KerangkaServer {
     this.port = options.port || 3000;
     this.host = options.host || "localhost";
     this.quiet = options.quiet ?? false;
+    this.enableSchedulerRunner = options.enableSchedulerRunner ?? false;
     this.store = options.store || new MemoryStore();
     this.connectors = options.connectors || new DefaultConnectors();
+    this.scheduler = options.scheduler || new StoreScheduler(this.store);
     this.engine = new Engine(kir);
+
+    this.runner = new SchedulerRunner({
+      scheduler: this.scheduler,
+      executeJob: async (job) => {
+        await this.executeScheduledJob(job);
+      },
+      pollIntervalMs: options.runnerPollIntervalMs ?? 1000,
+      onError: (err, job) => {
+        if (!this.quiet) {
+          console.warn(`[kerangka] Failed executing scheduled job '${job.id}' (${job.name}):`, err);
+        }
+      },
+    });
 
     this.openApiSpec = generateOpenAPI(kir, {
       serverUrl: `http://${this.host}:${this.port}`,
@@ -72,6 +103,9 @@ export class KerangkaServer {
       });
 
       this.httpServer.listen(this.port, this.host, () => {
+        if (this.enableSchedulerRunner) {
+          this.runner.start();
+        }
         if (!this.quiet) {
           console.log(`Kerangka Dev Server running at http://${this.host}:${this.port}`);
           console.log(`- Playground: http://${this.host}:${this.port}/`);
@@ -85,6 +119,7 @@ export class KerangkaServer {
   }
 
   async stop(): Promise<void> {
+    this.runner.stop();
     return new Promise((resolve, reject) => {
       if (!this.httpServer) return resolve();
       this.httpServer.close((err) => {
@@ -377,48 +412,8 @@ export class KerangkaServer {
           actor: actionActor?.id ? { id: actionActor.id } : undefined,
         });
 
-        // Dispatch side-effects to connectors
-        if (this.connectors && result.effects && result.effects.length > 0) {
-          for (const effect of result.effects) {
-            if (effect.type === "call") {
-              const extDef = this.kir.extensions?.[effect.extension] as Record<string, unknown> | undefined;
-              const targetConnector = (extDef?.connector as string) || effect.extension;
-              const canHandle = typeof this.connectors.has === "function" ? this.connectors.has(targetConnector) : true;
-              if (canHandle) {
-                try {
-                  await this.connectors.call({
-                    connector: targetConnector,
-                    operation: (extDef?.operation as string) || "call",
-                    payload: {
-                      ...(extDef || {}),
-                      input: effect.input,
-                      ...(typeof effect.input === "object" ? effect.input : {}),
-                    },
-                    tenantId,
-                  });
-                } catch (err) {
-                  if (!this.quiet) {
-                    console.warn(`[kerangka] Connector call '${targetConnector}' failed:`, err);
-                  }
-                }
-              }
-            } else if (effect.type === "notify") {
-              const canEmail = typeof this.connectors.has === "function" ? this.connectors.has("email") : true;
-              if (canEmail) {
-                await this.connectors.call({
-                  connector: "email",
-                  operation: "send",
-                  payload: {
-                    to: effect.recipient,
-                    template: effect.template,
-                    params: effect.params,
-                  },
-                  tenantId,
-                });
-              }
-            }
-          }
-        }
+        // Dispatch side-effects (call, notify, timer, cancel-timer)
+        await this.dispatchEffects(result.effects, entityName, id, tenantId);
 
         const resPayload = {
           ok: true,
@@ -567,6 +562,7 @@ export class KerangkaServer {
 
         const updatedState = result.record || item;
         await this.store.update(entityName, args.id, updatedState as Record<string, unknown>);
+        await this.dispatchEffects(result.effects, entityName, String(args.id));
 
         return {
           content: [
@@ -725,5 +721,107 @@ export class KerangkaServer {
   </div>
 </body>
 </html>`;
+  }
+
+  private async dispatchEffects(
+    effects: Effect[] | undefined,
+    entityName: string,
+    recordId?: string,
+    tenantId?: string
+  ): Promise<void> {
+    if (!effects || effects.length === 0) return;
+
+    for (const effect of effects) {
+      if (effect.type === "call" && this.connectors) {
+        const extDef = this.kir.extensions?.[effect.extension] as Record<string, unknown> | undefined;
+        const targetConnector = (extDef?.connector as string) || effect.extension;
+        const canHandle = typeof this.connectors.has === "function" ? this.connectors.has(targetConnector) : true;
+        if (canHandle) {
+          try {
+            await this.connectors.call({
+              connector: targetConnector,
+              operation: (extDef?.operation as string) || "call",
+              payload: {
+                ...(extDef || {}),
+                input: effect.input,
+                ...(typeof effect.input === "object" ? effect.input : {}),
+              },
+              tenantId,
+            });
+          } catch (err) {
+            if (!this.quiet) {
+              console.warn(`[kerangka] Connector call '${targetConnector}' failed:`, err);
+            }
+          }
+        }
+      } else if (effect.type === "notify" && this.connectors) {
+        const canEmail = typeof this.connectors.has === "function" ? this.connectors.has("email") : true;
+        if (canEmail) {
+          try {
+            await this.connectors.call({
+              connector: "email",
+              operation: "send",
+              payload: {
+                to: effect.recipient,
+                template: effect.template,
+                params: effect.params,
+              },
+              tenantId,
+            });
+          } catch (err) {
+            if (!this.quiet) {
+              console.warn("[kerangka] Email notification failed:", err);
+            }
+          }
+        }
+      } else if (effect.type === "timer") {
+        try {
+          await this.scheduler.scheduleAt(effect.action, effect.at, effect.payload ?? {}, {
+            target: effect.target || recordId,
+            action: effect.action,
+            tenantId,
+          });
+        } catch (err) {
+          if (!this.quiet) {
+            console.warn(`[kerangka] Failed to schedule timer '${effect.action}':`, err);
+          }
+        }
+      } else if (effect.type === "cancel-timer") {
+        try {
+          if (this.scheduler.cancelByTarget) {
+            await this.scheduler.cancelByTarget(effect.target || recordId || "", effect.action);
+          }
+        } catch (err) {
+          if (!this.quiet) {
+            console.warn(`[kerangka] Failed to cancel timer for target '${effect.target}':`, err);
+          }
+        }
+      }
+    }
+  }
+
+  async executeScheduledJob(job: ScheduledJob): Promise<void> {
+    const actionFullName = job.action || (job.name.includes(".") ? job.name : undefined);
+    if (!actionFullName) return;
+
+    const [entityName, opName] = actionFullName.split(".");
+    if (!entityName || !opName) return;
+
+    const recordId = job.target;
+    if (!recordId) return;
+
+    const record = await this.store.get(entityName, recordId);
+    if (!record) return;
+
+    const systemActor = { id: "system", roles: ["system", "admin"] };
+    const res = this.engine.run(entityName, opName, record, {}, systemActor);
+    if (res.ok && res.record) {
+      await this.store.update(entityName, recordId, res.record, {
+        actor: { id: "system" },
+      });
+      if (res.effects && res.effects.length > 0) {
+        await this.dispatchEffects(res.effects, entityName, recordId);
+      }
+    }
   }
 }

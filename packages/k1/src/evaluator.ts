@@ -11,6 +11,13 @@ import {
   ExprNode,
   K1EvaluationError,
 } from "./types.js";
+import {
+  addDays,
+  diffDays,
+  addDuration,
+  today as temporalToday,
+  nowInstant,
+} from "./temporal.js";
 
 /**
  * Exact decimal arithmetic helpers to avoid binary float artifacts (ADR-0004).
@@ -208,9 +215,18 @@ function evaluateCall(node: CallNode, ctx: EvalContext): unknown {
       return null;
     }
     if (typeof left !== "number" || typeof right !== "number") {
-      // String concatenation on '+' or 'add' if both are strings
+      // Date arithmetic: date + ISO duration (spec/semantics/temporal.md §4.2)
       if ((op === "+" || op === "add") && typeof left === "string" && typeof right === "string") {
+        if (/^\d{4}-\d{2}-\d{2}/.test(left) && /^([+-])?P/i.test(right)) {
+          return addDuration(left, right);
+        }
         return left + right;
+      }
+      if ((op === "-" || op === "subtract") && typeof left === "string" && typeof right === "string") {
+        if (/^\d{4}-\d{2}-\d{2}/.test(left) && /^([+-])?P/i.test(right)) {
+          const negatedDuration = right.startsWith("-") ? right.slice(1) : `-${right}`;
+          return addDuration(left, negatedDuration);
+        }
       }
       throw new K1EvaluationError(`Arithmetic operator '${op}' expects numeric operands`, "TYPE_ERROR");
     }
@@ -389,11 +405,26 @@ function evaluateCall(node: CallNode, ctx: EvalContext): unknown {
       return false;
     }
     case "today": {
-      const nowStr = ctx.now ? (typeof ctx.now === "string" ? ctx.now : ctx.now.toISOString()) : new Date().toISOString();
-      return nowStr.split("T")[0];
+      const tz = typeof left === "string" ? left : (typeof ctx.timezone === "string" ? ctx.timezone : "UTC");
+      return temporalToday(tz, ctx.now);
     }
     case "now": {
-      return ctx.now ? (typeof ctx.now === "string" ? ctx.now : ctx.now.toISOString()) : new Date().toISOString();
+      return nowInstant(ctx.now);
+    }
+    case "addDays": {
+      if (left === null || left === undefined || right === null || right === undefined) return null;
+      if (typeof right !== "number") {
+        throw new K1EvaluationError("addDays() requires a number of days as second argument", "TYPE_ERROR");
+      }
+      return addDays(String(left), right);
+    }
+    case "diffDays": {
+      if (left === null || left === undefined || right === null || right === undefined) return null;
+      return diffDays(String(left), String(right));
+    }
+    case "addDuration": {
+      if (left === null || left === undefined || right === null || right === undefined) return null;
+      return addDuration(String(left), String(right));
     }
 
     default:

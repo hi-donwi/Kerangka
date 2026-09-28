@@ -22,6 +22,7 @@ export * from "./memory/memory-store.js";
 export * from "./memory/memory-bus.js";
 export * from "./memory/memory-cache.js";
 export * from "./memory/memory-secrets.js";
+export * from "./memory/memory-scheduler.js";
 
 // Built-in Connectors & Registry
 export * from "./connectors/http.js";
@@ -29,6 +30,7 @@ export * from "./connectors/sequence.js";
 export * from "./connectors/email.js";
 export * from "./connectors/registry.js";
 
-// Transactional Outbox Bus
+// Transactional Outbox Bus & Store Scheduler
 export * from "./outbox-bus.js";
+export * from "./store-scheduler.js";
 

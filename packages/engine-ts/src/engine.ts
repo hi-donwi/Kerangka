@@ -5,7 +5,7 @@
  * License: Apache-2.0
  */
 
-import { evaluate, ExprNode } from "@kerangka/k1";
+import { evaluate, ExprNode, addDuration, getNextCronRun } from "@kerangka/k1";
 import {
   ActorContext,
   AvailableOperation,
@@ -473,7 +473,98 @@ export class Engine {
     if (isTransition) {
       const transition = entity.workflow.transitions[opName];
       const statusField = entity.workflow.field ?? "status";
-      nextRecord[statusField] = transition.to;
+      const fromState = record[statusField];
+      const toState = transition.to;
+      nextRecord[statusField] = toState;
+      const recordId = record.id !== undefined ? String(record.id) : (record._id !== undefined ? String(record._id) : "");
+
+      // 1. Leaving fromState: cancel any existing timers for fromState (PLAN.md §5.9)
+      if (fromState && entity.workflow) {
+        if (entity.workflow.tasks) {
+          for (const [, taskDef] of Object.entries(entity.workflow.tasks)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const task = taskDef as any;
+            if (task.state === fromState && task.due && task.onOverdue) {
+              effects.push({
+                type: "cancel-timer",
+                target: recordId,
+                action: `${entityName}.${task.onOverdue}`,
+              });
+            }
+          }
+        }
+        if (entity.workflow.transitions) {
+          for (const [tName, tDef] of Object.entries(entity.workflow.transitions)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const t = tDef as any;
+            const matchesFrom = t.from === fromState || (Array.isArray(t.from) && t.from.includes(fromState));
+            if (matchesFrom && (t.after || t.timer)) {
+              effects.push({
+                type: "cancel-timer",
+                target: recordId,
+                action: `${entityName}.${tName}`,
+              });
+            }
+          }
+        }
+      }
+
+      // 2. Entering toState: schedule timers for toState (PLAN.md §5.9)
+      if (toState && entity.workflow) {
+        if (entity.workflow.tasks) {
+          for (const [, taskDef] of Object.entries(entity.workflow.tasks)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const task = taskDef as any;
+            if (task.state === toState && task.due && task.onOverdue) {
+              try {
+                const triggerAt = addDuration(nowIso, String(task.due));
+                effects.push({
+                  type: "timer",
+                  at: triggerAt,
+                  action: `${entityName}.${task.onOverdue}`,
+                  target: recordId,
+                  payload: { entity: entityName, id: recordId, transition: task.onOverdue },
+                });
+              } catch {
+                // Ignore duration parse errors gracefully
+              }
+            }
+          }
+        }
+        if (entity.workflow.transitions) {
+          for (const [tName, tDef] of Object.entries(entity.workflow.transitions)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const t = tDef as any;
+            const matchesTo = t.from === toState || (Array.isArray(t.from) && t.from.includes(toState));
+            if (matchesTo && (t.after || t.timer)) {
+              let triggerAt: string | undefined;
+              const durStr = t.after ?? (typeof t.timer === "string" ? t.timer : t.timer?.after);
+              if (durStr) {
+                try {
+                  triggerAt = addDuration(nowIso, String(durStr));
+                } catch {
+                  // Ignore
+                }
+              } else if (t.timer?.at) {
+                const atVal = nextRecord[t.timer.at] ?? evaluate(t.timer.at as ExprNode, { record: nextRecord, now: nowIso });
+                if (atVal) {
+                  triggerAt = new Date(String(atVal)).toISOString();
+                }
+              }
+
+              if (triggerAt) {
+                effects.push({
+                  type: "timer",
+                  at: triggerAt,
+                  action: `${entityName}.${tName}`,
+                  target: recordId,
+                  payload: { entity: entityName, id: recordId, transition: tName },
+                });
+              }
+            }
+          }
+        }
+      }
 
       if (Array.isArray(transition.then)) {
         for (const effect of transition.then) {
@@ -489,6 +580,19 @@ export class Engine {
           }
           if (effect.call) {
             effects.push({ type: "call", extension: effect.call, input: effect.input ?? {} });
+          }
+          if (effect.timer || effect.after) {
+            const dur = effect.after ?? (typeof effect.timer === "string" ? effect.timer : effect.timer?.after);
+            const act = effect.action ?? `${entityName}.${opName}`;
+            if (dur) {
+              effects.push({
+                type: "timer",
+                at: addDuration(nowIso, String(dur)),
+                action: act,
+                target: recordId,
+                payload: effect.payload ?? { entity: entityName, id: recordId },
+              });
+            }
           }
         }
       }
@@ -1007,48 +1111,118 @@ export class Engine {
     if (!entity) return [];
 
     const triggers: ScheduledTrigger[] = [];
-    const nowMs = now ? (typeof now === "string" ? new Date(now).getTime() : now.getTime()) : Date.now();
-    const recordId = record.id !== undefined ? String(record.id) : undefined;
+    const nowIso = now
+      ? (typeof now === "string" ? now : now.toISOString())
+      : new Date().toISOString();
+    const recordId = record.id !== undefined ? String(record.id) : (record._id !== undefined ? String(record._id) : undefined);
+    const statusField = entity.workflow?.field ?? "status";
+    const currentStatus = record[statusField];
 
+    // 1. Workflow transitions with timer or after
     if (entity.workflow?.transitions) {
       for (const [transName, transDef] of Object.entries(entity.workflow.transitions)) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const t = transDef as any;
-        if (!t.timer) continue;
+        if (!t.timer && !t.after) continue;
 
-        let triggerAtMs: number | undefined;
+        // If transition has 'from', it only triggers if current record matches 'from'
+        if (t.from && currentStatus !== undefined) {
+          const matches = t.from === currentStatus || (Array.isArray(t.from) && t.from.includes(currentStatus));
+          if (!matches) continue;
+        }
 
-        if (t.timer.after) {
-          const str = String(t.timer.after);
-          const match = str.match(/^(\d+)([smhd])$/);
-          if (match) {
-            const qty = Number(match[1]);
-            const unit = match[2];
-            const multipliers: Record<string, number> = {
-              s: 1000,
-              m: 60 * 1000,
-              h: 60 * 60 * 1000,
-              d: 24 * 60 * 60 * 1000,
-            };
-            triggerAtMs = nowMs + qty * (multipliers[unit!] ?? 1000);
+        let triggerAtIso: string | undefined;
+        const durStr = t.after ?? (typeof t.timer === "string" ? t.timer : t.timer?.after);
+
+        if (durStr) {
+          try {
+            triggerAtIso = addDuration(nowIso, String(durStr));
+          } catch {
+            // Fallback to legacy numeric parsing if needed
+            const match = String(durStr).match(/^(\d+)([smhd])$/i);
+            if (match) {
+              const qty = Number(match[1]);
+              const unit = match[2]!.toLowerCase();
+              const multipliers: Record<string, number> = {
+                s: 1000,
+                m: 60 * 1000,
+                h: 60 * 60 * 1000,
+                d: 24 * 60 * 60 * 1000,
+              };
+              const ms = new Date(nowIso).getTime() + qty * (multipliers[unit] ?? 1000);
+              triggerAtIso = new Date(ms).toISOString();
+            }
           }
-        } else if (t.timer.at) {
-          const atVal = record[t.timer.at] ?? evaluate(t.timer.at as ExprNode, { record, now: new Date(nowMs).toISOString() });
+        } else if (t.timer?.at) {
+          const atVal = record[t.timer.at] ?? evaluate(t.timer.at as ExprNode, { record, now: nowIso });
           if (atVal) {
-            triggerAtMs = new Date(String(atVal)).getTime();
+            triggerAtIso = new Date(String(atVal)).toISOString();
           }
         }
 
-        if (triggerAtMs !== undefined && !isNaN(triggerAtMs)) {
+        if (triggerAtIso) {
           triggers.push({
             id: `trig_${entityName}_${transName}_${recordId ?? "0"}`,
             entity: entityName,
             recordId,
             type: "timer",
             target: `${entityName}.${transName}`,
-            triggerAt: new Date(triggerAtMs).toISOString(),
+            triggerAt: triggerAtIso,
             payload: { transition: transName },
           });
+        }
+      }
+    }
+
+    // 2. Workflow tasks with SLA due and onOverdue
+    if (entity.workflow?.tasks) {
+      for (const [taskName, taskDef] of Object.entries(entity.workflow.tasks)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const task = taskDef as any;
+        if (task.due && task.onOverdue) {
+          if (task.state && currentStatus !== undefined && task.state !== currentStatus) {
+            continue;
+          }
+          try {
+            const triggerAtIso = addDuration(nowIso, String(task.due));
+            triggers.push({
+              id: `trig_task_${entityName}_${taskName}_${recordId ?? "0"}`,
+              entity: entityName,
+              recordId,
+              type: "timer",
+              target: `${entityName}.${task.onOverdue}`,
+              triggerAt: triggerAtIso,
+              payload: { task: taskName, transition: task.onOverdue },
+            });
+          } catch {
+            // Ignore
+          }
+        }
+      }
+    }
+
+    // 3. Document or entity-level recurring schedules (PLAN.md §5.9)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allSchedules: Record<string, any> = {
+      ...(entity as any).schedules,
+      ...(this.ir as any).schedules,
+    };
+
+    for (const [sName, sDef] of Object.entries(allSchedules)) {
+      if (sDef && sDef.cron) {
+        try {
+          const nextRun = getNextCronRun(sDef.cron, nowIso);
+          triggers.push({
+            id: `sched_${entityName}_${sName}`,
+            entity: entityName,
+            type: "cron",
+            target: sDef.run ?? sDef.action ?? `${entityName}.${sName}`,
+            triggerAt: nextRun.toISOString(),
+            expression: sDef.cron,
+            payload: { for: sDef.for, schedule: sName },
+          });
+        } catch {
+          // Ignore
         }
       }
     }
