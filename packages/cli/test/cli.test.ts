@@ -13,7 +13,8 @@ import {
   codegenCommand,
   diffCommand,
   composeCommand,
-  emitCommand
+  emitCommand,
+  lintCommand
 } from "../src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -119,5 +120,64 @@ describe("Kerangka CLI Commands", () => {
     const success = emitCommand("compose", examplePath, { output: outEmit });
     expect(success).toBe(true);
     expect(fs.existsSync(outEmit)).toBe(true);
+  });
+
+  it("lintCommand passes on every example with the recommended preset", () => {
+    const examplesDir = path.resolve(__dirname, "../../../examples");
+    for (const name of ["todo", "invoicing", "leave-request", "inventory"]) {
+      expect(lintCommand(path.join(examplesDir, `${name}.kerangka.json`))).toBe(true);
+    }
+    // A workspace directory resolves to its manifest.
+    expect(lintCommand(path.join(examplesDir, "commerce"))).toBe(true);
+  });
+
+  it("lintCommand reports a finding and fails", () => {
+    const badPath = path.join(tmpDir, "bad.kerangka.json");
+    fs.writeFileSync(
+      badPath,
+      JSON.stringify(
+        {
+          kerangka: "0.1",
+          app: "Bad_App",
+          entities: { order: { fields: { id: "uuid!" } } },
+          events: { PlaceOrder: { id: "uuid!" } },
+        },
+        null,
+        2
+      )
+    );
+    expect(lintCommand(badPath, { failOn: "warning" })).toBe(false);
+  });
+
+  it("lintCommand emits a machine-readable report", () => {
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.join(" "));
+    };
+    try {
+      lintCommand(examplePath, { format: "json" });
+    } finally {
+      console.log = original;
+    }
+    const report = JSON.parse(lines.join("\n"));
+    expect(report.ok).toBe(true);
+    expect(report.preset).toBe("kerangka:recommended");
+    expect(report.diagnostics).toEqual([]);
+    expect(report.counts.entities).toBe(3);
+  });
+
+  it("lintCommand honours the kerangka:off preset", () => {
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.join(" "));
+    };
+    try {
+      lintCommand(examplePath, { format: "json", preset: "kerangka:off" });
+    } finally {
+      console.log = original;
+    }
+    expect(JSON.parse(lines.join("\n")).preset).toBe("kerangka:off");
   });
 });

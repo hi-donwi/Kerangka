@@ -44,6 +44,11 @@ Install or run via `npx kerangka`:
 # Check model syntax, types, and expression validity
 kerangka check examples/invoicing.kerangka.json
 
+# Report boundaries, naming rules, and complexity budgets
+kerangka lint examples/invoicing.kerangka.json
+kerangka lint examples/commerce --topology distributed --fail-on warning
+kerangka lint examples/invoicing.kerangka.json --format json
+
 # Compile model into canonical Intermediate Representation (KIR)
 kerangka build examples/invoicing.kerangka.json -o build/invoicing.kir.json
 
@@ -88,7 +93,7 @@ kerangka dev examples/invoicing.kerangka.json --port 3000
 | Package | Path | Description |
 |---|---|---|
 | `@kerangka/k1` | `packages/k1` | Pratt expression parser, exact decimal arithmetic, three-valued logic |
-| `@kerangka/compiler` | `packages/compiler` | Shorthand expander, DDL generator, OpenAPI, GraphQL, MCP, UIDL, and Compose projectors |
+| `@kerangka/compiler` | `packages/compiler` | Shorthand expander, linter, DDL generator, OpenAPI, GraphQL, MCP, UIDL, and Compose projectors |
 | `@kerangka/engine-ts` | `packages/engine-ts` | Pure reference execution engine in TypeScript |
 | `@kerangka/ports` | `packages/ports` | 10 runtime port contracts and memory adapters |
 | `@kerangka/client` | `packages/client` | Offline-first client runtime, mutation outbox, and action replay sync |

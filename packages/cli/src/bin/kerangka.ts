@@ -9,6 +9,7 @@
 import { parseArgs } from "node:util";
 import { VERSION } from "../index.js";
 import { checkCommand } from "../commands/check.js";
+import { lintCommand } from "../commands/lint.js";
 import { buildCommand } from "../commands/build.js";
 import { expandCommand } from "../commands/expand.js";
 import { statsCommand } from "../commands/stats.js";
@@ -35,6 +36,7 @@ USAGE:
 
 COMMANDS:
   check <file>            Verify model syntax, references, and expressions
+  lint <path>             Report boundaries, naming rules, and complexity budgets
   build <file>            Compile model into canonical KIR JSON
   ddl <file>              Generate SQL DDL schema statements (PostgreSQL or SQLite)
   openapi <file>          Generate OpenAPI 3.1 specification JSON
@@ -55,7 +57,10 @@ OPTIONS:
   -t, --target <lang>     Target language for 'codegen' (ts | java | python | go, default: ts)
   --package <name>        Package namespace for generated Java or Go code
   --check-breaking        Exit with error code if breaking changes are detected in 'diff'
-  --format <text|json>    Diagnostics format for 'check' (default: text)
+  --format <text|json>    Diagnostics format for 'check' and 'lint' (default: text)
+  --preset <name>         Lint preset for 'lint' (kerangka:recommended | kerangka:off)
+  --topology <name>       Deployment topology for 'lint'; reports loads crossing services
+  --fail-on <severity>    Lowest severity that fails 'lint' (error | warning, default: error)
   -o, --output <path>     Output file or directory path (use '-' for stdout)
   -p, --port <number>     Port for dev server (default: 3000)
   --drop                  Include DROP TABLE IF EXISTS statements in DDL
@@ -66,6 +71,8 @@ OPTIONS:
 EXAMPLES:
   kerangka check examples/invoicing.kerangka.json
   kerangka check examples/invoicing.kerangka.json --format json
+  kerangka lint examples/invoicing.kerangka.json
+  kerangka lint examples/commerce --topology distributed --fail-on warning
   kerangka build examples/invoicing.kerangka.json -o build/invoicing.kir.json
   kerangka codegen examples/invoicing.kerangka.json --target java -o InvoiceModel.java
   kerangka codegen examples/invoicing.kerangka.json --target python -o models.py
@@ -90,6 +97,9 @@ async function main(): Promise<void> {
         audit: { type: "boolean", default: true },
         "check-breaking": { type: "boolean" },
         format: { type: "string" },
+        preset: { type: "string" },
+        topology: { type: "string" },
+        "fail-on": { type: "string" },
       },
       allowPositionals: true,
     });
@@ -122,6 +132,20 @@ async function main(): Promise<void> {
           process.exit(1);
         }
         success = checkCommand(file!, { format });
+        break;
+      }
+      case "lint": {
+        const failOn = values["fail-on"] ?? "error";
+        if (failOn !== "error" && failOn !== "warning") {
+          console.error(`Error: --fail-on must be 'error' or 'warning', got '${failOn}'`);
+          process.exit(1);
+        }
+        success = lintCommand(file!, {
+          format: values.format === "json" ? "json" : "text",
+          preset: values.preset,
+          topology: values.topology,
+          failOn,
+        });
         break;
       }
       case "build":
