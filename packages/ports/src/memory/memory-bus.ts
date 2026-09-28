@@ -31,10 +31,16 @@ export class MemoryBus implements BusPort {
     };
     this.events.push(entry);
 
-    const listeners = this.handlers.get(event);
-    if (listeners) {
-      for (const listener of listeners) {
-        await listener(payload, entry.metadata);
+    for (const [pattern, listeners] of this.handlers.entries()) {
+      const matches =
+        pattern === "*" ||
+        pattern === event ||
+        (pattern.endsWith("*") && event.startsWith(pattern.slice(0, -1)));
+
+      if (matches) {
+        for (const listener of listeners) {
+          await listener(payload, entry.metadata);
+        }
       }
     }
   }

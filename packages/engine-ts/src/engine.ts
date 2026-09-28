@@ -1067,7 +1067,11 @@ export class Engine {
     actor?: ActorContext,
     now?: string | Date
   ): ExecutionResult {
-    return this.run(entityName, transitionName, record, {}, actor, { now });
+    const res = this.run(entityName, transitionName, record, {}, actor, { now });
+    if (!res.ok && res.error === "UNKNOWN_OPERATION") {
+      return { ...res, error: "UNKNOWN_TRANSITION" };
+    }
+    return res;
   }
 
   executeAction(

@@ -1,15 +1,25 @@
 /**
  * Kerangka In-Memory Store Adapter for fast hermetic testing
- * Specification Version: 0.1
+ * Specification Version: 0.2
  * Status: Draft
  * License: Apache-2.0
  */
 
-import { QueryFilter, QueryOptions, QueryResult, StorePort } from "../store.js";
+import {
+  OutboxMessage,
+  QueryFilter,
+  QueryOptions,
+  QueryResult,
+  StorePort,
+  TimerEntry,
+  VersionConflictError,
+} from "../store.js";
 
 export class MemoryStore implements StorePort {
   // entityName -> id -> record
   private data: Map<string, Map<string | number, Record<string, unknown>>>;
+  private outbox: OutboxMessage[] = [];
+  private timers: TimerEntry[] = [];
 
   constructor(initialData?: Map<string, Map<string | number, Record<string, unknown>>>) {
     this.data = initialData ?? new Map();
@@ -43,6 +53,11 @@ export class MemoryStore implements StorePort {
     }
 
     let items = Array.from(table.values());
+
+    // Soft delete filtering
+    if (!options?.includeSoftDeleted) {
+      items = items.filter((i) => i.deleted !== true);
+    }
 
     if (options?.tenantId) {
       items = items.filter((i) => i.tenantId === options.tenantId);
@@ -107,6 +122,9 @@ export class MemoryStore implements StorePort {
       data.createdBy = options.actor.id;
       data.updatedBy = options.actor.id;
     }
+    if (data.version === undefined && record.version !== undefined) {
+      data.version = Number(record.version);
+    }
 
     table.set(id, data);
     return structuredClone(data) as T;
@@ -116,19 +134,32 @@ export class MemoryStore implements StorePort {
     entityName: string,
     id: string | number,
     patch: Record<string, unknown>,
-    options?: { tenantId?: string; actor?: { id?: string } }
+    options?: { tenantId?: string; actor?: { id?: string }; expectedVersion?: number }
   ): Promise<T> {
     const existing = await this.get<Record<string, unknown>>(entityName, id, options);
     if (!existing) {
       throw new Error(`Record not found in ${entityName} with id '${id}'`);
     }
 
-    const updated = {
+    if (options?.expectedVersion !== undefined) {
+      const currentVersion = Number(existing.version ?? 0);
+      if (currentVersion !== options.expectedVersion) {
+        throw new VersionConflictError(
+          `Record '${entityName}:${id}' version conflict: expected version ${options.expectedVersion}, got ${currentVersion}`
+        );
+      }
+    }
+
+    const updated: Record<string, unknown> = {
       ...existing,
       ...patch,
       updatedAt: new Date().toISOString(),
       ...(options?.actor?.id ? { updatedBy: options.actor.id } : {}),
     };
+
+    if (existing.version !== undefined) {
+      updated.version = patch.version !== undefined ? Number(patch.version) : Number(existing.version) + 1;
+    }
 
     this.data.get(entityName)!.set(String(id), updated);
     return structuredClone(updated) as T;
@@ -137,26 +168,91 @@ export class MemoryStore implements StorePort {
   async delete(
     entityName: string,
     id: string | number,
-    options?: { tenantId?: string }
+    options?: { tenantId?: string; soft?: boolean; actor?: { id?: string } }
   ): Promise<boolean> {
     const existing = await this.get(entityName, id, options);
     if (!existing) return false;
+
+    if (options?.soft) {
+      const updated = {
+        ...existing,
+        deleted: true,
+        deletedAt: new Date().toISOString(),
+        ...(options?.actor?.id ? { updatedBy: options.actor.id } : {}),
+      };
+      this.data.get(entityName)!.set(String(id), updated);
+      return true;
+    }
+
     this.data.get(entityName)!.delete(String(id));
     return true;
   }
 
   async transaction<R>(fn: (txStore: StorePort) => Promise<R>): Promise<R> {
-    // Deep clone data map for rollback
-    const clone = new Map<string, Map<string | number, Record<string, unknown>>>();
+    const dataClone = new Map<string, Map<string | number, Record<string, unknown>>>();
     for (const [k, v] of this.data.entries()) {
-      clone.set(k, new Map(v.entries()));
+      dataClone.set(k, new Map(v.entries()));
     }
+    const outboxClone = this.outbox.map((o) => ({ ...o }));
+    const timersClone = this.timers.map((t) => ({ ...t }));
 
     try {
       return await fn(this);
     } catch (err) {
-      this.data = clone;
+      this.data = dataClone;
+      this.outbox = outboxClone;
+      this.timers = timersClone;
       throw err;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transactional Outbox (ADR-0023 / PLAN.md §8.1)
+  // ---------------------------------------------------------------------------
+
+  async enqueueOutbox(message: OutboxMessage): Promise<void> {
+    this.outbox.push({
+      ...message,
+      createdAt: message.createdAt ?? new Date().toISOString(),
+    });
+  }
+
+  async fetchPendingOutbox(limit = 100): Promise<OutboxMessage[]> {
+    return this.outbox
+      .filter((m) => !m.dispatchedAt)
+      .slice(0, limit)
+      .map((m) => structuredClone(m));
+  }
+
+  async markOutboxDispatched(id: string): Promise<void> {
+    const msg = this.outbox.find((m) => m.id === id);
+    if (msg) {
+      msg.dispatchedAt = new Date().toISOString();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Database Timer Table (ADR-0015 / PLAN.md §8.1)
+  // ---------------------------------------------------------------------------
+
+  async enqueueTimer(entry: TimerEntry): Promise<void> {
+    this.timers.push({
+      ...entry,
+    });
+  }
+
+  async fetchDueTimers(now?: string | Date, limit = 100): Promise<TimerEntry[]> {
+    const nowMs = now ? new Date(now).getTime() : Date.now();
+    return this.timers
+      .filter((t) => !t.dispatchedAt && new Date(t.triggerAt).getTime() <= nowMs)
+      .slice(0, limit)
+      .map((t) => structuredClone(t));
+  }
+
+  async markTimerDispatched(id: string): Promise<void> {
+    const entry = this.timers.find((t) => t.id === id);
+    if (entry) {
+      entry.dispatchedAt = new Date().toISOString();
     }
   }
 }

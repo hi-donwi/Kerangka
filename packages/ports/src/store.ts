@@ -1,6 +1,6 @@
 /**
  * Kerangka Store Port Contract
- * Specification Version: 0.1
+ * Specification Version: 0.2
  * Status: Draft
  * License: Apache-2.0
  */
@@ -29,6 +29,52 @@ export interface QueryResult<T = Record<string, unknown>> {
   total: number;
   limit?: number;
   offset?: number;
+}
+
+export interface OutboxMessage {
+  id: string;
+  eventType: string;
+  payload: unknown;
+  aggregateId?: string;
+  aggregateType?: string;
+  tenantId?: string;
+  createdAt?: string;
+  dispatchedAt?: string;
+}
+
+export interface TimerEntry {
+  id: string;
+  target: string;
+  payload?: unknown;
+  triggerAt: string;
+  dispatchedAt?: string;
+}
+
+export class VersionConflictError extends Error {
+  readonly code = "VERSION_CONFLICT";
+  readonly entityName?: string;
+  readonly recordId?: string;
+  readonly expectedVersion?: number;
+  readonly actualVersion?: number;
+
+  constructor(
+    entityName?: string,
+    recordId?: string,
+    expectedVersion?: number,
+    actualVersion?: number,
+    message?: string
+  ) {
+    const defaultMsg =
+      entityName && recordId
+        ? `Version conflict on ${entityName}:${recordId} (expected ${expectedVersion}, got ${actualVersion})`
+        : "Record version conflict: expected version does not match current version";
+    super(message ?? defaultMsg);
+    this.name = "VersionConflictError";
+    this.entityName = entityName;
+    this.recordId = recordId;
+    this.expectedVersion = expectedVersion;
+    this.actualVersion = actualVersion;
+  }
 }
 
 export interface StorePort {
@@ -60,13 +106,13 @@ export interface StorePort {
   ): Promise<T>;
 
   /**
-   * Updates an existing entity record by ID.
+   * Updates an existing entity record by ID with optional optimistic concurrency version check.
    */
   update<T = Record<string, unknown>>(
     entityName: string,
     id: string | number,
     patch: Record<string, unknown>,
-    options?: { tenantId?: string; actor?: { id?: string } }
+    options?: { tenantId?: string; actor?: { id?: string }; expectedVersion?: number }
   ): Promise<T>;
 
   /**
@@ -82,4 +128,14 @@ export interface StorePort {
    * Executes a callback within an isolated ACID transaction.
    */
   transaction<R>(fn: (txStore: StorePort) => Promise<R>): Promise<R>;
+
+  // Transactional Outbox (ADR-0023 / PLAN.md §8.1)
+  enqueueOutbox(message: OutboxMessage): Promise<void>;
+  fetchPendingOutbox(limit?: number): Promise<OutboxMessage[]>;
+  markOutboxDispatched(id: string): Promise<void>;
+
+  // Database Timer Table (ADR-0015 / PLAN.md §8.1)
+  enqueueTimer(entry: TimerEntry): Promise<void>;
+  fetchDueTimers(now?: string | Date, limit?: number): Promise<TimerEntry[]>;
+  markTimerDispatched(id: string): Promise<void>;
 }

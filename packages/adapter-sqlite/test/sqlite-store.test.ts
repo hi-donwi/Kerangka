@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { compile } from "@kerangka/compiler";
+import { createStoreTestKit } from "@kerangka/ports";
 import { SqliteStore } from "../src/index.js";
 
-describe("SQLite Store Adapter", () => {
+// Reusable standard certification test kit
+createStoreTestKit("SqliteStore", () => new SqliteStore());
+
+describe("SQLite Store Adapter (KIR-based)", () => {
   const examplesDir = resolve(__dirname, "../../../examples");
 
   it("initializes schema and performs CRUD on Todo entity", async () => {
