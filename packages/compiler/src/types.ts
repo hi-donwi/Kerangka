@@ -37,6 +37,27 @@ export class CompilerError extends Error {
   }
 }
 
+export interface QueryOrderBy {
+  field: string;
+  direction: "asc" | "desc";
+}
+
+export interface QueryDefinition {
+  /** Entity the query reads from. */
+  from: string;
+  /** Optional predicate AST narrowing the result set. */
+  where?: ExprNode;
+  /** Optional selected fields; defaults to whole records. */
+  select?: string[];
+  /** Optional sort order; strings like "createdAt desc" normalize to objects. */
+  orderBy?: QueryOrderBy[] | string[];
+  /** Default page size (PLAN.md §8.4: cursor pagination). */
+  pageSize?: number;
+  /** Maximum page size a client may request. */
+  maxLimit?: number;
+  [key: string]: unknown;
+}
+
 export interface FieldDefinition {
   type: string;
   required: boolean;
@@ -136,6 +157,7 @@ export interface RawKerangkaDocument {
   contexts?: string[];
   traits?: Record<string, unknown>;
   entities?: Record<string, EntityDefinition>;
+  queries?: Record<string, QueryDefinition | Record<string, unknown>>;
   events?: Record<string, unknown>;
   policies?: Record<string, unknown>;
   decisions?: Record<string, unknown>;
@@ -166,6 +188,7 @@ export interface KIRDocument {
     header?: string;
     claim?: string;
   };
+  queries?: Record<string, QueryDefinition>;
   entities: Record<string, {
     key: string;
     embedded: boolean;

@@ -399,4 +399,113 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
     const json = await res.json();
     expect(json.items).toEqual([]);
   });
+
+
+  it("serves named queries with filtering, sorting, projection, and paging", async () => {
+    const doc = {
+      kerangka: "0.1",
+      app: "queries-app",
+      queries: {
+        byPriority: {
+          from: "Task",
+          where: ["==", ["get", "priority"], "high"],
+          select: ["id", "priority"],
+          orderBy: ["-seq"],
+          pageSize: 2,
+        },
+      },
+      entities: {
+        Task: {
+          fields: {
+            title: "string!",
+            priority: "string",
+            seq: "int",
+          },
+        },
+      },
+    };
+    const qkir = compile(JSON.stringify(doc));
+    const store = new MemoryStore();
+    const app = createKerangkaHonoApp(qkir, { store });
+
+    for (let i = 1; i <= 3; i += 1) {
+      await app.request("/api/task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: `t-${i}`,
+          title: `Task ${i}`,
+          priority: i === 2 ? "low" : "high",
+          seq: i,
+        }),
+      });
+    }
+
+    // Filter + sort desc + projection
+    const res = await app.request("/api/task/queries/byPriority");
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.query).toBe("byPriority");
+    expect(json.total).toBe(2);
+    expect(json.items.map((t: { id: string }) => t.id)).toEqual(["t-3", "t-1"]);
+    // Projection: only selected fields survive
+    expect(Object.keys(json.items[0]).sort()).toEqual(["id", "priority"]);
+    expect(json.items[0].title).toBeUndefined();
+
+    // Paging: default pageSize 2 → both rows; explicit limit=1 → nextCursor
+    const page1 = await app.request("/api/task/queries/byPriority?limit=1");
+    const page1Json = await page1.json();
+    expect(page1Json.items).toHaveLength(1);
+    expect(page1Json.nextCursor).toBeDefined();
+
+    const page2 = await app.request(
+      `/api/task/queries/byPriority?limit=1&cursor=${encodeURIComponent(page1Json.nextCursor)}`
+    );
+    const page2Json = await page2.json();
+    expect(page2Json.items).toHaveLength(1);
+    expect(page2Json.items[0].id).toBe("t-1");
+  });
+
+  it("supports comparison predicates and named query 404s", async () => {
+    const doc = {
+      kerangka: "0.1",
+      app: "queries-cmp",
+      queries: {
+        expensive: {
+          from: "Task",
+          where: [">=", ["get", "weight"], 10],
+          orderBy: ["-weight"],
+        },
+      },
+      entities: {
+        Task: {
+          fields: { title: "string!", weight: "int", createdAt: "datetime" },
+        },
+      },
+    };
+    const ckir = compile(JSON.stringify(doc));
+    const store = new MemoryStore();
+    const app = createKerangkaHonoApp(ckir, { store });
+
+    for (const [id, weight] of [["t-a", 5], ["t-b", 15], ["t-c", 20]]) {
+      await app.request("/api/task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, title: `T ${id}`, weight, createdAt: "2026-01-01T00:00:00Z" }),
+      });
+    }
+
+    const res = await app.request("/api/task/queries/expensive");
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.items.map((t: { id: string }) => t.id)).toEqual(["t-c", "t-b"]);
+
+    const missing = await app.request("/api/task/queries/nope");
+    expect(missing.status).toBe(404);
+    const problem = await missing.json();
+    expect(problem.code).toBe("NOT_FOUND");
+
+    const wrongEntity = await app.request("/api/widget/queries/expensive");
+    expect(wrongEntity.status).toBe(404);
+  });
 });

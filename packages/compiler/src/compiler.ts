@@ -22,6 +22,8 @@ import {
   RawKerangkaDocument,
   RuleDefinition,
   WorkflowDefinition,
+  QueryDefinition,
+  QueryOrderBy,
 } from "./types.js";
 import { EntityOrigins, ModelValidator } from "./validate.js";
 import { WorkspaceLoader } from "./workspace.js";
@@ -96,6 +98,9 @@ export class Compiler {
       doc.policies = wsResult.flattenedPolicies;
       doc.decisions = wsResult.flattenedDecisions;
       doc.traits = wsResult.flattenedTraits;
+      if (Object.keys(wsResult.flattenedQueries).length > 0) {
+        doc.queries = { ...(doc.queries ?? {}), ...wsResult.flattenedQueries } as RawKerangkaDocument["queries"];
+      }
     }
 
     // 0b. Resolve packages (@kerangka/std and any declared in doc.packages)
@@ -171,6 +176,26 @@ export class Compiler {
       );
     }
 
+    // Named queries: top-level plus per-entity, with orderBy strings normalized.
+    const allQueries: Record<string, QueryDefinition> = {};
+    for (const [queryName, query] of Object.entries(doc.queries ?? {})) {
+      allQueries[queryName] = this.normalizeQuery(query as QueryDefinition);
+    }
+    for (const entity of Object.values(compiledEntities)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const entityQueries = (entity as any).queries as Record<string, QueryDefinition> | undefined;
+      if (entityQueries) {
+        for (const [queryName, query] of Object.entries(entityQueries)) {
+          if (!allQueries[queryName]) {
+            const normalized = this.normalizeQuery({ ...query, from: query.from ?? "?" });
+            normalized.from = query.from || (entity.key !== undefined ? "?" : "?");
+            normalized.from = (query as QueryDefinition).from || Object.keys(compiledEntities).find((e) => compiledEntities[e] === entity) || "";
+            allQueries[queryName] = normalized;
+          }
+        }
+      }
+    }
+
     // Assemble canonical KIR
     const nowIso = new Date().toISOString();
     const kir: KIRDocument = {
@@ -190,6 +215,7 @@ export class Compiler {
       ...(doc.packages ? { packages: doc.packages } : {}),
       ...(Object.keys(allTypes).length > 0 ? { types: allTypes } : {}),
       entities: compiledEntities,
+      ...(Object.keys(allQueries).length > 0 ? { queries: allQueries } : {}),
       ...(doc.events ? { events: doc.events } : {}),
       ...(doc.policies ? { policies: doc.policies } : {}),
       ...(doc.decisions ? { decisions: doc.decisions } : {}),
@@ -201,6 +227,28 @@ export class Compiler {
     };
 
     return kir;
+  }
+
+  private normalizeQuery(query: QueryDefinition): QueryDefinition {
+    let orderBy: QueryOrderBy[] | undefined;
+    if (query.orderBy) {
+      orderBy = query.orderBy.map((entry) => {
+        if (typeof entry === "string") {
+          const trimmed = entry.trim();
+          // Accept both "createdAt desc" and cursor-style "-createdAt" (+ = asc).
+          if (trimmed.startsWith("-") || trimmed.startsWith("+")) {
+            return {
+              field: trimmed.slice(1),
+              direction: trimmed.startsWith("-") ? ("desc" as const) : ("asc" as const),
+            };
+          }
+          const [field, direction] = trimmed.split(/\s+/);
+          return { field: field!, direction: direction?.toLowerCase() === "desc" ? ("desc" as const) : ("asc" as const) };
+        }
+        return entry;
+      });
+    }
+    return { ...query, ...(orderBy ? { orderBy } : {}) };
   }
 
   private inlineTraits(

@@ -27,6 +27,12 @@ import {
 } from "@kerangka/ports";
 import { createProblemDetails, ProblemDetails } from "./problem.js";
 import {
+  applyOrderBy,
+  applySelect,
+  equalityConstraints,
+  evaluateWhereInMemory,
+} from "./query-eval.js";
+import {
   CachedResponse,
   computeRequestFingerprint,
   IdempotencyStore,
@@ -129,6 +135,17 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
   async function readJsonBody(c: Context): Promise<Record<string, unknown>> {
     return (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  }
+
+  function toQueryOptionsSort(
+    orderBy: Array<{ field: string; direction: "asc" | "desc" }> | undefined
+  ): Record<string, "asc" | "desc"> | undefined {
+    if (!orderBy || orderBy.length === 0) return undefined;
+    const sort: Record<string, "asc" | "desc"> = {};
+    for (const { field, direction } of orderBy) {
+      sort[field] = direction;
+    }
+    return sort;
   }
 
   /**
@@ -358,6 +375,107 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     } catch (err: unknown) {
       await failIdempotentRequest(c);
       throw err;
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Named Query Endpoint: /api/:entity/queries/:queryName
+  // PLAN.md §8.4: named queries with filtering, sorting, and cursor pagination.
+  // Registered before /:entity/:id so "queries" is never treated as an id.
+  // ---------------------------------------------------------------------------
+
+  app.get("/api/:entity/queries/:queryName", async (c) => {
+    const entityParam = c.req.param("entity");
+    const queryName = c.req.param("queryName");
+    const entityName = resolveEntityName(entityParam);
+    if (!entityName) {
+      return sendProblem(c, 404, "UNKNOWN_ENTITY", `Entity '${entityParam}' does not exist`);
+    }
+
+    // Query must be explicitly declared for this entity (no entity-name fallback).
+    const queryDef = kir.queries?.[queryName];
+    if (!queryDef || queryDef.from !== entityName) {
+      return sendProblem(
+        c,
+        404,
+        "NOT_FOUND",
+        `Query '${queryName}' is not defined for entity '${entityName}'`
+      );
+    }
+
+    const actor = getActorContext(c);
+    const tenantId = getTenantId(c);
+
+    try {
+      const queryParams: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(c.req.query())) {
+        if (["limit", "offset", "sort", "cursor", "tenantId"].includes(k)) continue;
+        queryParams[k] = v;
+      }
+
+      const plan = engine.queryPlan(queryName, queryParams, actor);
+      if (plan.entity !== entityName) {
+        return sendProblem(
+          c,
+          404,
+          "NOT_FOUND",
+          `Query '${queryName}' reads entity '${plan.entity}', not '${entityName}'`
+        );
+      }
+
+      // Plan paging: client limit/offset/cursor override the plan defaults.
+      const limit = c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : plan.limit ?? 20;
+      const cursor = decodeCursor(c.req.query("cursor"));
+      const offset = cursor
+        ? cursor.offset
+        : c.req.query("offset")
+        ? parseInt(c.req.query("offset")!, 10)
+        : plan.offset ?? 0;
+      const effectiveSort = cursor?.sort ?? parseSortParam(c.req.query("sort")) ?? toQueryOptionsSort(plan.orderBy);
+
+      // 1. Pull the candidate set: tenant scope plus plan equality constraints,
+      //    and let the store apply client-requested sort when the plan has none
+      //    of its own (plan orderBy is authoritative when present).
+      const pushdown: Record<string, unknown> = { ...equalityConstraints(plan.where) };
+      if (tenantId) pushdown.tenantId = tenantId;
+
+      const found = await store.find(entityName, pushdown, {
+        sort: plan.orderBy?.length ? undefined : effectiveSort,
+        tenantId,
+      });
+
+      // 2. Evaluate the remaining predicate in-process (comparisons, or-branches).
+      let records = evaluateWhereInMemory(
+        found.items as Record<string, unknown>[],
+        plan.where
+      );
+
+      // 3. Plan order is authoritative; then projection and paging.
+      records = applyOrderBy(records, plan.orderBy);
+      const total = records.length;
+      records = records.slice(offset, offset + limit);
+      records = applySelect(records, plan.select);
+
+      const links = buildNextCursor({
+        items: records,
+        limit,
+        total,
+        offset,
+        sort: effectiveSort,
+        makeUrl: (cursorValue: string) => cursorValue,
+      });
+
+      return c.json({
+        query: queryName,
+        items: records,
+        total,
+        limit,
+        offset,
+        ...(links.next ? { nextCursor: links.next } : {}),
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return sendProblem(c, 422, "QUERY_INVALID", message);
     }
   });
 

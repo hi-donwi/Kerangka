@@ -859,7 +859,8 @@ export class Engine {
       combinedWhere = rf;
     }
 
-    const limit = Math.min(Number(params.limit ?? queryDef.limit ?? 20), queryDef.maxLimit ?? 100);
+    const pageSize = (queryDef as { pageSize?: number }).pageSize ?? queryDef.limit;
+    const limit = Math.min(Number(params.limit ?? pageSize ?? 20), (queryDef as { maxLimit?: number }).maxLimit ?? 100);
     const page = Number(params.page ?? 1);
     const offset = Number(params.offset ?? (page > 1 ? (page - 1) * limit : 0));
 

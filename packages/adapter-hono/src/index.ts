@@ -9,4 +9,5 @@
 export * from "./problem.js";
 export * from "./idempotency.js";
 export * from "./cursor.js";
+export * from "./query-eval.js";
 export * from "./hono-app.js";
