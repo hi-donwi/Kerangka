@@ -15,6 +15,7 @@ import { expandCommand } from "../commands/expand.js";
 import { statsCommand } from "../commands/stats.js";
 import { testCommand } from "../commands/test.js";
 import { ddlCommand } from "../commands/ddl.js";
+import { dbDiffCommand } from "../commands/db.js";
 import { openapiCommand } from "../commands/openapi.js";
 import { graphqlCommand } from "../commands/graphql.js";
 import { mcpCommand } from "../commands/mcp.js";
@@ -49,6 +50,7 @@ COMMANDS:
   build <file>            Compile model into canonical KIR JSON
   pkg <subcommand>        Manage packages and lockfile (pkg lock | install | list)
   ddl <file>              Generate SQL DDL schema statements (PostgreSQL or SQLite)
+  db <subcommand>         Database migration tools (db diff <old> <new>: plain SQL migration)
   openapi <file>          Generate OpenAPI 3.1 specification JSON
   graphql <file>          Generate GraphQL Schema Definition Language (SDL)
   mcp <file>              Generate Model Context Protocol (MCP) tool declarations
@@ -67,11 +69,14 @@ COMMANDS:
   test <file>             Execute declarative examples against the reference engine
 
 OPTIONS:
-  -d, --dialect <name>    SQL dialect for 'ddl' (postgres | sqlite, default: postgres)
+  -d, --dialect <name>    SQL dialect for 'ddl' and 'db diff' (postgres | sqlite, default: postgres)
   -t, --target <lang>     Target language for 'codegen' (ts | java | python | go, default: ts)
   --package <name>        Package namespace for generated Java or Go code
   --check-breaking        Exit with error code if breaking changes are detected in 'diff'
-  --format <text|json>    Diagnostics format for 'check' and 'lint' (default: text)
+  --check-destructive     Exit with error code if unapproved destructive steps are detected in 'db diff'
+  --allow-destructive     Approve the destructive steps listed by 'db diff' (use after review)
+  --phase <name>          Restrict 'db diff' to a migration phase (all | expand | contract, default: all)
+  --format <text|json>    Diagnostics format for 'check', 'lint', and 'db diff' (default: text)
   --preset <name>         Lint preset for 'lint' (kerangka:recommended | kerangka:off)
   --topology <name>       Deployment topology for 'lint' and 'graph'
   --direction <TD|LR>     Layout direction for 'graph' (default: TD)
@@ -96,6 +101,9 @@ EXAMPLES:
   kerangka codegen examples/invoicing.kerangka.json --target java -o InvoiceModel.java
   kerangka codegen examples/invoicing.kerangka.json --target python -o models.py
   kerangka diff old.json new.json --check-breaking
+  kerangka db diff build/invoicing.kir.json examples/invoicing.kerangka.json
+  kerangka db diff db.sqlite model.json --dialect sqlite --phase expand
+  kerangka db diff old.json new.json --allow-destructive -o migrations/002_contract.sql
   kerangka graph examples/commerce
   kerangka graph examples/commerce --topology distributed
   kerangka dev examples/invoicing.kerangka.json --port 3000
@@ -117,6 +125,9 @@ async function main(): Promise<void> {
         drop: { type: "boolean" },
         audit: { type: "boolean", default: true },
         "check-breaking": { type: "boolean" },
+        "check-destructive": { type: "boolean" },
+        "allow-destructive": { type: "boolean" },
+        phase: { type: "string" },
         format: { type: "string" },
         preset: { type: "string" },
         topology: { type: "string" },
@@ -146,7 +157,7 @@ async function main(): Promise<void> {
     const command = positionals[0]!;
     const file = positionals[1];
 
-    if (!file && command !== "help" && command !== "version" && command !== "init" && command !== "decisions" && command !== "pkg") {
+    if (!file && command !== "help" && command !== "version" && command !== "init" && command !== "decisions" && command !== "pkg" && command !== "db") {
       console.error(`Error: Missing argument for command '${command}'`);
       printHelp();
       process.exit(1);
@@ -211,6 +222,34 @@ async function main(): Promise<void> {
           drop: values.drop,
         });
         break;
+      case "db": {
+        const sub = positionals[1];
+        if (sub === "diff") {
+          const oldSource = positionals[2];
+          const newSource = positionals[3];
+          if (!oldSource || !newSource) {
+            console.error("Error: 'db diff' requires two sources to compare: kerangka db diff <old-model|kir|schema.sql|db.sqlite> <new-model|kir|schema.sql|db.sqlite>");
+            process.exit(1);
+          }
+          const format = values.format ?? "text";
+          if (format !== "text" && format !== "json") {
+            console.error(`Error: --format must be 'text' or 'json', got '${format}'`);
+            process.exit(1);
+          }
+          success = await dbDiffCommand(oldSource, newSource, {
+            dialect: values.dialect,
+            phase: values.phase,
+            allowDestructive: values["allow-destructive"],
+            checkDestructive: values["check-destructive"],
+            format,
+            output: values.output,
+          });
+        } else {
+          console.error(`Error: Unknown db subcommand '${sub}'. Use 'db diff'.`);
+          process.exit(1);
+        }
+        break;
+      }
       case "openapi":
         success = openapiCommand(file!, values.output);
         break;

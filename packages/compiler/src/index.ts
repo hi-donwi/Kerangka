@@ -10,6 +10,7 @@ export * from "./types.js";
 export * from "./shorthand.js";
 export * from "./compiler.js";
 export * from "./ddl/generator.js";
+export * from "./ddl/diff.js";
 export * from "./projections/openapi.js";
 export * from "./projections/graphql.js";
 export * from "./projections/mcp.js";
@@ -30,6 +31,7 @@ import { McpGenerator, McpToolDefinition } from "./projections/mcp.js";
 import { UIDLGenerator, UIDLDocument } from "./projections/uidl.js";
 import { CodeGenerator, TargetLanguage, CodegenOptions } from "./codegen/index.js";
 import { ModelDiffer, ModelDiffResult } from "./diff/differ.js";
+import { DBMigrationDiffer, DBMigrationOptions, DBMigrationResult } from "./ddl/diff.js";
 import { CompilerOptions, KIRDocument, RawKerangkaDocument } from "./types.js";
 
 /**
@@ -44,6 +46,18 @@ export function compile(input: string | RawKerangkaDocument, options?: CompilerO
  */
 export function generateDDL(kir: KIRDocument, options?: DDLOptions): string {
   return DDLGenerator.generate(kir, options);
+}
+
+/**
+ * Compares two KIR documents and generates a plain SQL migration
+ * (expand/contract phasing, renamedFrom renames, destructive-step gates).
+ */
+export function diffDatabaseSchema(
+  oldKir: KIRDocument,
+  newKir: KIRDocument,
+  options?: DBMigrationOptions
+): DBMigrationResult {
+  return DBMigrationDiffer.diff(oldKir, newKir, options);
 }
 
 /**
@@ -87,5 +101,3 @@ export function generateCode(kir: KIRDocument, target: TargetLanguage, options?:
 export function diffModels(oldKir: KIRDocument, newKir: KIRDocument): ModelDiffResult {
   return ModelDiffer.diff(oldKir, newKir);
 }
-
-

@@ -51,6 +51,7 @@ export interface FieldDefinition {
   default?: unknown;
   compute?: ExprNode | string;
   description?: string;
+  renamedFrom?: string;
 }
 
 export interface RuleDefinition {

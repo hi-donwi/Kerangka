@@ -6,6 +6,7 @@ import {
   checkCommand,
   buildCommand,
   ddlCommand,
+  dbDiffCommand,
   openapiCommand,
   graphqlCommand,
   mcpCommand,
@@ -287,6 +288,114 @@ describe("Kerangka CLI Commands", () => {
     );
 
     const ok = expandCommand(testModel);
+    expect(ok).toBe(true);
+  });
+
+  it("dbDiffCommand writes a SQL migration from two model versions", async () => {
+    const oldModel = path.join(tmpDir, "db-old.kerangka.json");
+    const newModel = path.join(tmpDir, "db-new.kerangka.json");
+    fs.writeFileSync(
+      oldModel,
+      JSON.stringify({
+        kerangka: "0.1",
+        app: "dbdiff",
+        entities: {
+          Widget: { fields: { name: "string!" } },
+        },
+      })
+    );
+    fs.writeFileSync(
+      newModel,
+      JSON.stringify({
+        kerangka: "0.1",
+        app: "dbdiff",
+        entities: {
+          Widget: { fields: { name: "string!", kind: "string" } },
+        },
+      })
+    );
+
+    const outSql = path.join(tmpDir, "migration.sql");
+    const ok = await dbDiffCommand(oldModel, newModel, { output: outSql, dialect: "postgres" });
+    expect(ok).toBe(true);
+    expect(fs.existsSync(outSql)).toBe(true);
+    const sql = fs.readFileSync(outSql, "utf-8");
+    expect(sql).toContain("ADD COLUMN kind TEXT");
+  });
+
+  it("dbDiffCommand fails on invalid dialect, missing file, and bad phase", async () => {
+    const model = path.join(tmpDir, "db-old.kerangka.json");
+
+    const badDialect = await dbDiffCommand(model, model, { dialect: "oracle" });
+    expect(badDialect).toBe(false);
+
+    const missing = await dbDiffCommand(path.join(tmpDir, "nope.json"), model);
+    expect(missing).toBe(false);
+
+    const badPhase = await dbDiffCommand(model, model, { phase: "sideways" });
+    expect(badPhase).toBe(false);
+  });
+
+  it("dbDiffCommand gates destructive steps behind --allow-destructive", async () => {
+    const oldModel = path.join(tmpDir, "drop-old.kerangka.json");
+    const newModel = path.join(tmpDir, "drop-new.kerangka.json");
+    fs.writeFileSync(
+      oldModel,
+      JSON.stringify({
+        kerangka: "0.1",
+        app: "drop",
+        entities: {
+          Gadget: { fields: { name: "string!", legacy: "string" } },
+        },
+      })
+    );
+    fs.writeFileSync(
+      newModel,
+      JSON.stringify({
+        kerangka: "0.1",
+        app: "drop",
+        entities: {
+          Gadget: { fields: { name: "string!" } },
+        },
+      })
+    );
+
+    const gated = await dbDiffCommand(oldModel, newModel, { checkDestructive: true });
+    expect(gated).toBe(false);
+
+    const allowed = await dbDiffCommand(oldModel, newModel, {
+      checkDestructive: true,
+      allowDestructive: true,
+    });
+    expect(allowed).toBe(true);
+  });
+
+  it("dbDiffCommand diffs a SQLite database against a model", async () => {
+    const dbPath = path.join(tmpDir, "legacy-cli.sqlite");
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec("CREATE TABLE widget (id TEXT PRIMARY KEY, name TEXT NOT NULL);");
+    } finally {
+      db.close();
+    }
+
+    const model = path.join(tmpDir, "db-old.kerangka.json");
+    const outSql = path.join(tmpDir, "import-migration.sql");
+    const ok = await dbDiffCommand(dbPath, model, { dialect: "sqlite", output: outSql });
+    expect(ok).toBe(true);
+    expect(fs.existsSync(outSql)).toBe(true);
+    const sql = fs.readFileSync(outSql, "utf-8");
+    expect(sql).toContain("DESTRUCTIVE OPERATIONS DETECTED");
+  });
+
+  it("dbDiffCommand accepts a compiled KIR build as a source", async () => {
+    const kirPath = path.join(tmpDir, "db-old.kir.json");
+    const raw = JSON.parse(fs.readFileSync(path.join(tmpDir, "db-old.kerangka.json"), "utf-8"));
+    const { compile } = await import("@kerangka/compiler");
+    fs.writeFileSync(kirPath, JSON.stringify(compile(raw)));
+
+    const ok = await dbDiffCommand(kirPath, path.join(tmpDir, "db-old.kerangka.json"));
     expect(ok).toBe(true);
   });
 });
