@@ -234,4 +234,61 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
     expect(betaList.items).toHaveLength(1);
     expect(betaList.items[0].id).toBe("td-beta");
   });
+
+  it("dispatches side-effects to ConnectorsPort when actions/transitions execute", async () => {
+    const invoicingRaw = readFileSync(resolve(examplesDir, "invoicing.kerangka.json"), "utf8");
+    const invoicingKir = compile(invoicingRaw);
+    const store = new MemoryStore();
+
+    const dispatchedCalls: unknown[] = [];
+    const mockConnectors = {
+      has: () => true,
+      call: async <T = unknown>(invocation: unknown): Promise<T> => {
+        dispatchedCalls.push(invocation);
+        return { ok: true } as unknown as T;
+      },
+    };
+
+    const app = createKerangkaHonoApp(invoicingKir, {
+      store,
+      connectors: mockConnectors,
+    });
+
+    // Create draft invoice
+    const createRes = await app.request("/api/invoice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "INV-999",
+        number: "INV-999",
+        customer: "cust-1",
+        status: "draft",
+        issuedOn: "2026-09-28",
+        dueDate: "2026-10-28",
+        lines: [{ description: "Consulting", qty: 2, unitPrice: 500 }],
+      }),
+    });
+    expect(createRes.status).toBe(201);
+
+    // Trigger "send" transition which has { "call": "sendInvoiceEmail" }
+    const sendRes = await app.request("/api/invoice/INV-999/transitions/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Actor-Roles": "billing",
+      },
+    });
+
+    expect(sendRes.status).toBe(200);
+    const sendBody = await sendRes.json();
+    expect(sendBody.ok).toBe(true);
+    expect(sendBody.record.status).toBe("sent");
+
+    // Verify side-effect call dispatched to connectors
+    expect(dispatchedCalls.length).toBeGreaterThan(0);
+    expect(dispatchedCalls[0]).toMatchObject({
+      connector: "sendInvoiceEmail",
+      operation: "call",
+    });
+  });
 });

@@ -16,13 +16,14 @@ import {
   McpToolDefinition,
   UIDLDocument,
 } from "@kerangka/compiler";
-import { StorePort, MemoryStore, VersionConflictError } from "@kerangka/ports";
+import { StorePort, MemoryStore, VersionConflictError, ConnectorsPort, DefaultConnectors } from "@kerangka/ports";
 import { Engine } from "@kerangka/engine-ts";
 
 export interface ServerOptions {
   port?: number;
   host?: string;
   store?: StorePort;
+  connectors?: ConnectorsPort;
   quiet?: boolean;
 }
 
@@ -31,6 +32,7 @@ export class KerangkaServer {
   readonly port: number;
   readonly host: string;
   readonly store: StorePort;
+  readonly connectors: ConnectorsPort;
   readonly engine: Engine;
   readonly openApiSpec: Record<string, unknown>;
   readonly graphqlSchema: string;
@@ -47,6 +49,7 @@ export class KerangkaServer {
     this.host = options.host || "localhost";
     this.quiet = options.quiet ?? false;
     this.store = options.store || new MemoryStore();
+    this.connectors = options.connectors || new DefaultConnectors();
     this.engine = new Engine(kir);
 
     this.openApiSpec = generateOpenAPI(kir, {
@@ -373,6 +376,49 @@ export class KerangkaServer {
           tenantId,
           actor: actionActor?.id ? { id: actionActor.id } : undefined,
         });
+
+        // Dispatch side-effects to connectors
+        if (this.connectors && result.effects && result.effects.length > 0) {
+          for (const effect of result.effects) {
+            if (effect.type === "call") {
+              const extDef = this.kir.extensions?.[effect.extension] as Record<string, unknown> | undefined;
+              const targetConnector = (extDef?.connector as string) || effect.extension;
+              const canHandle = typeof this.connectors.has === "function" ? this.connectors.has(targetConnector) : true;
+              if (canHandle) {
+                try {
+                  await this.connectors.call({
+                    connector: targetConnector,
+                    operation: (extDef?.operation as string) || "call",
+                    payload: {
+                      ...(extDef || {}),
+                      input: effect.input,
+                      ...(typeof effect.input === "object" ? effect.input : {}),
+                    },
+                    tenantId,
+                  });
+                } catch (err) {
+                  if (!this.quiet) {
+                    console.warn(`[kerangka] Connector call '${targetConnector}' failed:`, err);
+                  }
+                }
+              }
+            } else if (effect.type === "notify") {
+              const canEmail = typeof this.connectors.has === "function" ? this.connectors.has("email") : true;
+              if (canEmail) {
+                await this.connectors.call({
+                  connector: "email",
+                  operation: "send",
+                  payload: {
+                    to: effect.recipient,
+                    template: effect.template,
+                    params: effect.params,
+                  },
+                  tenantId,
+                });
+              }
+            }
+          }
+        }
 
         const resPayload = {
           ok: true,

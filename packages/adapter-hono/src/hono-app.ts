@@ -16,7 +16,7 @@ import {
   UIDLDocument,
 } from "@kerangka/compiler";
 import { ActorContext, Engine } from "@kerangka/engine-ts";
-import { BusPort, MemoryStore, StorePort, VersionConflictError } from "@kerangka/ports";
+import { BusPort, ConnectorsPort, MemoryStore, StorePort, VersionConflictError } from "@kerangka/ports";
 import { createProblemDetails, ProblemDetails } from "./problem.js";
 import { IdempotencyStore, MemoryIdempotencyStore } from "./idempotency.js";
 
@@ -24,6 +24,7 @@ export interface KerangkaHonoOptions {
   store?: StorePort;
   engine?: Engine;
   bus?: BusPort;
+  connectors?: ConnectorsPort;
   idempotencyStore?: IdempotencyStore;
   serverUrl?: string;
   cors?: boolean;
@@ -34,6 +35,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
   const store = options.store ?? new MemoryStore();
   const engine = options.engine ?? new Engine(kir);
   const bus = options.bus;
+  const connectors = options.connectors;
   const idempotencyStore = options.idempotencyStore ?? new MemoryIdempotencyStore();
   const serverUrl = options.serverUrl ?? "http://localhost:3000";
 
@@ -437,6 +439,47 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       }
     }
 
+    // Dispatch side-effects (call, notify) to connectors if available
+    if (connectors && runResult.effects && runResult.effects.length > 0) {
+      for (const effect of runResult.effects) {
+        if (effect.type === "call") {
+          const extDef = kir.extensions?.[effect.extension] as Record<string, unknown> | undefined;
+          const targetConnector = (extDef?.connector as string) || effect.extension;
+          const canHandle = typeof connectors.has === "function" ? connectors.has(targetConnector) : true;
+          if (canHandle) {
+            try {
+              await connectors.call({
+                connector: targetConnector,
+                operation: (extDef?.operation as string) || "call",
+                payload: {
+                  ...(extDef || {}),
+                  input: effect.input,
+                  ...(typeof effect.input === "object" ? effect.input : {}),
+                },
+                tenantId,
+              });
+            } catch {
+              // Ignore or log unhandled external connector calls
+            }
+          }
+        } else if (effect.type === "notify") {
+          const canEmail = typeof connectors.has === "function" ? connectors.has("email") : true;
+          if (canEmail) {
+            await connectors.call({
+              connector: "email",
+              operation: "send",
+              payload: {
+                to: effect.recipient,
+                template: effect.template,
+                params: effect.params,
+              },
+              tenantId,
+            });
+          }
+        }
+      }
+    }
+
     const responsePayload = {
       ok: true,
       record: updatedRecord,
@@ -534,6 +577,47 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
           tenantId,
           timestamp: ev.time,
         });
+      }
+    }
+
+    // Dispatch side-effects (call, notify) to connectors if available
+    if (connectors && transResult.effects && transResult.effects.length > 0) {
+      for (const effect of transResult.effects) {
+        if (effect.type === "call") {
+          const extDef = kir.extensions?.[effect.extension] as Record<string, unknown> | undefined;
+          const targetConnector = (extDef?.connector as string) || effect.extension;
+          const canHandle = typeof connectors.has === "function" ? connectors.has(targetConnector) : true;
+          if (canHandle) {
+            try {
+              await connectors.call({
+                connector: targetConnector,
+                operation: (extDef?.operation as string) || "call",
+                payload: {
+                  ...(extDef || {}),
+                  input: effect.input,
+                  ...(typeof effect.input === "object" ? effect.input : {}),
+                },
+                tenantId,
+              });
+            } catch {
+              // Ignore or log unhandled external connector calls
+            }
+          }
+        } else if (effect.type === "notify") {
+          const canEmail = typeof connectors.has === "function" ? connectors.has("email") : true;
+          if (canEmail) {
+            await connectors.call({
+              connector: "email",
+              operation: "send",
+              payload: {
+                to: effect.recipient,
+                template: effect.template,
+                params: effect.params,
+              },
+              tenantId,
+            });
+          }
+        }
       }
     }
 

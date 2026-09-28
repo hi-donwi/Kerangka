@@ -8,3 +8,4 @@
 export * from "./store-test-kit.js";
 export * from "./bus-test-kit.js";
 export * from "./scheduler-test-kit.js";
+export * from "./connectors-test-kit.js";
