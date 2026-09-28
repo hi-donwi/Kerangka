@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { resolve, join } from "node:path";
+import * as os from "node:os";
 import { compileExpression, evaluate } from "@kerangka/k1";
-import { compile, parseFieldShorthand } from "@kerangka/compiler";
+import { compile, parseFieldShorthand, CompilerError } from "@kerangka/compiler";
 import { loadEngine } from "@kerangka/engine-ts";
 
 describe("Kerangka Conformance Test Suite", () => {
@@ -18,7 +19,7 @@ describe("Kerangka Conformance Test Suite", () => {
         it(`${tc.id}: ${tc.description}`, () => {
           switch (suite.suite) {
             case "k1-expressions": {
-              const ast = compileExpression(tc.input.expr);
+              const ast = tc.input.ast ?? compileExpression(tc.input.expr);
               if (tc.expect.ast) {
                 expect(ast).toEqual(tc.expect.ast);
               }
@@ -74,6 +75,66 @@ describe("Kerangka Conformance Test Suite", () => {
               if (tc.expect.errorField) {
                 const matched = res.errors.some((e) => e.field === tc.expect.errorField);
                 expect(matched).toBe(true);
+              }
+              break;
+            }
+
+            case "modules": {
+              let rootPath: string;
+              let cleanupDir: string | undefined;
+
+              if (tc.input.sourcePath) {
+                rootPath = resolve(__dirname, "..", tc.input.sourcePath);
+              } else if (tc.input.virtualWorkspace) {
+                cleanupDir = mkdtempSync(join(os.tmpdir(), "kerangka-mod-"));
+                rootPath = join(cleanupDir, "kerangka.json");
+                writeFileSync(rootPath, JSON.stringify(tc.input.virtualWorkspace.manifest, null, 2));
+
+                const contexts = tc.input.virtualWorkspace.contexts ?? {};
+                for (const [ctxName, ctxDef] of Object.entries(contexts)) {
+                  const ctxDir = join(cleanupDir, "contexts", ctxName);
+                  mkdirSync(ctxDir, { recursive: true });
+                  writeFileSync(join(ctxDir, "context.kerangka.json"), JSON.stringify(ctxDef, null, 2));
+                }
+              } else {
+                throw new Error("Invalid module test case input: missing sourcePath or virtualWorkspace");
+              }
+
+              try {
+                if (tc.expect.valid === false) {
+                  expect(() => {
+                    const content = readFileSync(rootPath, "utf8");
+                    compile(content, { sourcePath: rootPath });
+                  }).toThrowError(CompilerError);
+
+                  try {
+                    const content = readFileSync(rootPath, "utf8");
+                    compile(content, { sourcePath: rootPath });
+                  } catch (err) {
+                    expect(err).toBeInstanceOf(CompilerError);
+                    if (tc.expect.errorCode) {
+                      const diags = (err as CompilerError).diagnostics;
+                      const matched = diags.some((d) => d.code === tc.expect.errorCode);
+                      expect(matched).toBe(true);
+                    }
+                  }
+                } else {
+                  const content = readFileSync(rootPath, "utf8");
+                  const kir = compile(content, { sourcePath: rootPath });
+                  if (tc.expect.entities) {
+                    expect(Object.keys(kir.entities).sort()).toEqual(tc.expect.entities.sort());
+                  }
+                  if (tc.expect.events) {
+                    expect(Object.keys(kir.events ?? {}).sort()).toEqual(tc.expect.events.sort());
+                  }
+                  if (tc.expect.policies) {
+                    expect(Object.keys(kir.policies ?? {}).sort()).toEqual(tc.expect.policies.sort());
+                  }
+                }
+              } finally {
+                if (cleanupDir) {
+                  rmSync(cleanupDir, { recursive: true, force: true });
+                }
               }
               break;
             }

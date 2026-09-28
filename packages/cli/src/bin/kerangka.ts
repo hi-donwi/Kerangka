@@ -24,6 +24,7 @@ import { codegenCommand } from "../commands/codegen.js";
 import { diffCommand } from "../commands/diff.js";
 import { composeCommand } from "../commands/compose.js";
 import { emitCommand } from "../commands/emit.js";
+import { graphCommand } from "../commands/graph.js";
 
 function printHelp(): void {
   console.log(`
@@ -48,6 +49,7 @@ COMMANDS:
   dev <file>              Run zero-config dev server with REST, MCP, and UIDL playground
   codegen <file>          Generate typed models (TypeScript, Java 21, Python, Go)
   diff <file1> <file2>    Analyze structural and breaking changes between two model versions
+  graph <file>            Draw the architecture / context map as Mermaid
   expand <file>           Display expanded entity models with resolved shorthands
   stats <file>            Display architectural metrics and complexity analysis
   test <file>             Execute declarative examples against the reference engine
@@ -59,7 +61,8 @@ OPTIONS:
   --check-breaking        Exit with error code if breaking changes are detected in 'diff'
   --format <text|json>    Diagnostics format for 'check' and 'lint' (default: text)
   --preset <name>         Lint preset for 'lint' (kerangka:recommended | kerangka:off)
-  --topology <name>       Deployment topology for 'lint'; reports loads crossing services
+  --topology <name>       Deployment topology for 'lint' and 'graph'
+  --direction <TD|LR>     Layout direction for 'graph' (default: TD)
   --fail-on <severity>    Lowest severity that fails 'lint' (error | warning, default: error)
   -o, --output <path>     Output file or directory path (use '-' for stdout)
   -p, --port <number>     Port for dev server (default: 3000)
@@ -77,6 +80,8 @@ EXAMPLES:
   kerangka codegen examples/invoicing.kerangka.json --target java -o InvoiceModel.java
   kerangka codegen examples/invoicing.kerangka.json --target python -o models.py
   kerangka diff old.json new.json --check-breaking
+  kerangka graph examples/commerce
+  kerangka graph examples/commerce --topology distributed
   kerangka dev examples/invoicing.kerangka.json --port 3000
 `);
 }
@@ -99,6 +104,7 @@ async function main(): Promise<void> {
         format: { type: "string" },
         preset: { type: "string" },
         topology: { type: "string" },
+        direction: { type: "string" },
         "fail-on": { type: "string" },
       },
       allowPositionals: true,
@@ -210,6 +216,17 @@ async function main(): Promise<void> {
           port: values.port ? parseInt(values.port, 10) : 3000,
         });
         break;
+      case "graph": {
+        const format = values.format === "json" ? "json" : "mermaid";
+        const direction = values.direction === "LR" ? "LR" : "TD";
+        success = graphCommand(file!, {
+          format,
+          direction,
+          output: values.output,
+          topology: values.topology,
+        });
+        break;
+      }
       case "expand":
         success = expandCommand(file!);
         break;

@@ -175,6 +175,16 @@ function evaluateCall(node: CallNode, ctx: EvalContext): unknown {
     return evaluate(args[1]!, ctx);
   }
 
+  // Conditional / Ternary (UIDL 'if')
+  if (op === "if") {
+    const cond = evaluate(args[0]!, ctx);
+    if (Boolean(cond)) {
+      return args[1] !== undefined ? evaluate(args[1], ctx) : null;
+    } else {
+      return args[2] !== undefined ? evaluate(args[2], ctx) : null;
+    }
+  }
+
   // Evaluate operands for arithmetic and comparisons
   const left = args[0] ? evaluate(args[0], ctx) : null;
   const right = args[1] ? evaluate(args[1], ctx) : null;
@@ -193,29 +203,39 @@ function evaluateCall(node: CallNode, ctx: EvalContext): unknown {
   }
 
   // Null propagation in arithmetic: returns null if either operand is null
-  if (["+", "-", "*", "/", "%"].includes(op)) {
+  if (["+", "-", "*", "/", "%", "add", "subtract", "multiply", "divide", "mod"].includes(op)) {
     if (left === null || right === null || left === undefined || right === undefined) {
       return null;
     }
     if (typeof left !== "number" || typeof right !== "number") {
-      // String concatenation on '+' if both are strings
-      if (op === "+" && typeof left === "string" && typeof right === "string") {
+      // String concatenation on '+' or 'add' if both are strings
+      if ((op === "+" || op === "add") && typeof left === "string" && typeof right === "string") {
         return left + right;
       }
       throw new K1EvaluationError(`Arithmetic operator '${op}' expects numeric operands`, "TYPE_ERROR");
     }
 
     switch (op) {
-      case "+": return DecimalMath.add(left, right);
-      case "-": return DecimalMath.sub(left, right);
-      case "*": return DecimalMath.mul(left, right);
-      case "/": return DecimalMath.div(left, right);
-      case "%": return DecimalMath.mod(left, right);
+      case "+":
+      case "add":
+        return DecimalMath.add(left, right);
+      case "-":
+      case "subtract":
+        return DecimalMath.sub(left, right);
+      case "*":
+      case "multiply":
+        return DecimalMath.mul(left, right);
+      case "/":
+      case "divide":
+        return DecimalMath.div(left, right);
+      case "%":
+      case "mod":
+        return DecimalMath.mod(left, right);
     }
   }
 
   // Relational comparisons: false if either is null
-  if (["<", "<=", ">", ">="].includes(op)) {
+  if (["<", "<=", ">", ">=", "lt", "lte", "gt", "gte"].includes(op)) {
     if (left === null || right === null || left === undefined || right === undefined) {
       return false;
     }
@@ -223,10 +243,18 @@ function evaluateCall(node: CallNode, ctx: EvalContext): unknown {
       return false;
     }
     switch (op) {
-      case "<": return (left as number) < (right as number);
-      case "<=": return (left as number) <= (right as number);
-      case ">": return (left as number) > (right as number);
-      case ">=": return (left as number) >= (right as number);
+      case "<":
+      case "lt":
+        return (left as number) < (right as number);
+      case "<=":
+      case "lte":
+        return (left as number) <= (right as number);
+      case ">":
+      case "gt":
+        return (left as number) > (right as number);
+      case ">=":
+      case "gte":
+        return (left as number) >= (right as number);
     }
   }
 
@@ -350,6 +378,19 @@ function evaluateCall(node: CallNode, ctx: EvalContext): unknown {
         if (val !== null && val !== undefined) return val;
       }
       return null;
+    }
+    case "startsWith": {
+      if (left === null || right === null) return false;
+      return String(left).startsWith(String(right));
+    }
+    case "in": {
+      if (left === null || right === null) return false;
+      if (Array.isArray(right)) return right.includes(left);
+      return false;
+    }
+    case "today": {
+      const nowStr = ctx.now ? (typeof ctx.now === "string" ? ctx.now : ctx.now.toISOString()) : new Date().toISOString();
+      return nowStr.split("T")[0];
     }
     case "now": {
       return ctx.now ? (typeof ctx.now === "string" ? ctx.now : ctx.now.toISOString()) : new Date().toISOString();

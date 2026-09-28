@@ -1,0 +1,177 @@
+{
+  "suite": "modules",
+  "description": "Multi-context bounded contexts, DAG dependency validation, boundary checks, and flattening",
+  "cases": [
+    {
+      "id": "mod-flattening-commerce",
+      "description": "Multi-context workspace flattens entities, events, and policies across contexts",
+      "input": {
+        "sourcePath": "examples/commerce/kerangka.json"
+      },
+      "expect": {
+        "valid": true,
+        "entities": ["Invoice", "Order", "OrderLine", "StockReservation"],
+        "events": ["InvoicePaid", "OrderCancelled", "OrderPlaced"],
+        "policies": ["onOrderPlaced"]
+      }
+    },
+    {
+      "id": "mod-cycle-detection-direct",
+      "description": "Direct circular dependency between contexts is rejected with DEPENDENCY_CYCLE",
+      "input": {
+        "virtualWorkspace": {
+          "manifest": {
+            "kerangka": "0.1",
+            "app": "cycle-direct-app",
+            "contexts": ["a", "b"]
+          },
+          "contexts": {
+            "a": {
+              "context": "a",
+              "dependsOn": ["b"],
+              "entities": { "EntityA": { "fields": { "name": "string!" } } }
+            },
+            "b": {
+              "context": "b",
+              "dependsOn": ["a"],
+              "entities": { "EntityB": { "fields": { "name": "string!" } } }
+            }
+          }
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "DEPENDENCY_CYCLE"
+      }
+    },
+    {
+      "id": "mod-cycle-detection-transitive",
+      "description": "Transitive 3-way circular dependency (A -> B -> C -> A) is rejected with DEPENDENCY_CYCLE",
+      "input": {
+        "virtualWorkspace": {
+          "manifest": {
+            "kerangka": "0.1",
+            "app": "cycle-transitive-app",
+            "contexts": ["a", "b", "c"]
+          },
+          "contexts": {
+            "a": {
+              "context": "a",
+              "dependsOn": ["b"],
+              "entities": { "EntityA": { "fields": { "name": "string!" } } }
+            },
+            "b": {
+              "context": "b",
+              "dependsOn": ["c"],
+              "entities": { "EntityB": { "fields": { "name": "string!" } } }
+            },
+            "c": {
+              "context": "c",
+              "dependsOn": ["a"],
+              "entities": { "EntityC": { "fields": { "name": "string!" } } }
+            }
+          }
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "DEPENDENCY_CYCLE"
+      }
+    },
+    {
+      "id": "mod-unexported-event-rejected",
+      "description": "Policy listening to an unexported foreign event is rejected with NOT_EXPORTED",
+      "input": {
+        "virtualWorkspace": {
+          "manifest": {
+            "kerangka": "0.1",
+            "app": "export-violation-app",
+            "contexts": ["producer", "consumer"]
+          },
+          "contexts": {
+            "producer": {
+              "context": "producer",
+              "exports": { "events": ["PublicEvent"] },
+              "events": {
+                "PublicEvent": { "id": "string!" },
+                "PrivateEvent": { "secret": "string!" }
+              },
+              "entities": { "ProducerEntity": { "fields": { "id": "string!" } } }
+            },
+            "consumer": {
+              "context": "consumer",
+              "dependsOn": ["producer"],
+              "entities": { "ConsumerEntity": { "fields": { "id": "string!" } } },
+              "policies": {
+                "onSecret": {
+                  "on": "producer.PrivateEvent",
+                  "run": "ConsumerEntity.create"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "NOT_EXPORTED"
+      }
+    },
+    {
+      "id": "mod-undeclared-event-rejected",
+      "description": "Emitting an event not declared in the context is rejected with UNDECLARED_EVENT",
+      "input": {
+        "virtualWorkspace": {
+          "manifest": {
+            "kerangka": "0.1",
+            "app": "undeclared-event-app",
+            "contexts": ["billing"]
+          },
+          "contexts": {
+            "billing": {
+              "context": "billing",
+              "entities": {
+                "Payment": {
+                  "fields": { "status": "enum(pending, done) = pending" },
+                  "workflow": {
+                    "field": "status",
+                    "transitions": {
+                      "complete": {
+                        "from": "pending",
+                        "to": "done",
+                        "then": [{ "emit": "PaymentUnknownEvent", "data": {} }]
+                      }
+                    }
+                  }
+                }
+              },
+              "events": {}
+            }
+          }
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "UNDECLARED_EVENT"
+      }
+    },
+    {
+      "id": "mod-missing-context-rejected",
+      "description": "Declaring a non-existent context directory is rejected with CONTEXT_NOT_FOUND",
+      "input": {
+        "virtualWorkspace": {
+          "manifest": {
+            "kerangka": "0.1",
+            "app": "missing-context-app",
+            "contexts": ["nonexistent_context"]
+          },
+          "contexts": {}
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "CONTEXT_NOT_FOUND"
+      }
+    }
+  ]
+}

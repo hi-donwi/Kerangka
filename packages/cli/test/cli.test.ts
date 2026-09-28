@@ -14,7 +14,8 @@ import {
   diffCommand,
   composeCommand,
   emitCommand,
-  lintCommand
+  lintCommand,
+  graphCommand
 } from "../src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -180,4 +181,75 @@ describe("Kerangka CLI Commands", () => {
     }
     expect(JSON.parse(lines.join("\n")).preset).toBe("kerangka:off");
   });
+
+  it("graphCommand generates Mermaid flowchart for multi-context workspace", () => {
+    const commercePath = path.resolve(__dirname, "../../../examples/commerce");
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.join(" "));
+    };
+    try {
+      const ok = graphCommand(commercePath);
+      expect(ok).toBe(true);
+    } finally {
+      console.log = original;
+    }
+    const output = lines.join("\n");
+    expect(output).toContain("flowchart TD");
+    expect(output).toContain("orders");
+    expect(output).toContain("billing");
+    expect(output).toContain("inventory");
+    expect(output).toContain("billing -->|depends on| orders");
+    expect(output).toContain("orders -.->|on: OrderPlaced| billing");
+  });
+
+  it("graphCommand groups into services when topology is provided", () => {
+    const commercePath = path.resolve(__dirname, "../../../examples/commerce");
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.join(" "));
+    };
+    try {
+      const ok = graphCommand(commercePath, { topology: "distributed" });
+      expect(ok).toBe(true);
+    } finally {
+      console.log = original;
+    }
+    const output = lines.join("\n");
+    expect(output).toContain("subgraph svc_orders_service");
+    expect(output).toContain("subgraph svc_billing_service");
+    expect(output).toContain("subgraph svc_inventory_service");
+  });
+
+  it("graphCommand generates JSON format and writes to file", () => {
+    const commercePath = path.resolve(__dirname, "../../../examples/commerce");
+    const outGraph = path.join(tmpDir, "graph.json");
+    const ok = graphCommand(commercePath, { format: "json", output: outGraph });
+    expect(ok).toBe(true);
+    expect(fs.existsSync(outGraph)).toBe(true);
+    const parsed = JSON.parse(fs.readFileSync(outGraph, "utf-8"));
+    expect(parsed.app).toBe("commerce");
+    expect(parsed.nodes.length).toBe(3);
+    expect(parsed.edges.some((e: any) => e.type === "dependsOn")).toBe(true);
+  });
+
+  it("graphCommand renders single-file model entities", () => {
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.join(" "));
+    };
+    try {
+      const ok = graphCommand(examplePath);
+      expect(ok).toBe(true);
+    } finally {
+      console.log = original;
+    }
+    const output = lines.join("\n");
+    expect(output).toContain("flowchart TD");
+    expect(output).toContain("Invoice");
+  });
 });
+

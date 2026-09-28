@@ -449,6 +449,191 @@
         "context": { "val": null }
       },
       "expect": { "value": false }
+    },
+    {
+      "id": "expr-uidl-add",
+      "description": "UIDL canonical $expr 'add' evaluates decimal addition",
+      "input": {
+        "ast": { "$expr": "add", "args": [{ "literal": 10.5 }, { "literal": 20.25 }] }
+      },
+      "expect": { "value": 30.75 }
+    },
+    {
+      "id": "expr-uidl-subtract",
+      "description": "UIDL canonical $expr 'subtract' evaluates subtraction",
+      "input": {
+        "ast": { "$expr": "subtract", "args": [{ "literal": 50 }, { "literal": 18.5 }] }
+      },
+      "expect": { "value": 31.5 }
+    },
+    {
+      "id": "expr-uidl-multiply",
+      "description": "UIDL canonical $expr 'multiply' evaluates multiplication",
+      "input": {
+        "ast": { "$expr": "multiply", "args": [{ "literal": 6 }, { "literal": 7 }] }
+      },
+      "expect": { "value": 42 }
+    },
+    {
+      "id": "expr-uidl-divide",
+      "description": "UIDL canonical $expr 'divide' evaluates division",
+      "input": {
+        "ast": { "$expr": "divide", "args": [{ "literal": 100 }, { "literal": 4 }] }
+      },
+      "expect": { "value": 25 }
+    },
+    {
+      "id": "expr-uidl-eq",
+      "description": "UIDL canonical $expr 'eq' evaluates equality",
+      "input": {
+        "ast": { "$expr": "eq", "args": [{ "$bind": "status" }, { "literal": "active" }] },
+        "context": { "status": "active" }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-neq",
+      "description": "UIDL canonical $expr 'neq' evaluates inequality",
+      "input": {
+        "ast": { "$expr": "neq", "args": [{ "literal": "draft" }, { "literal": "published" }] }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-gt",
+      "description": "UIDL canonical $expr 'gt' evaluates strictly greater than",
+      "input": {
+        "ast": { "$expr": "gt", "args": [{ "literal": 20 }, { "literal": 10 }] }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-gte",
+      "description": "UIDL canonical $expr 'gte' evaluates greater than or equal",
+      "input": {
+        "ast": { "$expr": "gte", "args": [{ "literal": 10 }, { "literal": 10 }] }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-lt",
+      "description": "UIDL canonical $expr 'lt' evaluates strictly less than",
+      "input": {
+        "ast": { "$expr": "lt", "args": [{ "literal": 5 }, { "literal": 10 }] }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-lte",
+      "description": "UIDL canonical $expr 'lte' evaluates less than or equal",
+      "input": {
+        "ast": { "$expr": "lte", "args": [{ "literal": 5 }, { "literal": 5 }] }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-and",
+      "description": "UIDL canonical $expr 'and' evaluates logical conjunction",
+      "input": {
+        "ast": { "$expr": "and", "args": [{ "literal": true }, { "literal": false }] }
+      },
+      "expect": { "value": false }
+    },
+    {
+      "id": "expr-uidl-or",
+      "description": "UIDL canonical $expr 'or' evaluates logical disjunction",
+      "input": {
+        "ast": { "$expr": "or", "args": [{ "literal": false }, { "literal": true }] }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-not",
+      "description": "UIDL canonical $expr 'not' evaluates logical negation",
+      "input": {
+        "ast": { "$expr": "not", "args": [{ "literal": false }] }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-if-true",
+      "description": "UIDL canonical $expr 'if' returns then branch when condition holds",
+      "input": {
+        "ast": {
+          "$expr": "if",
+          "args": [{ "literal": true }, { "literal": "approved" }, { "literal": "pending" }]
+        }
+      },
+      "expect": { "value": "approved" }
+    },
+    {
+      "id": "expr-uidl-if-false",
+      "description": "UIDL canonical $expr 'if' returns else branch when condition is false",
+      "input": {
+        "ast": {
+          "$expr": "if",
+          "args": [{ "literal": false }, { "literal": "approved" }, { "literal": "pending" }]
+        }
+      },
+      "expect": { "value": "pending" }
+    },
+    {
+      "id": "expr-uidl-coalesce",
+      "description": "UIDL canonical $expr 'coalesce' returns first non-null operand",
+      "input": {
+        "ast": {
+          "$expr": "coalesce",
+          "args": [{ "$bind": "missing" }, { "literal": null }, { "literal": "fallback" }]
+        },
+        "context": {}
+      },
+      "expect": { "value": "fallback" }
+    },
+    {
+      "id": "expr-uidl-contains-str",
+      "description": "UIDL canonical $expr 'contains' checks substring membership",
+      "input": {
+        "ast": {
+          "$expr": "contains",
+          "args": [{ "literal": "Kerangka Specification" }, { "literal": "Specification" }]
+        }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-contains-arr",
+      "description": "UIDL canonical $expr 'contains' checks array membership",
+      "input": {
+        "ast": {
+          "$expr": "contains",
+          "args": [{ "$bind": "roles" }, { "literal": "admin" }]
+        },
+        "context": { "roles": ["user", "manager", "admin"] }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-startsWith",
+      "description": "UIDL canonical $expr 'startsWith' checks prefix matching",
+      "input": {
+        "ast": {
+          "$expr": "startsWith",
+          "args": [{ "literal": "INV-2026-001" }, { "literal": "INV-" }]
+        }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-uidl-in",
+      "description": "UIDL canonical $expr 'in' checks item in collection",
+      "input": {
+        "ast": {
+          "$expr": "in",
+          "args": [{ "literal": "paid" }, { "$bind": "closedStatuses" }]
+        },
+        "context": { "closedStatuses": ["paid", "void", "refunded"] }
+      },
+      "expect": { "value": true }
     }
   ]
 }
