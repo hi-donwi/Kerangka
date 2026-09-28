@@ -109,6 +109,710 @@
         "valid": false,
         "errorCode": "INVARIANT_FAILED"
       }
+    },
+    {
+      "id": "val-max-constraint-violation",
+      "description": "Validation flags numeric values exceeding maximum",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Rating": {
+              "fields": {
+                "score": "int! <= 5"
+              }
+            }
+          }
+        },
+        "record": { "score": 6 }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "MAX_CONSTRAINT",
+        "errorField": "score"
+      }
+    },
+    {
+      "id": "val-min-max-bounds-pass",
+      "description": "Validation succeeds when value is within bounds",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Score": {
+              "fields": {
+                "points": "int! >= 1 <= 100"
+              }
+            }
+          }
+        },
+        "record": { "points": 50 }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-enum-invalid-value",
+      "description": "Validation flags values not in allowed enum options",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Ticket": {
+              "fields": {
+                "priority": "enum(low, medium, high)"
+              }
+            }
+          }
+        },
+        "record": { "priority": "urgent" }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "INVALID_ENUM_VALUE",
+        "errorField": "priority"
+      }
+    },
+    {
+      "id": "val-enum-valid-value",
+      "description": "Validation succeeds for valid enum value",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Ticket": {
+              "fields": {
+                "priority": "enum(low, medium, high)"
+              }
+            }
+          }
+        },
+        "record": { "priority": "high" }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-required-null-violation",
+      "description": "Explicit null on required field is invalid",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "User": {
+              "fields": {
+                "username": "string!"
+              }
+            }
+          }
+        },
+        "record": { "username": null }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "REQUIRED_FIELD",
+        "errorField": "username"
+      }
+    },
+    {
+      "id": "val-required-empty-string-violation",
+      "description": "Empty string on required field is invalid",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "User": {
+              "fields": {
+                "username": "string!"
+              }
+            }
+          }
+        },
+        "record": { "username": "" }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "REQUIRED_FIELD",
+        "errorField": "username"
+      }
+    },
+    {
+      "id": "val-optional-field-null-pass",
+      "description": "Null on optional field is valid",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Profile": {
+              "fields": {
+                "bio": "string?"
+              }
+            }
+          }
+        },
+        "record": { "bio": null }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-business-rule-pass",
+      "description": "Validation succeeds when business rule condition holds",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Invoice": {
+              "fields": {
+                "subtotal": "decimal(12,2)!",
+                "tax": "decimal(12,2)!",
+                "total": "decimal(12,2)!"
+              },
+              "rules": [
+                {
+                  "id": "total-matches",
+                  "check": "total == subtotal + tax",
+                  "field": "total",
+                  "message": "Total must equal subtotal plus tax"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "subtotal": 100, "tax": 10, "total": 110 }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-business-rule-math-fail",
+      "description": "Validation flags records failing math rule check",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Invoice": {
+              "fields": {
+                "subtotal": "decimal(12,2)!",
+                "tax": "decimal(12,2)!",
+                "total": "decimal(12,2)!"
+              },
+              "rules": [
+                {
+                  "id": "total-matches",
+                  "check": "total == subtotal + tax",
+                  "field": "total",
+                  "message": "Total must equal subtotal plus tax"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "subtotal": 100, "tax": 10, "total": 999 }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "RULE_FAILED",
+        "errorField": "total"
+      }
+    },
+    {
+      "id": "val-invariant-pass",
+      "description": "Validation succeeds when domain invariant holds",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "StockItem": {
+              "fields": {
+                "quantity": "int!",
+                "reserved": "int!"
+              },
+              "invariants": [
+                {
+                  "id": "stock-positive",
+                  "assert": "quantity >= reserved",
+                  "message": "Stock quantity cannot be less than reserved quantity"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "quantity": 100, "reserved": 25 }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-multiple-invariants-first-fail",
+      "description": "Validation reports invariant violation when one fails",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Product": {
+              "fields": {
+                "price": "decimal(10,2)!",
+                "cost": "decimal(10,2)!"
+              },
+              "invariants": [
+                {
+                  "id": "price-above-cost",
+                  "assert": "price >= cost",
+                  "message": "Selling price must cover cost"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "price": 8.0, "cost": 10.0 }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "INVARIANT_FAILED"
+      }
+    },
+    {
+      "id": "val-decimal-min-violation",
+      "description": "Validation flags decimal values below minimum constraint",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Payment": {
+              "fields": {
+                "amount": "decimal(10,2)! >= 0.01"
+              }
+            }
+          }
+        },
+        "record": { "amount": 0.0 }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "MIN_CONSTRAINT",
+        "errorField": "amount"
+      }
+    },
+    {
+      "id": "val-decimal-min-pass",
+      "description": "Validation passes when decimal equals minimum constraint",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Payment": {
+              "fields": {
+                "amount": "decimal(10,2)! >= 0.01"
+              }
+            }
+          }
+        },
+        "record": { "amount": 0.01 }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-multi-field-rule-failure",
+      "description": "Validation fails when compound condition rule is broken",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Booking": {
+              "fields": {
+                "adults": "int!",
+                "children": "int!",
+                "rooms": "int!"
+              },
+              "rules": [
+                {
+                  "id": "capacity-check",
+                  "check": "adults + children <= rooms * 4",
+                  "field": "rooms",
+                  "message": "Too many guests for number of rooms"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "adults": 4, "children": 2, "rooms": 1 }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "RULE_FAILED",
+        "errorField": "rooms"
+      }
+    },
+    {
+      "id": "val-multi-field-rule-pass",
+      "description": "Validation passes when compound condition rule holds",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Booking": {
+              "fields": {
+                "adults": "int!",
+                "children": "int!",
+                "rooms": "int!"
+              },
+              "rules": [
+                {
+                  "id": "capacity-check",
+                  "check": "adults + children <= rooms * 4",
+                  "field": "rooms",
+                  "message": "Too many guests for number of rooms"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "adults": 2, "children": 2, "rooms": 1 }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-rule-string-inequality-fail",
+      "description": "Validation flags disallowed string value via rule",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Account": {
+              "fields": {
+                "status": "string!"
+              },
+              "rules": [
+                {
+                  "id": "not-banned",
+                  "check": "status != 'banned'",
+                  "field": "status",
+                  "message": "Account status cannot be banned"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "status": "banned" }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "RULE_FAILED",
+        "errorField": "status"
+      }
+    },
+    {
+      "id": "val-rule-string-inequality-pass",
+      "description": "Validation passes when string passes rule check",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Account": {
+              "fields": {
+                "status": "string!"
+              },
+              "rules": [
+                {
+                  "id": "not-banned",
+                  "check": "status != 'banned'",
+                  "field": "status",
+                  "message": "Account status cannot be banned"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "status": "active" }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-multiple-missing-fields",
+      "description": "Validation reports when multiple required fields are missing",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Contact": {
+              "fields": {
+                "firstName": "string!",
+                "lastName": "string!",
+                "email": "email!"
+              }
+            }
+          }
+        },
+        "record": {}
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "REQUIRED_FIELD"
+      }
+    },
+    {
+      "id": "val-boolean-field-pass",
+      "description": "Validation passes with valid boolean field values",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Task": {
+              "fields": {
+                "done": "bool!",
+                "archived": "boolean"
+              }
+            }
+          }
+        },
+        "record": { "done": true, "archived": false }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-rule-percentage-range-fail",
+      "description": "Validation fails when percentage is out of range",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Discount": {
+              "fields": {
+                "rate": "decimal(5,2)!"
+              },
+              "rules": [
+                {
+                  "id": "rate-bounds",
+                  "check": "rate >= 0 && rate <= 100",
+                  "field": "rate",
+                  "message": "Discount rate must be between 0 and 100"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "rate": 105.0 }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "RULE_FAILED",
+        "errorField": "rate"
+      }
+    },
+    {
+      "id": "val-rule-percentage-range-pass",
+      "description": "Validation passes when percentage is within range",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Discount": {
+              "fields": {
+                "rate": "decimal(5,2)!"
+              },
+              "rules": [
+                {
+                  "id": "rate-bounds",
+                  "check": "rate >= 0 && rate <= 100",
+                  "field": "rate",
+                  "message": "Discount rate must be between 0 and 100"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "rate": 25.0 }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-rule-coalesce-condition",
+      "description": "Rule utilizing coalesce for null safety",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Job": {
+              "fields": {
+                "retries": "int",
+                "maxRetries": "int!"
+              },
+              "rules": [
+                {
+                  "id": "retries-limit",
+                  "check": "coalesce(retries, 0) <= maxRetries",
+                  "field": "retries",
+                  "message": "Retries cannot exceed maximum allowed"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "maxRetries": 3 }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-rule-coalesce-fail",
+      "description": "Rule utilizing coalesce fails when value exceeds limit",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Job": {
+              "fields": {
+                "retries": "int",
+                "maxRetries": "int!"
+              },
+              "rules": [
+                {
+                  "id": "retries-limit",
+                  "check": "coalesce(retries, 0) <= maxRetries",
+                  "field": "retries",
+                  "message": "Retries cannot exceed maximum allowed"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "retries": 5, "maxRetries": 3 }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "RULE_FAILED",
+        "errorField": "retries"
+      }
+    },
+    {
+      "id": "val-invariant-non-negative-difference",
+      "description": "Invariant ensures non-negative difference between two fields",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Ledger": {
+              "fields": {
+                "debit": "decimal(12,2)!",
+                "credit": "decimal(12,2)!"
+              },
+              "invariants": [
+                {
+                  "id": "balanced-entry",
+                  "assert": "debit == credit",
+                  "message": "Debits must equal credits"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "debit": 500.0, "credit": 500.0 }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-invariant-unbalanced-fail",
+      "description": "Invariant fails on unbalanced ledger entry",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Ledger": {
+              "fields": {
+                "debit": "decimal(12,2)!",
+                "credit": "decimal(12,2)!"
+              },
+              "invariants": [
+                {
+                  "id": "balanced-entry",
+                  "assert": "debit == credit",
+                  "message": "Debits must equal credits"
+                }
+              ]
+            }
+          }
+        },
+        "record": { "debit": 500.0, "credit": 450.0 }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "INVARIANT_FAILED"
+      }
+    },
+    {
+      "id": "val-all-fields-valid",
+      "description": "Entity with multiple field types and constraints passes when all valid",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-test",
+          "entities": {
+            "Order": {
+              "fields": {
+                "orderId": "uuid!",
+                "customer": "string!",
+                "itemsCount": "int! >= 1",
+                "total": "decimal(10,2)! >= 0",
+                "status": "enum(draft, placed, paid) = draft"
+              }
+            }
+          }
+        },
+        "record": {
+          "orderId": "550e8400-e29b-41d4-a716-446655440000",
+          "customer": "ACME Corp",
+          "itemsCount": 3,
+          "total": 150.75,
+          "status": "placed"
+        }
+      },
+      "expect": {
+        "valid": true
+      }
     }
   ]
 }

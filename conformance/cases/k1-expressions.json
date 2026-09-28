@@ -135,6 +135,320 @@
       "description": "coalesce() returns first non-null argument",
       "input": { "expr": "coalesce(null, null, 'fallback')" },
       "expect": { "value": "fallback" }
+    },
+    {
+      "id": "expr-sub-basic",
+      "description": "Subtraction subtracts right operand from left",
+      "input": { "expr": "20 - 7" },
+      "expect": { "value": 13 }
+    },
+    {
+      "id": "expr-mul-basic",
+      "description": "Multiplication multiplies numbers",
+      "input": { "expr": "6 * 7" },
+      "expect": { "value": 42 }
+    },
+    {
+      "id": "expr-div-basic",
+      "description": "Division divides numbers",
+      "input": { "expr": "100 / 4" },
+      "expect": { "value": 25 }
+    },
+    {
+      "id": "expr-div-decimal",
+      "description": "Division produces decimal quotients",
+      "input": { "expr": "10 / 4" },
+      "expect": { "value": 2.5 }
+    },
+    {
+      "id": "expr-mod-basic",
+      "description": "Modulo returns integer remainder",
+      "input": { "expr": "17 % 5" },
+      "expect": { "value": 2 }
+    },
+    {
+      "id": "expr-complex-precedence",
+      "description": "Complex arithmetic respects standard precedence",
+      "input": { "expr": "10 + 2 * 3 - 4 / 2" },
+      "expect": { "value": 14 }
+    },
+    {
+      "id": "expr-paren-nested",
+      "description": "Nested parentheses evaluate innermost first",
+      "input": { "expr": "((2 + 3) * (4 - 1)) / 3" },
+      "expect": { "value": 5 }
+    },
+    {
+      "id": "expr-decimal-sub",
+      "description": "Exact decimal subtraction without precision leak",
+      "input": { "expr": "0.3 - 0.1" },
+      "expect": { "value": 0.2 }
+    },
+    {
+      "id": "expr-decimal-mul",
+      "description": "Exact decimal multiplication",
+      "input": { "expr": "0.2 * 0.3" },
+      "expect": { "value": 0.06 }
+    },
+    {
+      "id": "expr-decimal-div",
+      "description": "Exact decimal division",
+      "input": { "expr": "0.3 / 0.1" },
+      "expect": { "value": 3 }
+    },
+    {
+      "id": "expr-eq-numbers",
+      "description": "Equality on identical numbers is true",
+      "input": { "expr": "42 == 42" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-eq-numbers-false",
+      "description": "Equality on different numbers is false",
+      "input": { "expr": "42 == 43" },
+      "expect": { "value": false }
+    },
+    {
+      "id": "expr-neq-strings",
+      "description": "Inequality on different strings is true",
+      "input": { "expr": "'apple' != 'banana'" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-neq-strings-false",
+      "description": "Inequality on identical strings is false",
+      "input": { "expr": "'apple' != 'apple'" },
+      "expect": { "value": false }
+    },
+    {
+      "id": "expr-lt-true",
+      "description": "Less than returns true when left is smaller",
+      "input": { "expr": "15 < 20" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-lt-false",
+      "description": "Less than returns false when left is greater",
+      "input": { "expr": "20 < 15" },
+      "expect": { "value": false }
+    },
+    {
+      "id": "expr-lte-equal",
+      "description": "Less than or equal returns true when operands are equal",
+      "input": { "expr": "20 <= 20" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-lte-less",
+      "description": "Less than or equal returns true when left is smaller",
+      "input": { "expr": "19 <= 20" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-gt-true",
+      "description": "Greater than returns true when left is greater",
+      "input": { "expr": "100 > 99" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-gte-equal",
+      "description": "Greater than or equal returns true when operands are equal",
+      "input": { "expr": "50 >= 50" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-eq-strings",
+      "description": "Equality on matching strings is true",
+      "input": { "expr": "'status' == 'status'" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-neq-numbers",
+      "description": "Inequality on distinct numbers is true",
+      "input": { "expr": "10 != 20" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-logical-and-true",
+      "description": "Logical AND returns true when both operands are true",
+      "input": { "expr": "true && true" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-logical-and-false",
+      "description": "Logical AND returns false when right operand is false",
+      "input": { "expr": "true && false" },
+      "expect": { "value": false }
+    },
+    {
+      "id": "expr-logical-or-false",
+      "description": "Logical OR returns false when both operands are false",
+      "input": { "expr": "false || false" },
+      "expect": { "value": false }
+    },
+    {
+      "id": "expr-logical-and-chain",
+      "description": "Chained AND operators evaluate to true",
+      "input": { "expr": "true && true && true" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-logical-or-chain",
+      "description": "Chained OR operators evaluate to true",
+      "input": { "expr": "false || false || true" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-double-negation",
+      "description": "Double boolean negation restores original boolean",
+      "input": { "expr": "!!true" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-math-ceil",
+      "description": "ceil() rounds up to next integer",
+      "input": { "expr": "ceil(4.2)" },
+      "expect": { "value": 5 }
+    },
+    {
+      "id": "expr-math-floor",
+      "description": "floor() rounds down to previous integer",
+      "input": { "expr": "floor(4.9)" },
+      "expect": { "value": 4 }
+    },
+    {
+      "id": "expr-math-min",
+      "description": "min() returns smallest of two numbers",
+      "input": { "expr": "min(10, 20)" },
+      "expect": { "value": 10 }
+    },
+    {
+      "id": "expr-math-max",
+      "description": "max() returns largest of two numbers",
+      "input": { "expr": "max(10, 20)" },
+      "expect": { "value": 20 }
+    },
+    {
+      "id": "expr-math-round-default",
+      "description": "round() without decimals parameter rounds to nearest integer",
+      "input": { "expr": "round(4.6)" },
+      "expect": { "value": 5 }
+    },
+    {
+      "id": "expr-math-round-three",
+      "description": "round() to three decimal places",
+      "input": { "expr": "round(1.23456, 3)" },
+      "expect": { "value": 1.235 }
+    },
+    {
+      "id": "expr-string-lower",
+      "description": "lower() converts string to lowercase",
+      "input": { "expr": "lower('HELLO WORLD')" },
+      "expect": { "value": "hello world" }
+    },
+    {
+      "id": "expr-string-trim",
+      "description": "trim() removes leading and trailing whitespace",
+      "input": { "expr": "trim('  spaced  ')" },
+      "expect": { "value": "spaced" }
+    },
+    {
+      "id": "expr-string-len",
+      "description": "len() returns string length",
+      "input": { "expr": "len('kerangka')" },
+      "expect": { "value": 8 }
+    },
+    {
+      "id": "expr-string-contains-true",
+      "description": "contains() returns true when substring is found",
+      "input": { "expr": "contains('hello world', 'world')" },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-string-contains-false",
+      "description": "contains() returns false when substring is missing",
+      "input": { "expr": "contains('hello world', 'universe')" },
+      "expect": { "value": false }
+    },
+    {
+      "id": "expr-string-concat",
+      "description": "concat() joins multiple string arguments",
+      "input": { "expr": "concat('Foo', 'Bar', 'Baz')" },
+      "expect": { "value": "FooBarBaz" }
+    },
+    {
+      "id": "expr-string-add-concat",
+      "description": "+ operator concatenates when both operands are strings",
+      "input": { "expr": "'Hello ' + 'World'" },
+      "expect": { "value": "Hello World" }
+    },
+    {
+      "id": "expr-collection-avg",
+      "description": "avg() calculates arithmetic mean of collection field",
+      "input": {
+        "expr": "avg(items, 'val')",
+        "context": { "items": [{ "val": 3 }, { "val": 6 }, { "val": 9 }] }
+      },
+      "expect": { "value": 6 }
+    },
+    {
+      "id": "expr-collection-contains",
+      "description": "contains() checks item membership in array",
+      "input": {
+        "expr": "contains(items, 'b')",
+        "context": { "items": ["a", "b", "c"] }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-collection-len",
+      "description": "len() returns array length",
+      "input": {
+        "expr": "len(items)",
+        "context": { "items": [1, 2, 3] }
+      },
+      "expect": { "value": 3 }
+    },
+    {
+      "id": "expr-collection-count-empty",
+      "description": "count() on empty list returns 0",
+      "input": {
+        "expr": "count(items)",
+        "context": { "items": [] }
+      },
+      "expect": { "value": 0 }
+    },
+    {
+      "id": "expr-collection-sum-expr",
+      "description": "sum() aggregates evaluated per-row expression",
+      "input": {
+        "expr": "sum(lines, qty * price)",
+        "context": {
+          "lines": [
+            { "qty": 2, "price": 10 },
+            { "qty": 3, "price": 5 }
+          ]
+        }
+      },
+      "expect": { "value": 35 }
+    },
+    {
+      "id": "expr-isSet-true",
+      "description": "isSet() returns true for non-null value",
+      "input": {
+        "expr": "isSet(val)",
+        "context": { "val": "active" }
+      },
+      "expect": { "value": true }
+    },
+    {
+      "id": "expr-isSet-false",
+      "description": "isSet() returns false for null value",
+      "input": {
+        "expr": "isSet(val)",
+        "context": { "val": null }
+      },
+      "expect": { "value": false }
     }
   ]
 }

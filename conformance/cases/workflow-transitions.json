@@ -131,6 +131,797 @@
         "ok": false,
         "error": "INVALID_STATE_TRANSITION"
       }
+    },
+    {
+      "id": "workflow-role-allowed",
+      "description": "Transition succeeds when actor has matching required role",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "publish": {
+                    "from": "draft",
+                    "to": "published",
+                    "roles": ["publisher"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "draft" },
+        "transition": "publish",
+        "actor": { "roles": ["publisher"] }
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "published" }
+      }
+    },
+    {
+      "id": "workflow-role-multiple-allowed",
+      "description": "Transition succeeds when actor has one of several allowed roles",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "approve": {
+                    "from": "pending",
+                    "to": "approved",
+                    "roles": ["admin", "supervisor"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "pending" },
+        "transition": "approve",
+        "actor": { "roles": ["supervisor", "auditor"] }
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "approved" }
+      }
+    },
+    {
+      "id": "workflow-role-empty-actor",
+      "description": "Transition fails when actor has empty roles array",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "approve": {
+                    "from": "pending",
+                    "to": "approved",
+                    "roles": ["admin"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "pending" },
+        "transition": "approve",
+        "actor": { "roles": [] }
+      },
+      "expect": {
+        "ok": false,
+        "error": "PERMISSION_DENIED"
+      }
+    },
+    {
+      "id": "workflow-role-no-actor",
+      "description": "Transition fails when role is required but no actor context is provided",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "approve": {
+                    "from": "pending",
+                    "to": "approved",
+                    "roles": ["admin"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "pending" },
+        "transition": "approve"
+      },
+      "expect": {
+        "ok": false,
+        "error": "PERMISSION_DENIED"
+      }
+    },
+    {
+      "id": "workflow-unrestricted-no-actor",
+      "description": "Transition succeeds without actor when no roles are restricted",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "activate": {
+                    "from": "inactive",
+                    "to": "active"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "inactive" },
+        "transition": "activate"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "active" }
+      }
+    },
+    {
+      "id": "workflow-multi-from-first-match",
+      "description": "Transition succeeds from first allowed state in array of from states",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "submit": {
+                    "from": ["draft", "review", "rejected"],
+                    "to": "pending"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "draft" },
+        "transition": "submit"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "pending" }
+      }
+    },
+    {
+      "id": "workflow-multi-from-second-match",
+      "description": "Transition succeeds from subsequent allowed state in array of from states",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "submit": {
+                    "from": ["draft", "review", "rejected"],
+                    "to": "pending"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "rejected" },
+        "transition": "submit"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "pending" }
+      }
+    },
+    {
+      "id": "workflow-multi-from-mismatch",
+      "description": "Transition fails when current state is not in array of from states",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "submit": {
+                    "from": ["draft", "review", "rejected"],
+                    "to": "pending"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "approved" },
+        "transition": "submit"
+      },
+      "expect": {
+        "ok": false,
+        "error": "INVALID_STATE_TRANSITION"
+      }
+    },
+    {
+      "id": "workflow-unknown-transition",
+      "description": "Transition fails with UNKNOWN_TRANSITION when transition name does not exist",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Doc": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "submit": {
+                    "from": "draft",
+                    "to": "pending"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "draft" },
+        "transition": "delete"
+      },
+      "expect": {
+        "ok": false,
+        "error": "UNKNOWN_TRANSITION"
+      }
+    },
+    {
+      "id": "workflow-custom-field-pass",
+      "description": "Transition succeeds when workflow uses custom field name instead of 'status'",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Deal": {
+              "fields": {
+                "stage": "string!",
+                "title": "string!"
+              },
+              "workflow": {
+                "field": "stage",
+                "transitions": {
+                  "advance": {
+                    "from": "discovery",
+                    "to": "proposal"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "stage": "discovery", "title": "Enterprise Deal" },
+        "transition": "advance"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "stage": "proposal", "title": "Enterprise Deal" }
+      }
+    },
+    {
+      "id": "workflow-custom-field-invalid-state",
+      "description": "Transition fails when current state in custom field does not match 'from'",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Deal": {
+              "fields": {
+                "stage": "string!",
+                "title": "string!"
+              },
+              "workflow": {
+                "field": "stage",
+                "transitions": {
+                  "advance": {
+                    "from": "discovery",
+                    "to": "proposal"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "stage": "won", "title": "Enterprise Deal" },
+        "transition": "advance"
+      },
+      "expect": {
+        "ok": false,
+        "error": "INVALID_STATE_TRANSITION"
+      }
+    },
+    {
+      "id": "workflow-guard-with-actor-pass",
+      "description": "Transition guard succeeds when evaluating actor property against record",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Task": {
+              "fields": {
+                "status": "string!",
+                "assignee": "string!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "claim": {
+                    "from": "assigned",
+                    "to": "in_progress",
+                    "when": "actor.id == record.assignee"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "assigned", "assignee": "user_42" },
+        "transition": "claim",
+        "actor": { "id": "user_42", "roles": ["engineer"] }
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "in_progress", "assignee": "user_42" }
+      }
+    },
+    {
+      "id": "workflow-guard-with-actor-fail",
+      "description": "Transition guard fails when actor property does not match record",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Task": {
+              "fields": {
+                "status": "string!",
+                "assignee": "string!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "claim": {
+                    "from": "assigned",
+                    "to": "in_progress",
+                    "when": "actor.id == record.assignee"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "assigned", "assignee": "user_42" },
+        "transition": "claim",
+        "actor": { "id": "user_99", "roles": ["engineer"] }
+      },
+      "expect": {
+        "ok": false,
+        "error": "GUARD_FAILED"
+      }
+    },
+    {
+      "id": "workflow-guard-string-comparison",
+      "description": "Transition guard succeeds with string literal comparison",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Order": {
+              "fields": {
+                "status": "string!",
+                "tier": "string!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "fast_track": {
+                    "from": "queued",
+                    "to": "processing",
+                    "when": "tier == 'vip'"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "queued", "tier": "vip" },
+        "transition": "fast_track"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "processing", "tier": "vip" }
+      }
+    },
+    {
+      "id": "workflow-guard-compound-and-pass",
+      "description": "Transition guard succeeds when compound AND expression is satisfied",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Account": {
+              "fields": {
+                "status": "string!",
+                "verified": "bool!",
+                "balance": "int!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "activate": {
+                    "from": "pending",
+                    "to": "active",
+                    "when": "verified == true && balance >= 100"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "pending", "verified": true, "balance": 250 },
+        "transition": "activate"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "active", "verified": true, "balance": 250 }
+      }
+    },
+    {
+      "id": "workflow-guard-compound-and-fail-left",
+      "description": "Transition guard fails when left side of compound AND expression is false",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Account": {
+              "fields": {
+                "status": "string!",
+                "verified": "bool!",
+                "balance": "int!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "activate": {
+                    "from": "pending",
+                    "to": "active",
+                    "when": "verified == true && balance >= 100"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "pending", "verified": false, "balance": 250 },
+        "transition": "activate"
+      },
+      "expect": {
+        "ok": false,
+        "error": "GUARD_FAILED"
+      }
+    },
+    {
+      "id": "workflow-guard-compound-and-fail-right",
+      "description": "Transition guard fails when right side of compound AND expression is false",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Account": {
+              "fields": {
+                "status": "string!",
+                "verified": "bool!",
+                "balance": "int!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "activate": {
+                    "from": "pending",
+                    "to": "active",
+                    "when": "verified == true && balance >= 100"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "pending", "verified": true, "balance": 50 },
+        "transition": "activate"
+      },
+      "expect": {
+        "ok": false,
+        "error": "GUARD_FAILED"
+      }
+    },
+    {
+      "id": "workflow-guard-null-check-pass",
+      "description": "Transition guard succeeds when field is not null",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Submission": {
+              "fields": {
+                "status": "string!",
+                "reviewer": "string?"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "approve": {
+                    "from": "review",
+                    "to": "approved",
+                    "when": "reviewer != null"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "review", "reviewer": "alice" },
+        "transition": "approve"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "approved", "reviewer": "alice" }
+      }
+    },
+    {
+      "id": "workflow-guard-null-check-fail",
+      "description": "Transition guard fails when required field is null",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Submission": {
+              "fields": {
+                "status": "string!",
+                "reviewer": "string?"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "approve": {
+                    "from": "review",
+                    "to": "approved",
+                    "when": "reviewer != null"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "review", "reviewer": null },
+        "transition": "approve"
+      },
+      "expect": {
+        "ok": false,
+        "error": "GUARD_FAILED"
+      }
+    },
+    {
+      "id": "workflow-then-set-mutation",
+      "description": "Transition then-effects mutate record fields as specified in set",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "SecurityPolicy": {
+              "fields": {
+                "status": "string!",
+                "locked": "bool!",
+                "attempts": "int!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "lock": {
+                    "from": "active",
+                    "to": "suspended",
+                    "then": [
+                      { "set": { "locked": true, "attempts": 0 } }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "active", "locked": false, "attempts": 5 },
+        "transition": "lock"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "suspended", "locked": true, "attempts": 0 }
+      }
+    },
+    {
+      "id": "workflow-with-computed-field",
+      "description": "Transition re-evaluates computed fields on the record after state change",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Document": {
+              "fields": {
+                "status": "string!",
+                "isDraft": { "type": "bool", "compute": "status == 'draft'" }
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "submit": {
+                    "from": "draft",
+                    "to": "submitted"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "draft" },
+        "transition": "submit"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "submitted", "isDraft": false }
+      }
+    },
+    {
+      "id": "workflow-declared-states-pass",
+      "description": "Transition succeeds in workflow with explicitly declared states",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Ticket": {
+              "fields": { "status": "string!" },
+              "workflow": {
+                "field": "status",
+                "states": ["draft", "submitted", "approved"],
+                "transitions": {
+                  "submit": {
+                    "from": "draft",
+                    "to": "submitted"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "draft" },
+        "transition": "submit"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "submitted" }
+      }
+    },
+    {
+      "id": "workflow-guard-or-pass",
+      "description": "Transition guard succeeds when one condition in OR expression is true",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Member": {
+              "fields": {
+                "status": "string!",
+                "isVip": "bool!",
+                "credits": "int!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "admit": {
+                    "from": "waiting",
+                    "to": "admitted",
+                    "when": "isVip == true || credits > 0"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "waiting", "isVip": false, "credits": 5 },
+        "transition": "admit"
+      },
+      "expect": {
+        "ok": true,
+        "record": { "status": "admitted", "isVip": false, "credits": 5 }
+      }
+    },
+    {
+      "id": "workflow-guard-or-fail",
+      "description": "Transition guard fails when both conditions in OR expression are false",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-test",
+          "entities": {
+            "Member": {
+              "fields": {
+                "status": "string!",
+                "isVip": "bool!",
+                "credits": "int!"
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "admit": {
+                    "from": "waiting",
+                    "to": "admitted",
+                    "when": "isVip == true || credits > 0"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "record": { "status": "waiting", "isVip": false, "credits": 0 },
+        "transition": "admit"
+      },
+      "expect": {
+        "ok": false,
+        "error": "GUARD_FAILED"
+      }
     }
   ]
 }

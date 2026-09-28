@@ -77,6 +77,254 @@
         },
         "required": false
       }
+    },
+    {
+      "id": "shorthand-text-required",
+      "description": "text! expands to required text",
+      "input": "text!",
+      "expect": { "type": "text", "required": true }
+    },
+    {
+      "id": "shorthand-float-optional",
+      "description": "float expands to optional float",
+      "input": "float",
+      "expect": { "type": "float", "required": false }
+    },
+    {
+      "id": "shorthand-bool-alias",
+      "description": "bool normalizes to boolean",
+      "input": "bool",
+      "expect": { "type": "boolean", "required": false }
+    },
+    {
+      "id": "shorthand-boolean-default",
+      "description": "boolean = false expands with default",
+      "input": "boolean = false",
+      "expect": { "type": "boolean", "required": false, "default": false }
+    },
+    {
+      "id": "shorthand-boolean-true-default",
+      "description": "boolean! = true expands with required and default",
+      "input": "boolean! = true",
+      "expect": { "type": "boolean", "required": true, "default": true }
+    },
+    {
+      "id": "shorthand-date-required",
+      "description": "date! expands to required date",
+      "input": "date!",
+      "expect": { "type": "date", "required": true }
+    },
+    {
+      "id": "shorthand-datetime-optional",
+      "description": "datetime? expands to optional datetime",
+      "input": "datetime?",
+      "expect": { "type": "datetime", "required": false }
+    },
+    {
+      "id": "shorthand-instant",
+      "description": "instant expands to instant type",
+      "input": "instant",
+      "expect": { "type": "instant", "required": false }
+    },
+    {
+      "id": "shorthand-time",
+      "description": "time! expands to required time",
+      "input": "time!",
+      "expect": { "type": "time", "required": true }
+    },
+    {
+      "id": "shorthand-uuid-unique",
+      "description": "uuid! unique expands to required unique uuid",
+      "input": "uuid! unique",
+      "expect": { "type": "uuid", "required": true, "unique": true }
+    },
+    {
+      "id": "shorthand-email-required",
+      "description": "email! expands to required email",
+      "input": "email!",
+      "expect": { "type": "email", "required": true }
+    },
+    {
+      "id": "shorthand-url",
+      "description": "url expands to url type",
+      "input": "url",
+      "expect": { "type": "url", "required": false }
+    },
+    {
+      "id": "shorthand-json",
+      "description": "json expands to json type",
+      "input": "json",
+      "expect": { "type": "json", "required": false }
+    },
+    {
+      "id": "shorthand-int-max",
+      "description": "int <= 100 expands with max constraint",
+      "input": "int <= 100",
+      "expect": { "type": "int", "required": false, "max": 100 }
+    },
+    {
+      "id": "shorthand-int-min-max",
+      "description": "int >= 1 <= 50 expands with both bounds",
+      "input": "int >= 1 <= 50",
+      "expect": { "type": "int", "required": false, "min": 1, "max": 50 }
+    },
+    {
+      "id": "shorthand-decimal-high-precision",
+      "description": "decimal(18,4)! expands with high precision and scale",
+      "input": "decimal(18,4)!",
+      "expect": {
+        "type": "decimal",
+        "precision": 18,
+        "scale": 4,
+        "required": true
+      }
+    },
+    {
+      "id": "shorthand-decimal-max",
+      "description": "decimal(10,2) <= 999 expands with max constraint",
+      "input": "decimal(10,2) <= 999",
+      "expect": {
+        "type": "decimal",
+        "precision": 10,
+        "scale": 2,
+        "required": false,
+        "max": 999
+      }
+    },
+    {
+      "id": "shorthand-enum-quoted",
+      "description": "enum with quoted values strips quotes",
+      "input": "enum('admin', 'user', 'guest') = 'guest'",
+      "expect": {
+        "type": "enum",
+        "values": ["admin", "user", "guest"],
+        "required": false,
+        "default": "guest"
+      }
+    },
+    {
+      "id": "shorthand-ref-angle-brackets",
+      "description": "ref<Account>! expands using angle bracket notation",
+      "input": "ref<Account>!",
+      "expect": {
+        "type": "ref",
+        "target": "Account",
+        "required": true
+      }
+    },
+    {
+      "id": "shorthand-ref-optional",
+      "description": "ref(Parent)? expands to optional ref",
+      "input": "ref(Parent)?",
+      "expect": {
+        "type": "ref",
+        "target": "Parent",
+        "required": false
+      }
+    },
+    {
+      "id": "shorthand-list-primitive-string",
+      "description": "list(string) expands to list of primitive strings",
+      "input": "list(string)",
+      "expect": {
+        "type": "list",
+        "element": { "type": "string", "required": true },
+        "required": false
+      }
+    },
+    {
+      "id": "shorthand-list-primitive-int",
+      "description": "list(int) expands to list of primitive integers",
+      "input": "list(int)",
+      "expect": {
+        "type": "list",
+        "element": { "type": "int", "required": true },
+        "required": false
+      }
+    },
+    {
+      "id": "shorthand-list-primitive-uuid",
+      "description": "list(uuid)! expands to required list of uuids",
+      "input": "list(uuid)!",
+      "expect": {
+        "type": "list",
+        "element": { "type": "uuid", "required": true },
+        "required": true
+      }
+    },
+    {
+      "id": "shorthand-list-angle-brackets",
+      "description": "list<Item> expands using angle bracket notation",
+      "input": "list<Item>",
+      "expect": {
+        "type": "list",
+        "element": { "type": "ref", "target": "Item", "required": true },
+        "required": false
+      }
+    },
+    {
+      "id": "shorthand-null-default",
+      "description": "string = null expands with null default",
+      "input": "string = null",
+      "expect": { "type": "string", "required": false, "default": null }
+    },
+    {
+      "id": "shorthand-string-default-value",
+      "description": "string = standard expands with default string",
+      "input": "string = standard",
+      "expect": { "type": "string", "required": false, "default": "standard" }
+    },
+    {
+      "id": "shorthand-int-negative-min",
+      "description": "int >= -10 expands with negative minimum bound",
+      "input": "int >= -10",
+      "expect": { "type": "int", "required": false, "min": -10 }
+    },
+    {
+      "id": "shorthand-int-negative-default",
+      "description": "int = -1 expands with negative default",
+      "input": "int = -1",
+      "expect": { "type": "int", "required": false, "default": -1 }
+    },
+    {
+      "id": "shorthand-decimal-min-default",
+      "description": "decimal(6,2)! >= 0 = 0 expands with decimal type and bounds",
+      "input": "decimal(6,2)! >= 0 = 0",
+      "expect": {
+        "type": "decimal",
+        "precision": 6,
+        "scale": 2,
+        "required": true,
+        "min": 0,
+        "default": 0
+      }
+    },
+    {
+      "id": "shorthand-ref-unique",
+      "description": "ref(Profile)! unique expands to unique reference",
+      "input": "ref(Profile)! unique",
+      "expect": {
+        "type": "ref",
+        "target": "Profile",
+        "required": true,
+        "unique": true
+      }
+    },
+    {
+      "id": "shorthand-enum-single-value",
+      "description": "enum(fixed) expands single choice enum",
+      "input": "enum(fixed)",
+      "expect": {
+        "type": "enum",
+        "values": ["fixed"],
+        "required": false
+      }
+    },
+    {
+      "id": "shorthand-plain-string",
+      "description": "string without modifiers expands to optional string",
+      "input": "string",
+      "expect": { "type": "string", "required": false }
     }
   ]
 }

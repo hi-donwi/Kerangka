@@ -41,7 +41,7 @@ export function parseFieldShorthand(shorthand: string): FieldDefinition {
     else if (rawDef === "false") defaultValue = false;
     else if (rawDef === "null") defaultValue = null;
     else if (/^-?\d+(\.\d+)?$/.test(rawDef)) defaultValue = Number(rawDef);
-    else defaultValue = rawDef;
+    else defaultValue = rawDef.replace(/^['"]|['"]$/g, "");
   }
 
   // 2. Extract min constraint: e.g. ">= 0" or ">= 1"
