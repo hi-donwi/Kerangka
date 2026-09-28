@@ -5,8 +5,7 @@
     "Line": "An ordered item with quantity and agreed price"
   },
   "exports": {
-    "events": ["OrderPlaced", "OrderCancelled"],
-    "queries": ["getOrder"]
+    "events": ["OrderPlaced", "OrderCancelled"]
   },
   "entities": {
     "Order": {

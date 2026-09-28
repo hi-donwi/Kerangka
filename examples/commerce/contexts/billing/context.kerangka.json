@@ -5,8 +5,7 @@
   },
   "dependsOn": ["orders"],
   "exports": {
-    "events": ["InvoicePaid"],
-    "queries": ["getInvoice"]
+    "events": ["InvoicePaid"]
   },
   "entities": {
     "Invoice": {

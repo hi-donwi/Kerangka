@@ -4,9 +4,6 @@
     "StockReservation": "Temporary hold placed on warehouse stock for a pending order"
   },
   "dependsOn": ["orders"],
-  "exports": {
-    "queries": ["getStockLevel"]
-  },
   "entities": {
     "StockReservation": {
       "fields": {
