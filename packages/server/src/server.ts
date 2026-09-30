@@ -40,6 +40,21 @@ export interface ServerOptions {
   quiet?: boolean;
 }
 
+/**
+ * An effect a run asked for and the host could not deliver.
+ *
+ * `index` lines the failure up with the run's effect list, so a caller holding a trace can
+ * say which effect it was. It is the effect's position, not a durable id: the sidecar mints
+ * durable ids in the session store, and this transport has no such store.
+ */
+export interface FailedEffect {
+  index: number;
+  type: Effect["type"];
+  /** The connector, action, or timer target the effect was aimed at. */
+  target?: string;
+  code: "EFFECT_NOT_APPLIED" | "EFFECT_UNHANDLED";
+}
+
 export class KerangkaServer {
   readonly kir: KIRDocument;
   readonly port: number;
@@ -414,14 +429,24 @@ export class KerangkaServer {
         });
 
         // Dispatch side-effects (call, notify, timer, cancel-timer)
-        await this.dispatchEffects(result.effects, entityName, id, tenantId);
+        const effectsFailed = await this.dispatchEffects(result.effects, entityName, id, tenantId);
 
-        const resPayload = {
+        // Present only when something was not delivered, so a successful run's response is
+        // byte-for-byte what it was before this was added. A caller that does not read it
+        // is unaffected; a caller that needs to know the email did not go out now can.
+        const resPayload: {
+          ok: boolean;
+          action: string;
+          record: unknown;
+          events: unknown;
+          effectsFailed?: FailedEffect[];
+        } = {
           ok: true,
           action: actionName,
           record: updatedState,
           events: result.events,
         };
+        if (effectsFailed.length > 0) resPayload.effectsFailed = effectsFailed;
 
         if (idempotencyKey) {
           this.idempotencyCache.set(idempotencyKey, { status: 200, body: resPayload, headers: { "X-Idempotent-Replayed": "true" } });
@@ -563,17 +588,26 @@ export class KerangkaServer {
 
         const updatedState = result.record || item;
         await this.store.update(entityName, args.id, updatedState as Record<string, unknown>);
-        await this.dispatchEffects(result.effects, entityName, String(args.id));
+        const effectsFailed = await this.dispatchEffects(result.effects, entityName, String(args.id));
 
         return {
           content: [
             {
               type: "text",
-              text: `Transition '${actionName}' executed successfully on ${entityName} ${args.id}.\nNew State:\n${JSON.stringify(
-                updatedState,
-                null,
-                2
-              )}`,
+              text:
+                `Transition '${actionName}' executed successfully on ${entityName} ${args.id}.\nNew State:\n${JSON.stringify(
+                  updatedState,
+                  null,
+                  2
+                )}` +
+                // The aggregate is written and that is not in doubt. What is in doubt is
+                // whether the side effect happened, and a tool result that says only
+                // "successfully" is what this gap looked like from the outside.
+                (effectsFailed.length > 0
+                  ? `\nNot delivered: ${effectsFailed
+                      .map((f) => `${f.type}${f.target ? ` to ${f.target}` : ""} (${f.code})`)
+                      .join(", ")}`
+                  : ""),
             },
           ],
         };
@@ -724,20 +758,37 @@ export class KerangkaServer {
 </html>`;
   }
 
+  /**
+   * Everything that was asked for and did not happen.
+   *
+   * Two codes, because they are not the same fault and a caller should not have to guess:
+   * `EFFECT_UNHANDLED` means nothing in this deployment can perform the effect — the model
+   * asks for an extension no connector is registered for. `EFFECT_NOT_APPLIED` means it was
+   * attempted and failed. Both used to be a `console.warn` and nothing else, so a run whose
+   * invoice email never went out answered `ok: true` and the only evidence was a log line
+   * nobody was reading.
+   *
+   * The reason stays in the log. A connector error can carry an endpoint URL or a response
+   * body, and this shape goes to an HTTP client, so the caller learns which effect failed
+   * and where it was aimed, not what the failed call said.
+   */
   private async dispatchEffects(
     effects: Effect[] | undefined,
     entityName: string,
     recordId?: string,
     tenantId?: string
-  ): Promise<void> {
-    if (!effects || effects.length === 0) return;
+  ): Promise<FailedEffect[]> {
+    const failed: FailedEffect[] = [];
+    if (!effects || effects.length === 0) return failed;
 
-    for (const effect of effects) {
+    for (const [index, effect] of effects.entries()) {
       if (effect.type === "call" && this.connectors) {
         const extDef = this.kir.extensions?.[effect.extension] as Record<string, unknown> | undefined;
         const targetConnector = (extDef?.connector as string) || effect.extension;
         const canHandle = typeof this.connectors.has === "function" ? this.connectors.has(targetConnector) : true;
-        if (canHandle) {
+        if (!canHandle) {
+          failed.push({ index, type: effect.type, target: targetConnector, code: "EFFECT_UNHANDLED" });
+        } else {
           try {
             await this.connectors.call({
               connector: targetConnector,
@@ -750,6 +801,7 @@ export class KerangkaServer {
               tenantId,
             });
           } catch (err) {
+            failed.push({ index, type: effect.type, target: targetConnector, code: "EFFECT_NOT_APPLIED" });
             if (!this.quiet) {
               console.warn(`[kerangka] Connector call '${targetConnector}' failed:`, err);
             }
@@ -757,7 +809,9 @@ export class KerangkaServer {
         }
       } else if (effect.type === "notify" && this.connectors) {
         const canEmail = typeof this.connectors.has === "function" ? this.connectors.has("email") : true;
-        if (canEmail) {
+        if (!canEmail) {
+          failed.push({ index, type: effect.type, target: "email", code: "EFFECT_UNHANDLED" });
+        } else {
           try {
             await this.connectors.call({
               connector: "email",
@@ -770,6 +824,7 @@ export class KerangkaServer {
               tenantId,
             });
           } catch (err) {
+            failed.push({ index, type: effect.type, target: "email", code: "EFFECT_NOT_APPLIED" });
             if (!this.quiet) {
               console.warn("[kerangka] Email notification failed:", err);
             }
@@ -783,6 +838,7 @@ export class KerangkaServer {
             tenantId,
           });
         } catch (err) {
+          failed.push({ index, type: effect.type, target: effect.action, code: "EFFECT_NOT_APPLIED" });
           if (!this.quiet) {
             console.warn(`[kerangka] Failed to schedule timer '${effect.action}':`, err);
           }
@@ -793,12 +849,20 @@ export class KerangkaServer {
             await this.scheduler.cancelByTarget(effect.target || recordId || "", effect.action);
           }
         } catch (err) {
+          failed.push({
+            index,
+            type: effect.type,
+            target: effect.target,
+            code: "EFFECT_NOT_APPLIED"
+          });
           if (!this.quiet) {
             console.warn(`[kerangka] Failed to cancel timer for target '${effect.target}':`, err);
           }
         }
       }
     }
+
+    return failed;
   }
 
   async executeScheduledJob(job: ScheduledJob): Promise<void> {

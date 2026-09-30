@@ -57,6 +57,42 @@ export function actionResultSchema(entityName: string): Record<string, unknown> 
         type: "array",
         description: "The events the run emitted, in order.",
         items: cloudEventSchema()
+      },
+      // Absent when everything was delivered, so a clean run's body is unchanged. Present
+      // means the aggregate was written and at least one host effect was not performed:
+      // the write is not in question, the side effect is.
+      effectsFailed: {
+        type: "array",
+        description:
+          "Effects the run asked for and the host could not deliver. Absent when there were none.",
+        items: {
+          type: "object",
+          required: ["index", "type", "code"],
+          properties: {
+            index: {
+              type: "integer",
+              minimum: 0,
+              description: "Position in the run's effect list, so it lines up with a trace."
+            },
+            type: {
+              type: "string",
+              description: "The effect that was not delivered."
+            },
+            target: {
+              type: "string",
+              description: "The connector, action, or timer target it was aimed at."
+            },
+            code: {
+              type: "string",
+              description:
+                "EFFECT_UNHANDLED: nothing in this deployment can perform it. " +
+                "EFFECT_NOT_APPLIED: it was attempted and failed. The reason is in the server log, " +
+                "not here, because a connector error can carry an endpoint or a response body.",
+              enum: ["EFFECT_UNHANDLED", "EFFECT_NOT_APPLIED"]
+            }
+          },
+          additionalProperties: false
+        }
       }
     },
     additionalProperties: false

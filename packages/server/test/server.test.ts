@@ -251,8 +251,15 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
       const body = await res.json();
 
       const schema = await responseSchemaFor("/api/invoice/{id}/actions/send");
-      expect(Object.keys(body).sort()).toEqual(Object.keys(schema.properties ?? {}).sort());
-      expect((schema.required ?? []).sort()).toEqual(Object.keys(body).sort());
+      // `effectsFailed` is declared but optional, so the property is not "the keys match":
+      // it is that nothing undeclared is sent, and everything the contract calls required
+      // actually arrives.
+      for (const key of Object.keys(body)) {
+        expect(schema.properties, `undeclared field '${key}' in the response`).toHaveProperty(key);
+      }
+      for (const key of schema.required ?? []) {
+        expect(body, `required field '${key}' missing from the response`).toHaveProperty(key);
+      }
     });
 
     it("describes `record` as the entity, so a client reads the stored aggregate", async () => {
@@ -294,6 +301,131 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
         for (const attribute of items?.required ?? []) {
           expect(event, `${attribute} missing from ${event.type}`).toHaveProperty(attribute);
         }
+      }
+    });
+  });
+
+  /**
+   * A run whose side effect never happened used to answer `ok: true` and log a warning.
+   * The aggregate is genuinely written, so the response cannot simply be an error — but
+   * the caller has to be able to see what was not delivered.
+   */
+  describe("a run reports the effects it could not deliver", () => {
+    const settle = async (base: string, number: string) => {
+      const created = await fetch(`${base}/api/invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          number,
+          customer: "cust-1",
+          issuedOn: "2026-09-30",
+          dueDate: "2026-10-30",
+          status: "draft",
+          lines: [{ description: "Consulting", qty: 1, unitPrice: 100 }]
+        })
+      });
+      expect(created.status).toBe(201);
+    };
+
+    it("names the extension the shipped example cannot deliver, instead of dropping it", async () => {
+      await settle(baseUrl, "INV-050");
+      const res = await fetch(`${baseUrl}/api/invoice/INV-050/actions/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: ["billing"] })
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      // `send` asks for `sendInvoiceEmail`, and the default registry has no such connector.
+      // That used to be a silent no-op: the invoice said "sent" and no email was ever sent.
+      expect(body.effectsFailed).toEqual([
+        { index: 1, type: "call", target: "sendInvoiceEmail", code: "EFFECT_UNHANDLED" }
+      ]);
+    });
+
+    it("leaves a run with nothing to deliver exactly as it was", async () => {
+      await settle(baseUrl, "INV-051");
+      // `pay` is guarded `from: "sent"`, so the invoice has to get there first. `send`
+      // reports its own unhandled call; what is under test is the run after it.
+      await fetch(`${baseUrl}/api/invoice/INV-051/actions/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: ["billing"] })
+      });
+      const res = await fetch(`${baseUrl}/api/invoice/INV-051/actions/pay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: ["billing"] })
+      });
+      const body = await res.json();
+
+      // `pay` has no host effect, so the field is absent rather than an empty array. A
+      // caller polling for it does not have to distinguish "clean" from "not checked".
+      expect(body).not.toHaveProperty("effectsFailed");
+      expect(body.record.status).toBe("paid");
+    });
+
+    it("distinguishes an effect that failed from one nothing could handle", async () => {
+      // A connector that claims the extension and then fails is a different fault from a
+      // deployment that never registered it, and a caller retrying needs to tell them apart.
+      const port = 3988;
+      const failing = new KerangkaServer(kir, {
+        port,
+        quiet: true,
+        store: new MemoryStore(),
+        connectors: {
+          has: () => true,
+          call: () => Promise.reject(new Error("smtp refused the relay at 10.0.0.4:587"))
+        }
+      });
+      await failing.start();
+      const base = `http://localhost:${port}`;
+      try {
+        await settle(base, "INV-052");
+        const res = await fetch(`${base}/api/invoice/INV-052/actions/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roles: ["billing"] })
+        });
+        const body = await res.json();
+
+        expect(body.effectsFailed).toEqual([
+          { index: 1, type: "call", target: "sendInvoiceEmail", code: "EFFECT_NOT_APPLIED" }
+        ]);
+      } finally {
+        await failing.stop();
+      }
+    });
+
+    it("keeps the connector's own error out of the response", async () => {
+      // The reason goes to the server log, not to an HTTP client: a connector error can
+      // carry an endpoint, a host, or a response body.
+      const port = 3989;
+      const failing = new KerangkaServer(kir, {
+        port,
+        quiet: true,
+        store: new MemoryStore(),
+        connectors: {
+          has: () => true,
+          call: () => Promise.reject(new Error("smtp refused the relay at 10.0.0.4:587"))
+        }
+      });
+      await failing.start();
+      const base = `http://localhost:${port}`;
+      try {
+        await settle(base, "INV-053");
+        const res = await fetch(`${base}/api/invoice/INV-053/actions/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roles: ["billing"] })
+        });
+        const raw = await res.text();
+        expect(raw).not.toContain("10.0.0.4");
+        expect(raw).not.toContain("smtp refused");
+        expect(JSON.parse(raw).effectsFailed[0].code).toBe("EFFECT_NOT_APPLIED");
+      } finally {
+        await failing.stop();
       }
     });
   });
