@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { compile } from "@kerangka/compiler";
 import { loadEngine } from "@kerangka/engine-ts";
-import { createJsonRpcDispatcher, SqliteSessionStore } from "../src/index.js";
+import {
+  createJsonRpcDispatcher,
+  SessionLockedError,
+  SqliteSessionStore
+} from "../src/index.js";
 
 /**
  * The in-memory session is honest about being a cache: a process that exits takes
@@ -254,6 +259,135 @@ describe("a durable sidecar session", () => {
       );
       durable.close();
       memory.close();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+/**
+ * One sidecar per session file. A shared file would not fail loudly on the first
+ * write: two writers would each read the same revision, both write the same effect
+ * ids, and one run's writes would disappear without an error. So the file is claimed,
+ * and a writer that has lost its claim is refused rather than trusted.
+ */
+describe("a session file belongs to one sidecar", () => {
+  it("refuses a second sidecar while the first still holds the file", () => {
+    const { path, cleanup } = workspace();
+    try {
+      const first = sidecar(path);
+      expect(() => sidecar(path)).toThrow(SessionLockedError);
+      first.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("names the process that holds the file, so the operator can find it", () => {
+    const { path, cleanup } = workspace();
+    try {
+      const first = new SqliteSessionStore({ path, owner: "sidecar-a" });
+      let error: unknown;
+      try {
+        new SqliteSessionStore({ path, owner: "sidecar-b" });
+      } catch (err) {
+        error = err;
+      }
+      expect(error).toBeInstanceOf(SessionLockedError);
+      expect((error as SessionLockedError).code).toBe("SESSION_LOCKED");
+      expect((error as SessionLockedError).holder?.owner).toBe("sidecar-a");
+      expect((error as SessionLockedError).message).toContain("sidecar-a");
+      expect((error as SessionLockedError).message).toContain(String(process.pid));
+      first.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("takes the file over when the sidecar that held it is gone", () => {
+    const { path, cleanup } = workspace();
+    try {
+      // A pid that has already exited: the claim is a crash, not a second writer.
+      const dead = spawnSync(process.execPath, ["-e", ""], { encoding: "utf8" }).pid;
+      const crashed = new SqliteSessionStore({ path, exclusive: false });
+      crashed.db
+        .prepare(
+          "INSERT INTO _session_lock (id, owner, pid, claim_id, acquired_at) VALUES (1, ?, ?, ?, ?)"
+        )
+        .run("crashed sidecar", dead!, "claim-of-a-dead-process", "2026-09-01T00:00:00.000Z");
+      crashed.close();
+
+      const recovered = new SqliteSessionStore({ path, owner: "next sidecar" });
+      expect(recovered.lockHolder()?.owner).toBe("next sidecar");
+      recovered.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("refuses a displaced sidecar to write, instead of losing an update", () => {
+    const { path, cleanup } = workspace();
+    try {
+      const original = sidecar(path);
+      const replacement = new SqliteSessionStore({ path, owner: "replacement", force: true });
+
+      expect(() => original.store.put("Invoice", draft)).toThrow(SessionLockedError);
+      expect(() => original.store.claim("evt-1:billing.onOrderPlaced")).toThrow(
+        SessionLockedError
+      );
+      expect(() => original.store.clear()).toThrow(SessionLockedError);
+
+      // The replacement, and only the replacement, is writing now.
+      replacement.put("Invoice", draft);
+      replacement.close();
+      const reader = new SqliteSessionStore({ path });
+      expect(reader.list("Invoice").map((record) => record.id)).toEqual(["inv-durable-1"]);
+      reader.close();
+      original.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("does not let a displaced sidecar release the claim that replaced it", () => {
+    const { path, cleanup } = workspace();
+    try {
+      const original = sidecar(path);
+      const replacement = new SqliteSessionStore({ path, owner: "replacement", force: true });
+      original.close();
+      expect(replacement.lockHolder()?.owner).toBe("replacement");
+      replacement.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("hands the file on when a sidecar closes it", () => {
+    const { path, cleanup } = workspace();
+    try {
+      const first = sidecar(path);
+      send(first.call);
+      first.close();
+
+      const second = sidecar(path);
+      expect(second.store.get("Invoice", "inv-durable-1")).not.toBeNull();
+      second.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("leaves a shared file to a caller that opts out of the claim", () => {
+    const { path, cleanup } = workspace();
+    try {
+      const first = new SqliteSessionStore({ path, exclusive: false });
+      const second = new SqliteSessionStore({ path, exclusive: false });
+      expect(first.lockHolder()).toBeNull();
+      expect(second.lockHolder()).toBeNull();
+      first.put("Invoice", draft);
+      expect(second.get("Invoice", "inv-durable-1")).not.toBeNull();
+      first.close();
+      second.close();
     } finally {
       cleanup();
     }

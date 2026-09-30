@@ -17,6 +17,7 @@
  * the protocol owns stdout and diagnostics go to stderr, so the warning is harmless.
  */
 
+import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { CloudEvent, Effect } from "@kerangka/engine-ts";
 import {
@@ -32,6 +33,34 @@ export interface SqliteSessionStoreOptions {
   path?: string;
   /** An already-open database, for a caller that wants to own the handle. */
   database?: DatabaseSync;
+  /**
+   * Claim the file as this process's single writer (default). A second sidecar gets
+   * `SessionLockedError` naming the process that holds it, unless that process is
+   * gone, in which case the claim is stale and taken over.
+   */
+  exclusive?: boolean;
+  /** Who the claim names. Defaults to this process. */
+  owner?: string;
+  /** Take the claim even if another process holds it. */
+  force?: boolean;
+}
+
+/** Raised when another process already owns the session file. */
+export class SessionLockedError extends Error {
+  readonly code = "SESSION_LOCKED";
+
+  constructor(
+    readonly path: string,
+    readonly holder: { owner: string; pid: number } | null
+  ) {
+    super(
+      holder === null
+        ? `This process no longer owns the session at ${path}. Another sidecar took it.`
+        : `The session at ${path} is already open in process ${holder.pid} (${holder.owner}). ` +
+          "One sidecar owns a session file; stop it, or pass --session to a different path."
+    );
+    this.name = "SessionLockedError";
+  }
 }
 
 interface Row {
@@ -43,11 +72,23 @@ interface Row {
 
 export class SqliteSessionStore implements SessionStoreLike {
   readonly db: DatabaseSync;
+  /** The file this store owns, or `:memory:` for a throwaway one. */
+  readonly path: string;
   private readonly ownsHandle: boolean;
+  private readonly singleWriter: boolean;
+  private readonly owner: string;
+  /** This store's identity in the lock row, so it can tell its own claim from another's. */
+  private readonly claimId = randomUUID();
+  private readonly forced: boolean;
+  private held: boolean;
 
   constructor(options: SqliteSessionStoreOptions = {}) {
-    this.db = options.database ?? new DatabaseSync(options.path ?? ":memory:");
+    this.path = options.path ?? ":memory:";
+    this.db = options.database ?? new DatabaseSync(this.path);
     this.ownsHandle = !options.database;
+    this.singleWriter = options.exclusive ?? true;
+    this.owner = options.owner ?? `pid ${process.pid}`;
+    this.forced = options.force ?? false;
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS _session_meta (
         key TEXT PRIMARY KEY,
@@ -80,11 +121,110 @@ export class SqliteSessionStore implements SessionStoreLike {
       CREATE TABLE IF NOT EXISTS _session_claims (
         key TEXT PRIMARY KEY
       );
+      CREATE TABLE IF NOT EXISTS _session_lock (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        owner TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        claim_id TEXT NOT NULL,
+        acquired_at TEXT NOT NULL
+      );
       INSERT OR IGNORE INTO _session_meta (key, value) VALUES ('revision', '0');
     `);
+
+    this.held = this.singleWriter && this.takeFile();
+  }
+
+  /**
+   * One sidecar per session file. Two writers would race on the revision counter, and
+   * the failure would be a lost update rather than an error — so the claim is explicit,
+   * and a claim held by a process that no longer exists is stale and taken over.
+   */
+  private takeFile(): boolean {
+    const existing = this.db
+      .prepare("SELECT owner, pid, claim_id FROM _session_lock WHERE id = 1")
+      .get() as { owner: string; pid: number; claim_id: string } | undefined;
+
+    if (existing && existing.claim_id !== this.claimId) {
+      // Two stores in one process are as much a second writer as two processes are.
+      const live = !this.staleLock(existing.pid);
+      if (live && !this.forced) {
+        throw new SessionLockedError(this.path, {
+          owner: existing.owner,
+          pid: existing.pid
+        });
+      }
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO _session_lock (id, owner, pid, claim_id, acquired_at) VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET owner = excluded.owner, pid = excluded.pid,
+                                        claim_id = excluded.claim_id,
+                                        acquired_at = excluded.acquired_at`
+      )
+      .run(this.owner, process.pid, this.claimId, new Date().toISOString());
+    return true;
+  }
+
+  /** A lock whose process is gone is a crash, not a second writer. */
+  private staleLock(pid: number): boolean {
+    if (pid <= 0) return true;
+    try {
+      // Signal 0 tests for existence without delivering anything.
+      process.kill(pid, 0);
+      return false;
+    } catch (err) {
+      // EPERM means the process exists and belongs to someone else.
+      return (err as NodeJS.ErrnoException).code === "ESRCH";
+    }
+  }
+
+  /**
+   * Refuse to write a file this store no longer owns. Without this, a store displaced
+   * by `force` — or one that lost the file to a stale-claim takeover — would keep
+   * committing beside its replacement, and the failure would be a lost update rather
+   * than an error.
+   */
+  private assertHeld(): void {
+    if (!this.singleWriter) return;
+    const row = this.db
+      .prepare("SELECT claim_id FROM _session_lock WHERE id = 1")
+      .get() as { claim_id: string } | undefined;
+    if (row?.claim_id !== this.claimId) {
+      throw new SessionLockedError(
+        this.path,
+        row ? { owner: "another session", pid: process.pid } : null
+      );
+    }
+  }
+
+  /**
+   * Give the claim up, so another sidecar can take the file. Only this store's own
+   * claim is released: a store that was forced off the file must not free the one that
+   * replaced it.
+   */
+  release(): void {
+    if (!this.held) return;
+    const row = this.db
+      .prepare("SELECT claim_id FROM _session_lock WHERE id = 1")
+      .get() as { claim_id: string } | undefined;
+    if (row?.claim_id === this.claimId) {
+      this.db.prepare("DELETE FROM _session_lock WHERE id = 1").run();
+    }
+    this.held = false;
+  }
+
+  /** Who holds the file, for a caller that wants to say so rather than fail blind. */
+  lockHolder(): { owner: string; pid: number; acquiredAt: string } | null {
+    const row = this.db
+      .prepare("SELECT owner, pid, acquired_at FROM _session_lock WHERE id = 1")
+      .get() as { owner: string; pid: number; acquired_at: string } | undefined;
+    return row ? { owner: row.owner, pid: row.pid, acquiredAt: row.acquired_at } : null;
   }
 
   close(): void {
+    // A released lock lets the next sidecar start without a stale-claim recovery.
+    this.release();
     if (this.ownsHandle) this.db.close();
   }
 
@@ -126,10 +266,15 @@ export class SqliteSessionStore implements SessionStoreLike {
       return { persisted: 0, enqueued: 0, queuedEffects: 0, ids: [] };
     }
 
-    const revision = this.revision() + 1;
-
+    this.assertHeld();
+    // The counter is read *inside* the write transaction. Reading it outside is a
+    // read-then-write race: two writers would both read N and both write N+1, and
+    // their effect ids would collide. BEGIN IMMEDIATE takes the write lock first, so
+    // the second writer waits and then reads the first one's number.
     this.db.exec("BEGIN IMMEDIATE");
+    let revision = 0;
     try {
+      revision = this.revision() + 1;
       for (const row of staged) {
         this.db
           .prepare(
@@ -213,9 +358,11 @@ export class SqliteSessionStore implements SessionStoreLike {
     record: Record<string, unknown>
   ): { entity: string; id: string; record: Record<string, unknown> } {
     const id = String(record.id ?? record._id ?? "");
-    const revision = this.revision() + 1;
+    this.assertHeld();
     this.db.exec("BEGIN IMMEDIATE");
+    let revision = 0;
     try {
+      revision = this.revision() + 1;
       this.db
         .prepare(
           `INSERT INTO _session_records (entity, id, revision, data) VALUES (?, ?, ?, ?)
@@ -363,6 +510,7 @@ export class SqliteSessionStore implements SessionStoreLike {
    * becomes exactly-once-nobody-knows.
    */
   claim(idempotencyKey: string): boolean {
+    this.assertHeld();
     const existing = this.db
       .prepare("SELECT 1 AS present FROM _session_claims WHERE key = ?")
       .get(idempotencyKey);
@@ -379,6 +527,7 @@ export class SqliteSessionStore implements SessionStoreLike {
   }
 
   clear(): void {
+    this.assertHeld();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.db.exec("DELETE FROM _session_records; DELETE FROM _session_outbox; DELETE FROM _session_effects; DELETE FROM _session_claims; UPDATE _session_meta SET value = '0' WHERE key = 'revision';");
