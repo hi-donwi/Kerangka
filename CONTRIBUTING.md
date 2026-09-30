@@ -32,11 +32,19 @@ We are committed to providing a friendly, safe, and welcoming environment for ev
    ```bash
    git checkout -b feat/my-improvement
    ```
-2. Ensure linting and conformance tests pass:
+2. Run the gate:
    ```bash
-   npm run check
+   npm run typecheck
    npm test
+   npm run build
+   npm run examples:verify
    ```
+   `typecheck` and `npm test` read the workspace from **source** — `paths` in
+   `tsconfig.json` and aliases in `vitest.config.ts` — so you do not need to build before
+   running them, and they cannot pass against a build from before your change. Two tests
+   do spawn a real process and need the build: the Python sidecar smoke, and the
+   cross-process session tests. `test/workspace-resolution.test.ts` fails if that mapping
+   stops covering the workspace, so keep it in step when you add a package.
 3. Commit your changes adhering to Conventional Commits:
    ```bash
    git commit -m "feat(spec): add support for range constraints on decimals"

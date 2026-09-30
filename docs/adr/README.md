@@ -36,3 +36,4 @@ This directory records all significant architectural, semantic, and structural d
 | [0030](0030-wasm-component-model-escape-hatch.md) | WebAssembly (Wasm) as the Portable Extension Escape Hatch | Accepted | 2026-09-27 |
 | [0031](0031-first-class-multitenancy-and-overlays.md) | First-Class Multi-Tenancy and Tenant Overlays | Accepted | 2026-09-27 |
 | [0032](0032-zero-downtime-schema-evolution.md) | Zero-Downtime Schema Evolution via Expand/Contract | Accepted | 2026-09-27 |
+| [0033](0033-tests-read-the-workspace-from-source.md) | Tests Read the Workspace from Source | Accepted | 2026-09-30 |

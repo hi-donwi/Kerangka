@@ -32,6 +32,15 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Build
+        run: npm run build
+
+      # Typecheck and the test runner read the workspace from source (`paths` in
+      # `tsconfig.json`, aliases in `vitest.config.ts`), so they do not need this build and
+      # cannot be fooled by a stale one. Two tests still spawn a real process and do need
+      # it: the Python sidecar smoke drives the built CLI, and the cross-process session
+      # tests open the built store. The build comes before them so those two run rather
+      # than fail or skip on a clean checkout.
       - name: Typecheck
         run: npm run typecheck
 
@@ -40,9 +49,6 @@ jobs:
 
       - name: Conformance suite
         run: npm run test:conformance
-
-      - name: Build
-        run: npm run build
 
       - name: Examples (kerangka check + kerangka verify + kerangka test)
         run: npm run examples:verify

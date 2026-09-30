@@ -1,7 +1,31 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // `npm run typecheck` and the editor read the workspace from source. Without this,
+    // `@kerangka/compiler` resolves through `node_modules` to `dist`, so a type error
+    // introduced in the source is invisible until something rebuilds, and go-to-definition
+    // lands in the build output.
+    //
+    // Deliberately on this file and not on `tsconfig.base.json`: the package configs
+    // extend the base, and the build should keep resolving to `dist` exactly as before.
+    // `vitest.config.ts` aliases the same way, so the type checker and the test runner
+    // agree on what the workspace means.
+    "baseUrl": ".",
+    "paths": {
+      "@kerangka/adapter-hono": ["packages/adapter-hono/src/index.ts"],
+      "@kerangka/adapter-postgres": ["packages/adapter-postgres/src/index.ts"],
+      "@kerangka/adapter-sqlite": ["packages/adapter-sqlite/src/index.ts"],
+      "@kerangka/cli": ["packages/cli/src/index.ts"],
+      "@kerangka/client": ["packages/client/src/index.ts"],
+      "@kerangka/compiler": ["packages/compiler/src/index.ts"],
+      "@kerangka/engine-ts": ["packages/engine-ts/src/index.ts"],
+      "@kerangka/k1": ["packages/k1/src/index.ts"],
+      "@kerangka/ports/test-kits": ["packages/ports/src/test-kits/index.ts"],
+      "@kerangka/ports": ["packages/ports/src/index.ts"],
+      "@kerangka/server": ["packages/server/src/index.ts"],
+      "@kerangka/std": ["packages/std/src/index.ts"]
+    }
   },
   "include": [
     "packages/*/src/**/*",

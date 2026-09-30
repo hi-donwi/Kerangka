@@ -423,12 +423,36 @@ const holder = (path: string) => {
     ],
     { stdio: ["ignore", "pipe", "pipe"] }
   );
-  const exited = new Promise<void>((resolveExit) => {
-    child.once("exit", () => resolveExit());
+  // A child that dies before announcing itself must fail the test with its stderr.
+  // Waiting for a line that will never arrive turns a missing build into a 5s timeout
+  // and a message that says nothing about the cause.
+  const exited = new Promise<never>((_, rejectExit) => {
+    child.once("exit", (code, signal) => {
+      let stderr = "";
+      child.stderr?.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      setImmediate(() =>
+        rejectExit(
+          new Error(
+            `The sidecar process exited before claiming the session (code ${code}, signal ${signal}):\n${stderr.trim()}`
+          )
+        )
+      );
+    });
   });
-  const claimed = new Promise<number>((resolveClaim) => {
+
+  const announced = new Promise<number>((resolveClaim) => {
     child.stdout!.once("data", () => resolveClaim(child.pid!));
   });
+
+  // Raced, not merely paired: awaiting only `announced` means a child that dies leaves
+  // the test waiting for a line that can never arrive, and the failure it produces is a
+  // timeout with no cause. Racing means the exit rejects the readiness the test is
+  // actually awaiting. `exited` stays live afterwards for `stopped`, and the `.catch`
+  // on it keeps a post-readiness death from surfacing as an unhandled rejection.
+  exited.catch(() => undefined);
+  const claimed = Promise.race([announced, exited]);
   return { child, claimed, exited };
 };
 
@@ -456,7 +480,7 @@ describe.skipIf(!built)("a session file is claimed across processes", () => {
       expect((error as SessionLockedError).holder?.owner).toBe("holder process");
       expect((error as SessionLockedError).holder?.pid).toBe(pid);
       other.child.kill("SIGKILL");
-      await other.exited;
+      await stopped(other.child);
     } finally {
       cleanup();
     }
@@ -468,7 +492,7 @@ describe.skipIf(!built)("a session file is claimed across processes", () => {
     try {
       await other.claimed;
       other.child.kill("SIGKILL");
-      await other.exited;
+      await stopped(other.child);
 
       const recovered = new SqliteSessionStore({ path, owner: "this process" });
       expect(recovered.lockHolder()?.owner).toBe("this process");
@@ -477,7 +501,7 @@ describe.skipIf(!built)("a session file is claimed across processes", () => {
     } finally {
       cleanup();
     }
-  });
+  }, 30_000);
 
   it("finds the claim already released when the other sidecar exits cleanly", async () => {
     const { path, cleanup } = workspace();
@@ -495,5 +519,5 @@ describe.skipIf(!built)("a session file is claimed across processes", () => {
     } finally {
       cleanup();
     }
-  });
+  }, 30_000);
 });
