@@ -9,6 +9,7 @@ import * as path from "node:path";
 import { compileExpression, ExprNode } from "@kerangka/k1";
 import { parse as parseYaml } from "yaml";
 import { offsetToPosition, pointer, SourceLocator, suggestion } from "./diagnostics.js";
+import { validateModelStructure } from "./meta-schema.js";
 import { LOCKFILE_NAME, PackageResolver, readLockfile, verifyLockfile } from "./packages/index.js";
 import { normalizeField } from "./shorthand.js";
 import {
@@ -84,6 +85,22 @@ export class Compiler {
     if (!doc.app) {
       this.addError("MISSING_APP_NAME", "Document root must declare an 'app' identifier", "/app",
         'Add "app": "<name>" at the document root.');
+    }
+
+    // L0: does this document have the shape of a model at all. Checked before anything else
+    // touches it, because a malformed document does not fail — it is silently half-read. A
+    // typo'd `fields` key used to drop every field on the entity and compile clean, and a
+    // field with no `type` reached the semantic layer and threw a raw `TypeError`.
+    const structural = validateModelStructure(doc);
+    if (structural.length > 0) {
+      for (const diag of structural) {
+        this.addError(diag.code, diag.message, diag.path, diag.hint);
+      }
+      this.attachPositions(text);
+      throw new CompilerError(
+        `Document is not a valid Kerangka model (${structural.length} structural error(s))`,
+        [...this.diagnostics]
+      );
     }
 
     // 0. Load multi-context workspace if declared

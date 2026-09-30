@@ -123,3 +123,12 @@ export function generateCode(kir: KIRDocument, target: TargetLanguage, options?:
 export function diffModels(oldKir: KIRDocument, newKir: KIRDocument): ModelDiffResult {
   return ModelDiffer.diff(oldKir, newKir);
 }
+
+export {
+  validateModelStructure,
+  modelSchema,
+  MODEL_SCHEMA_URI,
+  ROOT_KEYS,
+  ENTITY_KEYS,
+  FIELD_KEYS
+} from "./meta-schema.js";

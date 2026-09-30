@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kerangka.dev/schema/v0.1/model.schema.json",
+  "title": "Kerangka model",
+  "description": "A Kerangka model document. Structural only: this says whether the document has the shape of a model, not whether its names resolve. The compiler checks the rest.",
+  "type": "object",
+  "required": [
+    "kerangka",
+    "app"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "kerangka": {
+      "type": "string",
+      "description": "The model language version."
+    },
+    "app": {
+      "type": "string",
+      "description": "The application's name."
+    },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "multitenancy": {
+      "type": "object",
+      "required": [
+        "strategy"
+      ],
+      "properties": {
+        "strategy": {
+          "enum": [
+            "discriminator",
+            "schema",
+            "database"
+          ]
+        },
+        "field": {
+          "type": "string"
+        },
+        "header": {
+          "type": "string"
+        },
+        "claim": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "contexts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "types": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "packages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "traits": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "entities": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "required": {
+                  "type": "boolean"
+                },
+                "default": {},
+                "unique": {
+                  "type": "boolean"
+                },
+                "indexed": {
+                  "type": "boolean"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "computed": {
+                  "type": "boolean"
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "items": {
+                  "type": "object"
+                },
+                "enum": {
+                  "type": "array"
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "rules": {
+            "type": "array"
+          },
+          "invariants": {
+            "type": "array"
+          },
+          "workflow": {
+            "type": "object"
+          },
+          "permissions": {
+            "type": "object"
+          },
+          "extends": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "queries": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "policies": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "decisions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "schedules": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "views": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "navigation": {
+      "type": "array"
+    },
+    "examples": {
+      "type": "array"
+    },
+    "lint": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "defs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}
