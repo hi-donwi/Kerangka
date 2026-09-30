@@ -504,7 +504,12 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
         // call rather than a description of it.
         expect(effects[0].effect).toMatchObject({ type: "call", extension: "sendInvoiceEmail" });
         expect(effects[0].state).toBe("pending");
-        expect(effects[0].attempts).toBe(0);
+        // One, not zero. The queue is opened *before* the dispatch, so the entry exists
+        // while the attempt is in flight and the failure settles it as a real attempt. The
+        // count is delivery attempts, whoever made them — a host seeing `1` knows the server
+        // already tried, which is the fact it needs before deciding whether to try again.
+        expect(effects[0].attempts).toBe(1);
+        expect(effects[0].lastError).toBe("EFFECT_NOT_APPLIED");
       } finally {
         await harness.stop();
       }
@@ -527,7 +532,11 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
         expect(nacked.status).toBe(200);
         const { effect } = await nacked.json();
         expect(effect.state).toBe("pending");
-        expect(effect.attempts).toBe(1);
+        // The server's dispatch counted as the first attempt, so the host's `nack` is the
+        // second. Before the queue was opened ahead of the dispatch this entry was created
+        // only on failure and had never been counted, and a host could not tell an effect
+        // nobody had tried from one that had failed twice.
+        expect(effect.attempts).toBe(2);
         expect(effect.lastError).toBe("mailbox unavailable");
 
         // Still there: a nack is a retry signal, not a deletion.
@@ -586,6 +595,250 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
         expect((await res.json()).code).toBe("EFFECT_NOT_FOUND");
       } finally {
         await harness.stop();
+      }
+    });
+  });
+
+  /**
+   * The MCP action path dispatched its effects and recorded nothing.
+   *
+   * The HTTP path gained an outbox in an earlier increment; the MCP path kept the old shape,
+   * so a tool call emitted an event that went nowhere and an undelivered effect that existed
+   * only as a line of text in the tool result. A client holding the result had the name of
+   * the failure and no way to retry it, and a consumer watching for events never saw one from
+   * an MCP-driven run at all.
+   *
+   * Both paths now go through `runWithDelivery`, so a run's promises are recorded the same
+   * way whoever triggered it. That is the property worth testing, not the endpoint.
+   */
+  describe("an action driven through MCP records its delivery like any other", () => {
+    const mcpServer = async (port: number) => {
+      const session = new SessionStore();
+      const server = new KerangkaServer(kir, {
+        port,
+        quiet: true,
+        store: new MemoryStore(),
+        session
+      });
+      await server.start();
+      return { base: `http://localhost:${port}`, session, stop: () => server.stop() };
+    };
+
+    const callTool = async (base: string, name: string, args: Record<string, unknown>) => {
+      const res = await fetch(`${base}/api/mcp/call`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, arguments: args })
+      });
+      expect(res.status).toBe(200);
+      return (await res.json()) as { content: Array<{ text: string }> };
+    };
+
+    it("queues the events a tool call emitted, which used to be dropped", async () => {
+      const harness = await mcpServer(4012);
+      try {
+        const created = await fetch(`${harness.base}/api/invoice`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            number: "INV-090",
+            customer: "cust-1",
+            issuedOn: "2026-09-30",
+            dueDate: "2026-10-30",
+            status: "draft",
+            lines: [{ description: "Consulting", qty: 1, unitPrice: 100 }]
+          })
+        });
+        expect(created.status).toBe(201);
+
+        const result = await callTool(harness.base, "transition_invoice_send", {
+          id: "INV-090",
+          roles: ["billing"]
+        });
+        // The tool result claims success, and the outbox now agrees with it. Before this the
+        // claim stood alone: the events the transition emitted went nowhere.
+        expect(result.content[0]?.text ?? "").toContain("executed successfully");
+
+        const { events } = await (await fetch(`${harness.base}/api/events`)).json();
+        expect(events.length).toBeGreaterThan(0);
+        expect(events[0].event.type).toContain("Invoice");
+        expect(events[0].entity).toBe("Invoice");
+      } finally {
+        await harness.stop();
+      }
+    });
+
+    it("queues an effect a tool call could not deliver, so a host can drain it", async () => {
+      // The default registry cannot handle `sendInvoiceEmail`, so the effect is undelivered.
+      // The tool result names it; the queue makes it actionable.
+      const harness = await mcpServer(4013);
+      try {
+        const created = await fetch(`${harness.base}/api/invoice`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            number: "INV-091",
+            customer: "cust-1",
+            issuedOn: "2026-09-30",
+            dueDate: "2026-10-30",
+            status: "draft",
+            lines: [{ description: "Consulting", qty: 1, unitPrice: 100 }]
+          })
+        });
+        expect(created.status).toBe(201);
+
+        const result = await callTool(harness.base, "transition_invoice_send", {
+          id: "INV-091",
+          roles: ["billing"]
+        });
+        expect(result.content[0]?.text ?? "").toContain("Not delivered");
+
+        const { effects } = await (await fetch(`${harness.base}/api/effects`)).json();
+        expect(effects.length).toBeGreaterThan(0);
+        expect(effects[0].effect).toMatchObject({ type: "call", extension: "sendInvoiceEmail" });
+        expect(effects[0].state).toBe("pending");
+      } finally {
+        await harness.stop();
+      }
+    });
+  });
+
+  /**
+   * The delivery queue is opened *before* the effects are dispatched, not after.
+   *
+   * Before this, the window between writing the record and recording the run's promises
+   * spanned the whole dispatch — every outbound connector call, timer and email in the run.
+   * A connector that takes thirty seconds was a thirty-second window in which a crash lost
+   * every event the run emitted and every effect it owed. Opening the queue first shrinks the
+   * window to two adjacent store calls, and makes an interrupted dispatch leave the effects
+   * pending rather than absent.
+   *
+   * The record write still comes first, and that order is forced rather than chosen: queue
+   * before the record and a crash would leave a host performing effects for a write that
+   * never committed, which is worse than losing them.
+   */
+  describe("the delivery queue is open before the dispatch, not after", () => {
+    /**
+     * A connector that blocks until the test releases it, so the queue can be inspected
+     * while the dispatch is genuinely still in flight rather than simulated to be.
+     */
+    const blockingConnector = () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered!: () => void;
+      const arrived = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const call = (async () => {
+        entered();
+        await gate;
+      }) as ConnectorsPort["call"];
+      return { call, arrived, release: () => release() };
+    };
+
+    const invoice = (number: string) => ({
+      number,
+      customer: "cust-1",
+      issuedOn: "2026-09-30",
+      dueDate: "2026-10-30",
+      status: "draft",
+      lines: [{ description: "Consulting", qty: 1, unitPrice: 100 }]
+    });
+
+    it("has the effect and the events queued while the dispatch is still running", async () => {
+      // The proof that the window moved: mid-dispatch, the promise is already recorded.
+      // Before this the queue was empty for the whole duration of the call, and a crash in
+      // that window lost the effect with nothing left behind to find.
+      const connector = blockingConnector();
+      const session = new SessionStore();
+      const port = 4010;
+      const server = new KerangkaServer(kir, {
+        port,
+        quiet: true,
+        store: new MemoryStore(),
+        session,
+        connectors: { call: connector.call, has: () => true }
+      });
+      await server.start();
+      const base = `http://localhost:${port}`;
+
+      try {
+        const created = await fetch(`${base}/api/invoice`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(invoice("INV-080"))
+        });
+        expect(created.status).toBe(201);
+
+        // Deliberately not awaited: this request is about to block inside the connector.
+        const inFlight = fetch(`${base}/api/invoice/INV-080/actions/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roles: ["billing"] })
+        });
+
+        // Wait until the connector has actually been entered, so the assertions below are
+        // about a dispatch in progress rather than about a request that has not started.
+        await connector.arrived;
+
+        // Mid-dispatch. Both halves of the run's promise are already recorded.
+        expect(session.pendingEffects().length).toBeGreaterThan(0);
+        expect(session.pending().length).toBeGreaterThan(0);
+
+        connector.release();
+        const res = await inFlight;
+        expect(res.status).toBe(200);
+
+        // And once it completes, the effect that was delivered is no longer offered, while
+        // the event is still the host's to settle.
+        expect(session.pendingEffects()).toHaveLength(0);
+        expect(session.pending().length).toBeGreaterThan(0);
+      } finally {
+        connector.release();
+        await server.stop();
+      }
+    });
+
+    it("still writes the record before it queues anything", async () => {
+      // The other half of the ordering, and the reason it is not the other way round. If the
+      // queue were written first, a crash between the two would leave a host performing
+      // effects for a write that never committed.
+      const writes: string[] = [];
+      const session = new SessionStore();
+      const port = 4011;
+      const store = new MemoryStore();
+      const originalUpdate = store.update.bind(store);
+      store.update = async (...args: Parameters<typeof store.update>) => {
+        writes.push("record");
+        return originalUpdate(...args);
+      };
+      const originalEnqueue = session.enqueueDelivery.bind(session);
+      session.enqueueDelivery = (...args: Parameters<typeof originalEnqueue>) => {
+        writes.push("queue");
+        return originalEnqueue(...args);
+      };
+
+      const server = new KerangkaServer(kir, { port, quiet: true, store, session });
+      await server.start();
+      const base = `http://localhost:${port}`;
+      try {
+        await fetch(`${base}/api/invoice`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(invoice("INV-081"))
+        });
+        await fetch(`${base}/api/invoice/INV-081/actions/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roles: ["billing"] })
+        });
+
+        // Record, then queue, with nothing in between. The two are adjacent store calls.
+        expect(writes.slice(0, 2)).toEqual(["record", "queue"]);
+      } finally {
+        await server.stop();
       }
     });
   });

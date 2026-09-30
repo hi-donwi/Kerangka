@@ -29,6 +29,7 @@ import {
 import { CloudEvent, Effect, Engine } from "@kerangka/engine-ts";
 import { SchedulerRunner } from "./scheduler-runner.js";
 import { SessionStoreLike } from "./session-store.js";
+import type { HostEffectEntry, OutboxEntry } from "./session-store.js";
 import {
   matchRoute,
   unavailableFor,
@@ -84,6 +85,17 @@ export interface FailedEffect {
  * store is configured, so a host can drain and retry the real thing rather than a
  * description of it.
  */
+/**
+ * What `openDelivery` queued, so `settleDelivery` can find the entries again.
+ *
+ * The entries, not the ids, because the caller should not have to reconstruct which entry
+ * belongs to which effect — the store already paired them.
+ */
+interface DeliveryReceipt {
+  events: OutboxEntry[];
+  effects: HostEffectEntry[];
+}
+
 interface UndeliveredEffect extends FailedEffect {
   effect: Effect;
 }
@@ -476,9 +488,15 @@ export class KerangkaServer {
           actor: actionActor?.id ? { id: actionActor.id } : undefined,
         });
 
-        // Dispatch side-effects (call, notify, timer, cancel-timer)
-        const undelivered = await this.dispatchEffects(result.effects, entityName, id, tenantId);
-        this.recordDelivery(result.events, undelivered, entityName);
+        // Queue what this run promised, then attempt it, then settle it. See
+        // `openDelivery` for why the order is forced.
+        const undelivered = await this.runWithDelivery(
+          entityName,
+          id,
+          result.events,
+          result.effects,
+          tenantId
+        );
         const effectsFailed = undelivered.map(reportable);
 
         // Present only when something was not delivered, so a successful run's response is
@@ -625,10 +643,21 @@ export class KerangkaServer {
         const item = await this.store.get(entityName, args.id);
         if (!item) throw new Error(`${entityName} with id '${args.id}' not found.`);
 
-        const result = this.engine.transition(entityName, item as Record<string, unknown>, actionName, {
-          id: "mcp-user",
-          roles: ["admin"],
-        });
+        // The caller supplies the actor's roles, as the HTTP path does with the request
+        // body. A hardcoded `["admin"]` meant an MCP tool could not drive any action the
+        // model guards by role — and because the guard rejected it first, the run emitted
+        // nothing, which is part of why its events going missing went unnoticed for so long.
+        const { roles, actorId, ...transitionArgs } = args as Record<string, unknown>;
+        const actor = {
+          id: typeof actorId === "string" ? actorId : "mcp-user",
+          roles: Array.isArray(roles) ? roles.filter((r): r is string => typeof r === "string") : ["admin"]
+        };
+        const result = this.engine.transition(
+          entityName,
+          item as Record<string, unknown>,
+          actionName,
+          actor
+        );
         if (!result.ok) {
           return {
             isError: true,
@@ -638,7 +667,14 @@ export class KerangkaServer {
 
         const updatedState = result.record || item;
         await this.store.update(entityName, args.id, updatedState as Record<string, unknown>);
-        const effectsFailed = await this.dispatchEffects(result.effects, entityName, String(args.id));
+        // Queued and settled like the HTTP path. A tool call that emits an event used to
+        // drop it: the effects were dispatched and nothing recorded what the run promised.
+        const effectsFailed = await this.runWithDelivery(
+          entityName,
+          String(args.id),
+          result.events,
+          result.effects
+        );
 
         return {
           content: [
@@ -1062,37 +1098,82 @@ export class KerangkaServer {
   }
 
   /**
-   * Put the effects this run could not deliver where a host will find them.
+   * Queue everything this run promised, before any of it is attempted.
    *
-   * Not atomic with the write, and it cannot be: the aggregate is already stored through
-   * `StorePort` and the queue is a different store with a different lifecycle. So a crash
-   * in the window between the two still loses the effect. What changes is everything else —
-   * the failure is now something a host can drain, retry and acknowledge, instead of a log
-   * line that named a problem nobody could act on.
+   * The order matters and it is forced. The record write has to come first, or a crash
+   * between the two would leave a host performing effects for a write that never committed —
+   * worse than losing them. The queue write has to come second and immediately, so the
+   * window is two adjacent store calls rather than the whole dispatch.
+   *
+   * That is the whole point of this split. Before it, the window between the record write and
+   * the queue write spanned `dispatchEffects`, which is every outbound connector call, timer
+   * and email in the run. A connector that takes thirty seconds is a thirty-second window in
+   * which a crash loses every event the run emitted and every effect it owed. Now the queue
+   * holds the promise before the first attempt, so an interrupted dispatch leaves the effects
+   * pending and a host can drain them.
+   *
+   * Not atomic with the record write, and it cannot be: the aggregate is in `StorePort` and
+   * the queue is a session store with its own lifecycle. That limit is unchanged. What
+   * changed is its size, and what survives a crash inside it.
    */
-  private recordDelivery(
+  private openDelivery(
     events: CloudEvent[] | undefined,
-    undelivered: UndeliveredEffect[],
+    effects: Effect[] | undefined,
     entityName: string
-  ): void {
-    if (!this.session) return;
+  ): DeliveryReceipt | null {
+    if (!this.session) return null;
     try {
-      // Both halves in one transaction: the events this run emitted and the effects it
-      // could not deliver are one fact about what the run promised. The record write is
-      // still a separate store and a separate moment — that window is ADR-0034's stated
-      // limit — but nothing inside the queue is left half-recorded.
-      this.session.enqueueDelivery(
-        events,
-        undelivered.map((failure) => failure.effect),
-        entityName
-      );
+      // Events and effects in one transaction: they are one fact about what the run
+      // promised, and a half-recorded promise is the thing an outbox exists to prevent.
+      const queued = this.session.enqueueDelivery(events, effects, entityName);
+      return { events: queued.events, effects: queued.effects };
     } catch (err) {
-      // The queue is a second store and can fail on its own. Losing that must not lose
-      // the run's own outcome, and the caller is already being told about the effects.
+      // The queue is a second store and can fail on its own. Losing it must not lose the
+      // run's own outcome, which is already written and already being returned.
       if (!this.quiet) {
-        console.warn("[kerangka] Failed to record this run's events and undelivered effects:", err);
+        console.warn("[kerangka] Failed to record this run's events and effects:", err);
       }
+      return null;
     }
+  }
+
+  /**
+   * Settle what the dispatch managed: delivered effects are acknowledged, failures keep
+   * their entry pending with a reason and a counted attempt.
+   *
+   * The queue's entries are in the same order as the effects that produced them, and
+   * `UndeliveredEffect` carries the index of the effect it is about, so the two are matched
+   * by position rather than by a second id scheme that could disagree.
+   */
+  private settleDelivery(receipt: DeliveryReceipt | null, undelivered: UndeliveredEffect[]): void {
+    if (!receipt || !this.session) return;
+    const failedAt = new Map(undelivered.map((failure) => [failure.index, failure.code]));
+
+    for (const [index, entry] of receipt.effects.entries()) {
+      const code = failedAt.get(index);
+      if (code) this.session.nackEffect(entry.id, code);
+      else this.session.ackEffect(entry.id);
+    }
+  }
+
+  /**
+   * Dispatch a run's effects with the queue open around it.
+   *
+   * Both action paths — HTTP and MCP — go through here, so neither can queue an event it
+   * then drops: the MCP path used to dispatch and discard, which lost every event a tool
+   * call emitted.
+   */
+  private async runWithDelivery(
+    entityName: string,
+    recordId: string | undefined,
+    events: CloudEvent[] | undefined,
+    effects: Effect[] | undefined,
+    tenantId?: string
+  ): Promise<UndeliveredEffect[]> {
+    const receipt = this.openDelivery(events, effects, entityName);
+    const undelivered = await this.dispatchEffects(effects, entityName, recordId, tenantId);
+    this.settleDelivery(receipt, undelivered);
+    return undelivered;
   }
 
   async executeScheduledJob(job: ScheduledJob): Promise<void> {
@@ -1114,12 +1195,10 @@ export class KerangkaServer {
       await this.store.update(entityName, recordId, res.record, {
         actor: { id: "system" },
       });
-      if (res.effects && res.effects.length > 0) {
-        this.recordDelivery(
-          res.events,
-          await this.dispatchEffects(res.effects, entityName, recordId),
-          entityName
-        );
+      // Keyed on either, not on effects alone: a job that emits an event and performs no
+      // host effect still promised something, and the old condition dropped it on the floor.
+      if ((res.effects && res.effects.length > 0) || (res.events && res.events.length > 0)) {
+        await this.runWithDelivery(entityName, recordId, res.events, res.effects);
       }
     }
   }

@@ -40,3 +40,4 @@ This directory records all significant architectural, semantic, and structural d
 | [0034](0034-http-effect-queue.md) | Where a Failed Effect Goes on the HTTP Path | Accepted | 2026-09-30 |
 | [0035](0035-http-event-outbox.md) | The HTTP Path Queues the Events a Run Emitted | Accepted | 2026-09-30 |
 | [0036](0036-two-openapi-documents.md) | Two OpenAPI Documents, Two Meanings | Accepted | 2026-09-30 |
+| [0037](0037-delivery-queue-before-dispatch.md) | The Delivery Queue Is Opened Before the Dispatch | Accepted | 2026-09-30 |

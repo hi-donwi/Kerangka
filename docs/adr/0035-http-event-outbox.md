@@ -18,6 +18,8 @@ lost the event permanently. Nothing could recover it, because nothing had it.
 ADR-0034 fixed the sibling gap: effects a run could not deliver are now queued. It left one
 window open, and named it: the queue write is not atomic with the record write, because the
 aggregate goes through `StorePort` and the queue is a separate store with its own lifecycle.
+ADR-0037 later found that this window also contained the whole dispatch, which this ADR did
+not say.
 
 ## Decision
 
@@ -63,6 +65,11 @@ to remove.
   and the queue is a separate store, so a crash between the write and the enqueue still loses
   both. Closing it needs one transaction across two stores, which is a different architecture
   and would mean the session becoming the record store.
+
+  ADR-0037 shrank this window and made it honest: the queue is now opened *before* the
+  dispatch rather than after, so the window no longer spans the run's outbound connector
+  calls, and a crash during a dispatch leaves the effects pending rather than absent. The
+  cross-store limit is unchanged.
 - Repeated `enqueueDelivery` of the same *effects* queues duplicates. Asymmetric with events,
   and stated in the test rather than smoothed over.
 
