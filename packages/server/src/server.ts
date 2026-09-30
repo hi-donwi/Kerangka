@@ -28,12 +28,25 @@ import {
 } from "@kerangka/ports";
 import { Engine, Effect } from "@kerangka/engine-ts";
 import { SchedulerRunner } from "./scheduler-runner.js";
+import { SessionStoreLike } from "./session-store.js";
 
 export interface ServerOptions {
   port?: number;
   host?: string;
   store?: StorePort;
   connectors?: ConnectorsPort;
+  /**
+   * A sidecar session to record effects this deployment could not deliver into.
+   *
+   * Separate from `store` on purpose. `StorePort` persists aggregates — it is the database
+   * adapter boundary of ADR-0017 and knows nothing about an outbox, a queue, or a host. The
+   * sidecar already has that machinery in `SessionStoreLike`, including `ack`/`nack` and a
+   * durable implementation, so the HTTP path borrows it rather than growing a second one.
+   *
+   * Without it the server still works and still reports `effectsFailed` in the response; the
+   * failures are simply not queued, so a restart loses them.
+   */
+  session?: SessionStoreLike;
   scheduler?: SchedulerPort;
   enableSchedulerRunner?: boolean;
   runnerPollIntervalMs?: number;
@@ -55,6 +68,26 @@ export interface FailedEffect {
   code: "EFFECT_NOT_APPLIED" | "EFFECT_UNHANDLED";
 }
 
+/**
+ * A failure and the effect behind it.
+ *
+ * The response carries only the `FailedEffect` half, because the contract declares four
+ * fields and `additionalProperties: false`. The effect is what gets queued when a session
+ * store is configured, so a host can drain and retry the real thing rather than a
+ * description of it.
+ */
+interface UndeliveredEffect extends FailedEffect {
+  effect: Effect;
+}
+
+/** The client-facing half, with the effect stripped. */
+const reportable = ({ index, type, target, code }: UndeliveredEffect): FailedEffect => ({
+  index,
+  type,
+  target,
+  code
+});
+
 export class KerangkaServer {
   readonly kir: KIRDocument;
   readonly port: number;
@@ -62,6 +95,8 @@ export class KerangkaServer {
   readonly store: StorePort;
   readonly connectors: ConnectorsPort;
   readonly scheduler: SchedulerPort;
+  /** Optional: where undelivered effects are queued for a host to drain. */
+  readonly session: SessionStoreLike | null;
   readonly runner: SchedulerRunner;
   readonly engine: Engine;
   readonly openApiSpec: Record<string, unknown>;
@@ -83,6 +118,7 @@ export class KerangkaServer {
     this.store = options.store || new MemoryStore();
     this.connectors = options.connectors || new DefaultConnectors();
     this.scheduler = options.scheduler || new StoreScheduler(this.store);
+    this.session = options.session ?? null;
     this.engine = new Engine(kir);
 
     this.runner = new SchedulerRunner({
@@ -184,6 +220,58 @@ export class KerangkaServer {
 
     if (pathname === "/api/mcp/tools") {
       this.sendJson(res, 200, { tools: this.mcpTools });
+      return;
+    }
+
+    // The drain for undelivered effects. Only useful when the server was given a session
+    // to queue them into; without one there is nothing queued and the answer says so
+    // rather than pretending the queue is empty because nothing can fail.
+    if (pathname === "/api/effects" && method === "GET") {
+      if (!this.session) {
+        this.sendProblem(
+          res,
+          501,
+          "Not Implemented",
+          "This server was started without a session, so undelivered effects are reported in " +
+            "the action response but not queued. Start it with a session to drain them.",
+          "EFFECT_QUEUE_UNAVAILABLE"
+        );
+        return;
+      }
+      const type = url.searchParams.get("type") ?? undefined;
+      this.sendJson(res, 200, { effects: this.session.pendingEffects(type) });
+      return;
+    }
+
+    const effectAction = /^\/api\/effects\/([^/]+)\/(ack|nack)$/.exec(pathname);
+    if (effectAction && method === "POST") {
+      if (!this.session) {
+        this.sendProblem(
+          res,
+          501,
+          "Not Implemented",
+          "This server was started without a session, so there is no queue to acknowledge.",
+          "EFFECT_QUEUE_UNAVAILABLE"
+        );
+        return;
+      }
+      const [, rawId, action] = effectAction;
+      if (rawId === undefined || action === undefined) {
+        this.sendProblem(res, 404, "Not Found", "Not an effect queue path.", "EFFECT_NOT_FOUND");
+        return;
+      }
+      const id = decodeURIComponent(rawId);
+      // Read for the `nack` reason only; an empty body is `{}`, so `ack` needs no read.
+      const body = action === "nack" ? await this.readJsonBody(req) : {};
+      const entry =
+        action === "ack"
+          ? this.session.ackEffect(id)
+          : this.session.nackEffect(id, typeof body?.error === "string" ? body.error : undefined);
+      if (!entry) {
+        this.sendProblem(res, 404, "Not Found", `No queued effect '${id}'.`, "EFFECT_NOT_FOUND");
+        return;
+      }
+      this.sendJson(res, 200, { effect: entry });
       return;
     }
 
@@ -429,7 +517,9 @@ export class KerangkaServer {
         });
 
         // Dispatch side-effects (call, notify, timer, cancel-timer)
-        const effectsFailed = await this.dispatchEffects(result.effects, entityName, id, tenantId);
+        const undelivered = await this.dispatchEffects(result.effects, entityName, id, tenantId);
+        this.queueUndelivered(undelivered);
+        const effectsFailed = undelivered.map(reportable);
 
         // Present only when something was not delivered, so a successful run's response is
         // byte-for-byte what it was before this was added. A caller that does not read it
@@ -777,8 +867,8 @@ export class KerangkaServer {
     entityName: string,
     recordId?: string,
     tenantId?: string
-  ): Promise<FailedEffect[]> {
-    const failed: FailedEffect[] = [];
+  ): Promise<UndeliveredEffect[]> {
+    const failed: UndeliveredEffect[] = [];
     if (!effects || effects.length === 0) return failed;
 
     for (const [index, effect] of effects.entries()) {
@@ -787,7 +877,7 @@ export class KerangkaServer {
         const targetConnector = (extDef?.connector as string) || effect.extension;
         const canHandle = typeof this.connectors.has === "function" ? this.connectors.has(targetConnector) : true;
         if (!canHandle) {
-          failed.push({ index, type: effect.type, target: targetConnector, code: "EFFECT_UNHANDLED" });
+          failed.push({ index, type: effect.type, target: targetConnector, code: "EFFECT_UNHANDLED", effect });
         } else {
           try {
             await this.connectors.call({
@@ -801,7 +891,7 @@ export class KerangkaServer {
               tenantId,
             });
           } catch (err) {
-            failed.push({ index, type: effect.type, target: targetConnector, code: "EFFECT_NOT_APPLIED" });
+            failed.push({ index, type: effect.type, target: targetConnector, code: "EFFECT_NOT_APPLIED", effect });
             if (!this.quiet) {
               console.warn(`[kerangka] Connector call '${targetConnector}' failed:`, err);
             }
@@ -810,7 +900,7 @@ export class KerangkaServer {
       } else if (effect.type === "notify" && this.connectors) {
         const canEmail = typeof this.connectors.has === "function" ? this.connectors.has("email") : true;
         if (!canEmail) {
-          failed.push({ index, type: effect.type, target: "email", code: "EFFECT_UNHANDLED" });
+          failed.push({ index, type: effect.type, target: "email", code: "EFFECT_UNHANDLED", effect });
         } else {
           try {
             await this.connectors.call({
@@ -824,7 +914,7 @@ export class KerangkaServer {
               tenantId,
             });
           } catch (err) {
-            failed.push({ index, type: effect.type, target: "email", code: "EFFECT_NOT_APPLIED" });
+            failed.push({ index, type: effect.type, target: "email", code: "EFFECT_NOT_APPLIED", effect });
             if (!this.quiet) {
               console.warn("[kerangka] Email notification failed:", err);
             }
@@ -838,7 +928,7 @@ export class KerangkaServer {
             tenantId,
           });
         } catch (err) {
-          failed.push({ index, type: effect.type, target: effect.action, code: "EFFECT_NOT_APPLIED" });
+          failed.push({ index, type: effect.type, target: effect.action, code: "EFFECT_NOT_APPLIED", effect });
           if (!this.quiet) {
             console.warn(`[kerangka] Failed to schedule timer '${effect.action}':`, err);
           }
@@ -853,7 +943,8 @@ export class KerangkaServer {
             index,
             type: effect.type,
             target: effect.target,
-            code: "EFFECT_NOT_APPLIED"
+            code: "EFFECT_NOT_APPLIED",
+            effect
           });
           if (!this.quiet) {
             console.warn(`[kerangka] Failed to cancel timer for target '${effect.target}':`, err);
@@ -863,6 +954,30 @@ export class KerangkaServer {
     }
 
     return failed;
+  }
+
+  /**
+   * Put the effects this run could not deliver where a host will find them.
+   *
+   * Not atomic with the write, and it cannot be: the aggregate is already stored through
+   * `StorePort` and the queue is a different store with a different lifecycle. So a crash
+   * in the window between the two still loses the effect. What changes is everything else —
+   * the failure is now something a host can drain, retry and acknowledge, instead of a log
+   * line that named a problem nobody could act on.
+   */
+  private queueUndelivered(undelivered: UndeliveredEffect[]): void {
+    if (!this.session) return;
+    for (const failure of undelivered) {
+      try {
+        this.session.enqueueEffect(failure.effect);
+      } catch (err) {
+        // The queue is a second store and can fail on its own. Losing that must not lose
+        // the run's own outcome, and the caller is already being told about the effect.
+        if (!this.quiet) {
+          console.warn("[kerangka] Failed to queue an undelivered effect:", err);
+        }
+      }
+    }
   }
 
   async executeScheduledJob(job: ScheduledJob): Promise<void> {
@@ -885,7 +1000,7 @@ export class KerangkaServer {
         actor: { id: "system" },
       });
       if (res.effects && res.effects.length > 0) {
-        await this.dispatchEffects(res.effects, entityName, recordId);
+        this.queueUndelivered(await this.dispatchEffects(res.effects, entityName, recordId));
       }
     }
   }

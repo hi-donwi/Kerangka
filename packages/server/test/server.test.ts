@@ -4,6 +4,8 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile } from "@kerangka/compiler";
 import { MemoryStore } from "@kerangka/ports";
+import { SessionStore } from "../src/index.js";
+import type { ConnectorsPort } from "@kerangka/ports";
 import { KerangkaServer } from "../src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -426,6 +428,164 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
         expect(JSON.parse(raw).effectsFailed[0].code).toBe("EFFECT_NOT_APPLIED");
       } finally {
         await failing.stop();
+      }
+    });
+  });
+
+  /**
+   * Reporting is not durability. With a session configured, an effect the deployment
+   * could not deliver is queued where a host can drain it, retry it, and acknowledge it —
+   * the same discipline the sidecar has had since it stopped dropping effects.
+   *
+   * The queue is deliberately not in the same transaction as the record: the aggregate is
+   * stored through `StorePort` and the queue is a separate store with its own lifecycle. A
+   * crash in that window still loses the effect, and the tests say so rather than implying
+   * otherwise.
+   */
+  describe("a host drains the effects a run could not deliver", () => {
+    const alwaysFails = () => Promise.reject(new Error("smtp down"));
+    const drainServer = async (port: number, call: ConnectorsPort["call"]) => {
+      const session = new SessionStore();
+      const server = new KerangkaServer(kir, {
+        port,
+        quiet: true,
+        store: new MemoryStore(),
+        session,
+        connectors: { has: () => true, call }
+      });
+      await server.start();
+      return {
+        base: `http://localhost:${port}`,
+        session,
+        stop: () => server.stop()
+      };
+    };
+
+    const settle = async (base: string, number: string) => {
+      const created = await fetch(`${base}/api/invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          number,
+          customer: "cust-1",
+          issuedOn: "2026-09-30",
+          dueDate: "2026-10-30",
+          status: "draft",
+          lines: [{ description: "Consulting", qty: 1, unitPrice: 100 }]
+        })
+      });
+      expect(created.status).toBe(201);
+    };
+
+    const send = async (base: string, number: string) => {
+      const res = await fetch(`${base}/api/invoice/${number}/actions/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: ["billing"] })
+      });
+      expect(res.status).toBe(200);
+      return (await res.json()) as {
+        effectsFailed?: Array<{ code: string; type: string }>;
+      };
+    };
+
+    it("queues an effect nothing could deliver, and a host can drain it", async () => {
+      const harness = await drainServer(3993, alwaysFails);
+      try {
+        await settle(harness.base, "INV-060");
+        const body = await send(harness.base, "INV-060");
+        expect(body.effectsFailed?.[0]?.code).toBe("EFFECT_NOT_APPLIED");
+
+        const drained = await fetch(`${harness.base}/api/effects`);
+        expect(drained.status).toBe(200);
+        const { effects } = await drained.json();
+        expect(effects).toHaveLength(1);
+        // The queued entry is the effect itself, so a host can perform or retry the real
+        // call rather than a description of it.
+        expect(effects[0].effect).toMatchObject({ type: "call", extension: "sendInvoiceEmail" });
+        expect(effects[0].state).toBe("pending");
+        expect(effects[0].attempts).toBe(0);
+      } finally {
+        await harness.stop();
+      }
+    });
+
+    it("keeps an effect pending when the host could not perform it, and counts the attempt", async () => {
+      const harness = await drainServer(3994, alwaysFails);
+      try {
+        await settle(harness.base, "INV-061");
+        await send(harness.base, "INV-061");
+
+        const { effects } = await (await fetch(`${harness.base}/api/effects`)).json();
+        const id = effects[0].id as string;
+
+        const nacked = await fetch(`${harness.base}/api/effects/${id}/nack`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ error: "mailbox unavailable" })
+        });
+        expect(nacked.status).toBe(200);
+        const { effect } = await nacked.json();
+        expect(effect.state).toBe("pending");
+        expect(effect.attempts).toBe(1);
+        expect(effect.lastError).toBe("mailbox unavailable");
+
+        // Still there: a nack is a retry signal, not a deletion.
+        const after = await (await fetch(`${harness.base}/api/effects`)).json();
+        expect(after.effects).toHaveLength(1);
+      } finally {
+        await harness.stop();
+      }
+    });
+
+    it("stops offering an effect once the host acknowledges it", async () => {
+      const harness = await drainServer(3995, alwaysFails);
+      try {
+        await settle(harness.base, "INV-062");
+        await send(harness.base, "INV-062");
+
+        const { effects } = await (await fetch(`${harness.base}/api/effects`)).json();
+        const acked = await fetch(`${harness.base}/api/effects/${effects[0].id}/ack`, {
+          method: "POST"
+        });
+        expect(acked.status).toBe(200);
+        expect((await acked.json()).effect.state).toBe("delivered");
+
+        const after = await (await fetch(`${harness.base}/api/effects`)).json();
+        expect(after.effects).toHaveLength(0);
+      } finally {
+        await harness.stop();
+      }
+    });
+
+    it("answers honestly when the server has no queue at all", async () => {
+      const harness = await drainServer(3996, alwaysFails);
+      await harness.stop();
+
+      const plain = new KerangkaServer(kir, { port: 3997, quiet: true, store: new MemoryStore() });
+      await plain.start();
+      try {
+        const res = await fetch("http://localhost:3997/api/effects");
+        // 501, not an empty list: an empty queue would read as "nothing failed", which is
+        // the exact confusion this endpoint has to avoid.
+        expect(res.status).toBe(501);
+        const problem = await res.json();
+        expect(problem.code).toBe("EFFECT_QUEUE_UNAVAILABLE");
+      } finally {
+        await plain.stop();
+      }
+    });
+
+    it("404s an acknowledgement for an effect that is not queued", async () => {
+      const harness = await drainServer(3998, alwaysFails);
+      try {
+        const res = await fetch(`${harness.base}/api/effects/failed-effect-999-0/ack`, {
+          method: "POST"
+        });
+        expect(res.status).toBe(404);
+        expect((await res.json()).code).toBe("EFFECT_NOT_FOUND");
+      } finally {
+        await harness.stop();
       }
     });
   });

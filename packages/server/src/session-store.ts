@@ -103,6 +103,16 @@ export interface SessionStoreLike {
   outboxEntry(id: string): OutboxEntry | null;
   events(type?: string): CloudEvent[];
   pendingEffects(type?: string): HostEffectEntry[];
+  /**
+   * Queue an effect the host has to perform, outside a commit.
+   *
+   * `applyEffects` queues the effects a run produced but did not perform. This is for the
+   * other case: an effect that *was* attempted and failed, or that nothing in the
+   * deployment can perform at all. The HTTP path has no commit to join — its write and its
+   * dispatch are separate calls against separate stores — so it records the failure here
+   * instead, and a host drains it like any other queued effect.
+   */
+  enqueueEffect(effect: Effect): HostEffectEntry;
   ackEffect(id: string): HostEffectEntry | null;
   nackEffect(id: string, error?: string): HostEffectEntry | null;
   hostEffect(id: string): HostEffectEntry | null;
@@ -339,6 +349,23 @@ export class SessionStore implements SessionStoreLike {
    * Effects still waiting for a host to perform them, oldest first: a `call` to an
    * extension, a notification, a scheduled timer.
    */
+  enqueueEffect(effect: Effect): HostEffectEntry {
+    this.revision += 1;
+    const entry: HostEffectEntry = {
+      // A separate namespace from `applyEffects`' `effect-<revision>-<index>`. A commit
+      // mints its ids at the *next* revision, which is exactly the one taken here, so
+      // sharing the scheme would collide — silently in memory, as a constraint failure
+      // in SQLite.
+      id: `failed-effect-${this.revision}-${this.hostEffects.size}`,
+      effect,
+      attempts: 0,
+      state: "pending",
+      enqueuedAtRevision: this.revision,
+    };
+    this.hostEffects.set(entry.id, entry);
+    return entry;
+  }
+
   pendingEffects(type?: string): HostEffectEntry[] {
     return [...this.hostEffects.values()]
       .filter((entry) => entry.state === "pending")

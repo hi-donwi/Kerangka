@@ -451,6 +451,43 @@ export class SqliteSessionStore implements SessionStoreLike {
 
   // -- Host effects -----------------------------------------------------------
 
+  enqueueEffect(effect: Effect): HostEffectEntry {
+    // Its own transaction, because unlike a commit this is not joining a write: the point
+    // is that the failure survives even though the record it belongs to is already stored.
+    this.assertHeld();
+    this.db.exec("BEGIN IMMEDIATE");
+    let revision = 0;
+    try {
+      revision = this.revision() + 1;
+      // `failed-` for the same reason as the in-memory store: `applyEffects` mints
+      // `effect-<revision>-<index>` at the next revision, so sharing the scheme collides.
+      const id = `failed-effect-${revision}-${this.effectCount()}`;
+      this.db
+        .prepare(
+          `INSERT INTO _session_effects (id, effect, attempts, state, revision)
+           VALUES (?, ?, 0, 'pending', ?)`
+        )
+        .run(id, JSON.stringify(effect), revision);
+      this.db.prepare("UPDATE _session_meta SET value = ? WHERE key = 'revision'").run(String(revision));
+      this.db.exec("COMMIT");
+      return {
+        id,
+        effect,
+        attempts: 0,
+        state: "pending",
+        enqueuedAtRevision: revision
+      };
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  private effectCount(): number {
+    const row = this.db.prepare("SELECT COUNT(*) AS n FROM _session_effects").get() as { n: number };
+    return row.n;
+  }
+
   pendingEffects(type?: string): HostEffectEntry[] {
     return this.effectEntries()
       .filter((entry) => entry.state === "pending")

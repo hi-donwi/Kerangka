@@ -8,6 +8,7 @@ import { loadEngine } from "@kerangka/engine-ts";
 import {
   createJsonRpcDispatcher,
   SessionLockedError,
+  SessionStore,
   SqliteSessionStore
 } from "../src/index.js";
 
@@ -520,4 +521,47 @@ describe.skipIf(!built)("a session file is claimed across processes", () => {
       cleanup();
     }
   }, 30_000);
+});
+
+/**
+ * A host-side effect that failed is queued outside a commit, so the ids have to be a
+ * different namespace from the ones a commit mints.
+ *
+ * The order matters and the first attempt at this test had it backwards. A commit mints
+ * `effect-<revision + 1>-<index>`, one *past* its own increment, so enqueueing first and
+ * committing second cannot collide — and a test written in that order passes with the
+ * shared scheme, proving nothing. Committing first and enqueueing second is the order that
+ * collides, and the order a caller actually reaches it in.
+ */
+describe("a queued failure does not collide with a commit's effect ids", () => {
+  const failure = { type: "call" as const, extension: "sendInvoiceEmail", input: { invoice: "x" } };
+
+  it("keeps both entries in the in-memory store", () => {
+    const store = new SessionStore();
+    store.applyEffects("Invoice", [failure], []);
+    const queued = store.enqueueEffect(failure);
+    const entries = store.pendingEffects();
+
+    expect(entries.map((entry) => entry.id)).toContain(queued.id);
+    expect(entries).toHaveLength(2);
+    expect(new Set(entries.map((entry) => entry.id)).size).toBe(entries.length);
+  });
+
+  it("keeps both entries in the durable store", () => {
+    const { path, cleanup } = workspace();
+    try {
+      const store = new SqliteSessionStore({ path });
+      store.applyEffects("Invoice", [failure], []);
+      // A primary-key collision here would throw, which is the loud version of the same bug.
+      const queued = store.enqueueEffect(failure);
+      const entries = store.pendingEffects();
+
+      expect(entries.map((entry) => entry.id)).toContain(queued.id);
+      expect(entries).toHaveLength(2);
+      expect(new Set(entries.map((entry) => entry.id)).size).toBe(entries.length);
+      store.close();
+    } finally {
+      cleanup();
+    }
+  });
 });

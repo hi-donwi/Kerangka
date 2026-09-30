@@ -37,3 +37,4 @@ This directory records all significant architectural, semantic, and structural d
 | [0031](0031-first-class-multitenancy-and-overlays.md) | First-Class Multi-Tenancy and Tenant Overlays | Accepted | 2026-09-27 |
 | [0032](0032-zero-downtime-schema-evolution.md) | Zero-Downtime Schema Evolution via Expand/Contract | Accepted | 2026-09-27 |
 | [0033](0033-tests-read-the-workspace-from-source.md) | Tests Read the Workspace from Source | Accepted | 2026-09-30 |
+| [0034](0034-http-effect-queue.md) | Where a Failed Effect Goes on the HTTP Path | Accepted | 2026-09-30 |
