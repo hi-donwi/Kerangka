@@ -1,0 +1,189 @@
+"""
+Kerangka sidecar client for Python.
+
+L1 of PLAN.md §11: any language reaches the engine through `keranga serve` over stdio
+JSON-RPC, without embedding a native engine. This is that client; standard library only.
+
+    from kerangka.sidecar import Sidecar
+
+    with Sidecar("examples/invoicing.kerangka.json") as kerangka:
+        print(kerangka.call("describe")["entities"])
+        result = kerangka.run("Invoice.send", record, actor={"id": "u1", "roles": ["billing"]})
+
+Each request is one JSON line on stdin, each response one JSON line on stdout. A domain
+refusal (`ok: false` with a stable code) comes back as a result; a protocol error raises
+`SidecarError`.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from typing import Any, Dict, Iterator, List, Optional, Sequence
+
+__all__ = ["Sidecar", "SidecarError", "DEFAULT_CLI"]
+
+DEFAULT_CLI = os.path.join("packages", "cli", "dist", "bin", "kerangka.js")
+
+
+class SidecarError(RuntimeError):
+    """A JSON-RPC protocol error, or a sidecar that died before answering."""
+
+    def __init__(self, message: str, code: Optional[int] = None, data: Any = None):
+        super().__init__(message)
+        self.code = code
+        self.data = data
+
+
+class Sidecar:
+    """A running `keranga serve --stdio`, spoken to over stdin and stdout."""
+
+    def __init__(
+        self,
+        document: str,
+        cli: str = DEFAULT_CLI,
+        cwd: Optional[str] = None,
+        node: str = "node",
+    ):
+        self.document = document
+        self.cli = cli
+        self.cwd = cwd or os.getcwd()
+        self.node = node
+        self._process: Optional[subprocess.Popen] = None
+        self._next_id = 0
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def start(self) -> "Sidecar":
+        if self._process is not None:
+            return self
+        if not os.path.exists(os.path.join(self.cwd, self.cli)):
+            raise SidecarError(
+                f"CLI not built at {self.cli}; run 'npm run build' first"
+            )
+        if not os.path.exists(os.path.join(self.cwd, self.document)):
+            raise SidecarError(f"Document not found: {self.document}")
+
+        self._process = subprocess.Popen(
+            [self.node, self.cli, "serve", self.document, "--stdio"],
+            cwd=self.cwd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        return self
+
+    def stop(self) -> None:
+        if self._process is None:
+            return
+        try:
+            if self._process.stdin:
+                self._process.stdin.close()
+            self._process.wait(timeout=10)
+        except Exception:
+            self._process.kill()
+        finally:
+            self._process = None
+
+    def __enter__(self) -> "Sidecar":
+        return self.start()
+
+    def __exit__(self, *exc: Any) -> None:
+        self.stop()
+
+    # -- protocol ----------------------------------------------------------
+
+    def call(self, method: str, **params: Any) -> Any:
+        """Send one request and return its `result`, or raise `SidecarError`."""
+        if self._process is None or self._process.stdin is None or self._process.stdout is None:
+            raise SidecarError("Sidecar is not running; use it as a context manager")
+
+        self._next_id += 1
+        request = {"jsonrpc": "2.0", "id": self._next_id, "method": method, "params": params}
+        self._process.stdin.write(json.dumps(request) + "\n")
+        self._process.stdin.flush()
+
+        line = self._process.stdout.readline()
+        if not line:
+            stderr = self._process.stderr.read() if self._process.stderr else ""
+            raise SidecarError(f"Sidecar closed the stream without answering: {stderr.strip()}")
+
+        try:
+            response = json.loads(line)
+        except json.JSONDecodeError as err:
+            raise SidecarError(f"Sidecar sent a line that is not JSON: {line!r}") from err
+
+        if "error" in response:
+            error = response["error"]
+            raise SidecarError(
+                error.get("message", "unknown error"),
+                code=error.get("code"),
+                data=error.get("data"),
+            )
+        return response.get("result")
+
+    # -- Runtime API shorthands (PLAN.md section 10) -----------------------
+
+    def describe(self) -> Dict[str, Any]:
+        return self.call("describe")
+
+    def validate(self, entity: str, record: Dict[str, Any]) -> Dict[str, Any]:
+        return self.call("validate", entity=entity, record=record)
+
+    def compute(self, entity: str, record: Dict[str, Any]) -> Dict[str, Any]:
+        return self.call("compute", entity=entity, record=record)["record"]
+
+    def can(
+        self,
+        operation: str,
+        record: Optional[Dict[str, Any]] = None,
+        actor: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return self.call(
+            "can", operation=operation, record=record or {}, actor=actor
+        )
+
+    def available(
+        self,
+        entity: str,
+        record: Dict[str, Any],
+        actor: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        return self.call("available", entity=entity, record=record, actor=actor)["operations"]
+
+    def run(
+        self,
+        action: str,
+        record: Dict[str, Any],
+        input: Optional[Dict[str, Any]] = None,  # noqa: A002 - mirrors the wire name
+        actor: Optional[Dict[str, Any]] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        return self.call(
+            "run", action=action, record=record, input=input or {}, actor=actor, options=options
+        )
+
+    def react(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        return self.call("react", event=event)
+
+    def decide(self, table: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        return self.call("decide", table=table, inputs=inputs)
+
+    def query_plan(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+        actor: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return self.call("queryPlan", query=query, params=params or {}, actor=actor)
+
+
+def iter_json_lines(lines: Sequence[str]) -> Iterator[Dict[str, Any]]:
+    """Parse JSON lines, skipping blanks. Useful for a host that reads the sidecar itself."""
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            yield json.loads(stripped)

@@ -25,6 +25,10 @@ jobs:
           node-version: "22"
           cache: npm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Install
         run: npm ci
 
@@ -40,5 +44,8 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Examples (kerangka check + kerangka test)
+      - name: Examples (kerangka check + kerangka verify + kerangka test)
         run: npm run examples:verify
+
+      - name: Sidecar from a non-JavaScript client (Python over stdio JSON-RPC)
+        run: python3 scripts/sidecar-smoke.py
