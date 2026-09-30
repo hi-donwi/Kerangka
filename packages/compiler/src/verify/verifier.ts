@@ -102,9 +102,16 @@ export function verifyDecisionTables(
     const hitPolicy = table.hitPolicy || "first";
     const inputs: Array<{ name: string; type?: string }> = Array.isArray(table.inputs) ? table.inputs : [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // Canonical IR keeps rows keyed by column name; a host-built table may pass `rules`.
     const rules: Array<{ inputs: any[]; outputs: Record<string, unknown> }> = Array.isArray(table.rules)
       ? table.rules
-      : [];
+      : Array.isArray(table.rows)
+        ? table.rows.map((row: any, index: number) => ({
+            id: `row-${index + 1}`,
+            inputs: inputs.map((col) => (row?.[col.name] === undefined ? "-" : row[col.name])),
+            outputs: row ?? {},
+          }))
+        : [];
 
     const tablePtr = pointer("decisions", tableName);
     const tablePos = locator?.locate(tablePtr);
@@ -473,6 +480,62 @@ export function verifyPermissions(
 }
 
 /**
+ * Verifies that every policy runs an action or transition that actually exists.
+ * A policy pointing at a missing operation fails silently at run time, so it is an error
+ * here: the reaction is built, dispatched, and refused.
+ */
+export function verifyPolicyTargets(
+  doc: KIRDocument | Record<string, unknown>,
+  locator?: SourceLocator
+): CompilerDiagnostic[] {
+  const findings: CompilerDiagnostic[] = [];
+  const policies = doc.policies;
+  const entities = (doc.entities ?? {}) as Record<string, any>;
+
+  if (!policies || typeof policies !== "object") return findings;
+
+  for (const [policyName, policyDef] of Object.entries(policies) as [string, any][]) {
+    const target = policyDef?.run;
+    if (typeof target !== "string" || !target.includes(".")) continue;
+
+    const [entityName, opName] = target.split(".", 2) as [string, string];
+    const entity = entities[entityName];
+    if (!entity) {
+      const policyPtr = pointer("policies", policyName, "run");
+      const policyPos = locator?.locate(policyPtr);
+      findings.push({
+        severity: "error",
+        code: "POLICY_UNKNOWN_ACTION",
+        message: `Policy '${policyName}' runs '${target}', but entity '${entityName}' does not exist.`,
+        path: policyPtr,
+        line: policyPos?.line,
+        column: policyPos?.column,
+        hint: `Declare entity '${entityName}' or correct the policy target.`,
+      });
+      continue;
+    }
+
+    const isAction = Boolean(entity.actions?.[opName]);
+    const isTransition = Boolean(entity.workflow?.transitions?.[opName]);
+    if (!isAction && !isTransition) {
+      const policyPtr = pointer("policies", policyName, "run");
+      const policyPos = locator?.locate(policyPtr);
+      findings.push({
+        severity: "error",
+        code: "POLICY_UNKNOWN_ACTION",
+        message: `Policy '${policyName}' runs '${target}', but '${entityName}' has no action or transition named '${opName}'.`,
+        path: policyPtr,
+        line: policyPos?.line,
+        column: policyPos?.column,
+        hint: `Declare action '${entityName}.${opName}' or correct the policy target.`,
+      });
+    }
+  }
+
+  return findings;
+}
+
+/**
  * Verifies events and policies: orphan emitted events and orphan listened events.
  */
 export function verifyEvents(
@@ -527,7 +590,10 @@ export function verifyEvents(
       const onEvent = policyDef?.on;
       if (typeof onEvent === "string") {
         listenedEvents.add(onEvent);
-        if (!emittedEvents.has(onEvent)) {
+        // A policy may name the event bare or qualified by its owning context
+        // (`orders.OrderPlaced`); the emitted event carries the bare type.
+        const bareEvent = onEvent.includes(".") ? onEvent.slice(onEvent.lastIndexOf(".") + 1) : onEvent;
+        if (!emittedEvents.has(onEvent) && !emittedEvents.has(bareEvent)) {
           const policyPtr = pointer("policies", policyName);
           const policyPos = locator?.locate(policyPtr);
           findings.push({
@@ -562,6 +628,7 @@ export function verifyDocument(
     ...verifyDecisionTables(doc.decisions as Record<string, unknown>, locator),
     ...verifyPermissions(doc, locator),
     ...verifyEvents(doc, locator),
+    ...verifyPolicyTargets(doc, locator),
   ];
 
   const errors = findings.filter((f) => f.severity === "error");

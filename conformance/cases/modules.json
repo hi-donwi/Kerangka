@@ -10,9 +10,21 @@
       },
       "expect": {
         "valid": true,
-        "entities": ["Invoice", "Order", "OrderLine", "StockReservation"],
-        "events": ["InvoicePaid", "OrderCancelled", "OrderPlaced"],
-        "policies": ["onOrderPlaced"]
+        "entities": [
+          "Invoice",
+          "Order",
+          "OrderLine",
+          "StockReservation"
+        ],
+        "events": [
+          "InvoicePaid",
+          "OrderCancelled",
+          "OrderPlaced"
+        ],
+        "policies": [
+          "billing.onOrderPlaced",
+          "inventory.onOrderPlaced"
+        ]
       }
     },
     {
@@ -23,18 +35,37 @@
           "manifest": {
             "kerangka": "0.1",
             "app": "cycle-direct-app",
-            "contexts": ["a", "b"]
+            "contexts": [
+              "a",
+              "b"
+            ]
           },
           "contexts": {
             "a": {
               "context": "a",
-              "dependsOn": ["b"],
-              "entities": { "EntityA": { "fields": { "name": "string!" } } }
+              "dependsOn": [
+                "b"
+              ],
+              "entities": {
+                "EntityA": {
+                  "fields": {
+                    "name": "string!"
+                  }
+                }
+              }
             },
             "b": {
               "context": "b",
-              "dependsOn": ["a"],
-              "entities": { "EntityB": { "fields": { "name": "string!" } } }
+              "dependsOn": [
+                "a"
+              ],
+              "entities": {
+                "EntityB": {
+                  "fields": {
+                    "name": "string!"
+                  }
+                }
+              }
             }
           }
         }
@@ -52,23 +83,51 @@
           "manifest": {
             "kerangka": "0.1",
             "app": "cycle-transitive-app",
-            "contexts": ["a", "b", "c"]
+            "contexts": [
+              "a",
+              "b",
+              "c"
+            ]
           },
           "contexts": {
             "a": {
               "context": "a",
-              "dependsOn": ["b"],
-              "entities": { "EntityA": { "fields": { "name": "string!" } } }
+              "dependsOn": [
+                "b"
+              ],
+              "entities": {
+                "EntityA": {
+                  "fields": {
+                    "name": "string!"
+                  }
+                }
+              }
             },
             "b": {
               "context": "b",
-              "dependsOn": ["c"],
-              "entities": { "EntityB": { "fields": { "name": "string!" } } }
+              "dependsOn": [
+                "c"
+              ],
+              "entities": {
+                "EntityB": {
+                  "fields": {
+                    "name": "string!"
+                  }
+                }
+              }
             },
             "c": {
               "context": "c",
-              "dependsOn": ["a"],
-              "entities": { "EntityC": { "fields": { "name": "string!" } } }
+              "dependsOn": [
+                "a"
+              ],
+              "entities": {
+                "EntityC": {
+                  "fields": {
+                    "name": "string!"
+                  }
+                }
+              }
             }
           }
         }
@@ -86,22 +145,47 @@
           "manifest": {
             "kerangka": "0.1",
             "app": "export-violation-app",
-            "contexts": ["producer", "consumer"]
+            "contexts": [
+              "producer",
+              "consumer"
+            ]
           },
           "contexts": {
             "producer": {
               "context": "producer",
-              "exports": { "events": ["PublicEvent"] },
-              "events": {
-                "PublicEvent": { "id": "string!" },
-                "PrivateEvent": { "secret": "string!" }
+              "exports": {
+                "events": [
+                  "PublicEvent"
+                ]
               },
-              "entities": { "ProducerEntity": { "fields": { "id": "string!" } } }
+              "events": {
+                "PublicEvent": {
+                  "id": "string!"
+                },
+                "PrivateEvent": {
+                  "secret": "string!"
+                }
+              },
+              "entities": {
+                "ProducerEntity": {
+                  "fields": {
+                    "id": "string!"
+                  }
+                }
+              }
             },
             "consumer": {
               "context": "consumer",
-              "dependsOn": ["producer"],
-              "entities": { "ConsumerEntity": { "fields": { "id": "string!" } } },
+              "dependsOn": [
+                "producer"
+              ],
+              "entities": {
+                "ConsumerEntity": {
+                  "fields": {
+                    "id": "string!"
+                  }
+                }
+              },
               "policies": {
                 "onSecret": {
                   "on": "producer.PrivateEvent",
@@ -125,21 +209,30 @@
           "manifest": {
             "kerangka": "0.1",
             "app": "undeclared-event-app",
-            "contexts": ["billing"]
+            "contexts": [
+              "billing"
+            ]
           },
           "contexts": {
             "billing": {
               "context": "billing",
               "entities": {
                 "Payment": {
-                  "fields": { "status": "enum(pending, done) = pending" },
+                  "fields": {
+                    "status": "enum(pending, done) = pending"
+                  },
                   "workflow": {
                     "field": "status",
                     "transitions": {
                       "complete": {
                         "from": "pending",
                         "to": "done",
-                        "then": [{ "emit": "PaymentUnknownEvent", "data": {} }]
+                        "then": [
+                          {
+                            "emit": "PaymentUnknownEvent",
+                            "data": {}
+                          }
+                        ]
                       }
                     }
                   }
@@ -163,7 +256,9 @@
           "manifest": {
             "kerangka": "0.1",
             "app": "missing-context-app",
-            "contexts": ["nonexistent_context"]
+            "contexts": [
+              "nonexistent_context"
+            ]
           },
           "contexts": {}
         }

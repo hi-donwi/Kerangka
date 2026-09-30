@@ -108,6 +108,21 @@ export class WorkspaceLoader {
     const flattenedTraits: Record<string, unknown> = { ...(this.rootDoc.traits ?? {}) };
     const flattenedQueries: Record<string, unknown> = {};
 
+    // A policy name claimed by more than one context is namespaced as `context.policy`.
+    // Deciding that once, before flattening, keeps the result independent of load order.
+    const policyNameClaims = new Map<string, number>();
+    for (const ctx of Object.values(loadedContexts)) {
+      for (const name of Object.keys(ctx.def.policies ?? {})) {
+        policyNameClaims.set(name, (policyNameClaims.get(name) ?? 0) + 1);
+      }
+    }
+    for (const name of Object.keys(this.rootDoc.policies ?? {})) {
+      policyNameClaims.set(name, (policyNameClaims.get(name) ?? 0) + 1);
+    }
+    const sharedPolicyNames = new Set(
+      [...policyNameClaims.entries()].filter(([, count]) => count > 1).map(([name]) => name),
+    );
+
     for (const ctx of Object.values(loadedContexts)) {
       if (ctx.def.entities) {
         Object.assign(flattenedEntities, ctx.def.entities);
@@ -116,7 +131,7 @@ export class WorkspaceLoader {
         Object.assign(flattenedEvents, ctx.def.events);
       }
       if (ctx.def.policies) {
-        Object.assign(flattenedPolicies, ctx.def.policies);
+        Object.assign(flattenedPolicies, this.policyKeys(ctx.name, ctx.def.policies, sharedPolicyNames));
       }
       if (ctx.def.decisions) {
         Object.assign(flattenedDecisions, ctx.def.decisions);
@@ -139,6 +154,32 @@ export class WorkspaceLoader {
       flattenedTraits,
       flattenedQueries,
     };
+  }
+
+  /**
+   * Policies are flat in the IR but owned by a context, and two contexts may name their
+   * policy the same thing (billing and inventory both want `onOrderPlaced`). A name claimed
+   * by one context keeps its bare form; a shared name becomes `context.policy`, so no
+   * context can silently overwrite another's reaction.
+   */
+  private policyKeys(
+    contextName: string,
+    policies: Record<string, unknown>,
+    sharedNames: Set<string>,
+  ): Record<string, unknown> {
+    const seen = new Set<string>();
+    const keyed: Record<string, unknown> = {};
+
+    for (const [name, policy] of Object.entries(policies)) {
+      let key = sharedNames.has(name) ? `${contextName}.${name}` : name;
+      while (seen.has(key)) {
+        key = `${key}~`;
+      }
+      seen.add(key);
+      keyed[key] = policy;
+    }
+
+    return keyed;
   }
 
   private loadContextDefinition(contextDir: string, contextName: string): ContextDefinition | undefined {

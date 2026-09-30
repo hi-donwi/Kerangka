@@ -45,9 +45,13 @@ describe("Workspace Compiler - Multi-Context Compilation", () => {
     expect(kir.events!.OrderCancelled).toBeDefined();
     expect(kir.events!.InvoicePaid).toBeDefined();
 
-    // Policies must be aggregated
+    // Policies must be aggregated; two contexts named theirs the same, so each keeps a
+    // namespaced key instead of one overwriting the other.
     expect(kir.policies).toBeDefined();
-    expect(kir.policies!.onOrderPlaced).toBeDefined();
+    expect(Object.keys(kir.policies!).sort()).toEqual([
+      "billing.onOrderPlaced",
+      "inventory.onOrderPlaced",
+    ]);
   });
 
   it("detects dependency cycles between contexts (DEPENDENCY_CYCLE)", () => {
