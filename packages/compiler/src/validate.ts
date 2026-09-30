@@ -179,16 +179,29 @@ export class ModelValidator {
       }
 
       const statement = entry as Record<string, unknown>;
-      const key = Object.keys(statement)[0];
-      if (!key || !STATEMENT_KEYS.has(key)) {
+      const written = Object.keys(statement);
+      // A statement is identified by its verb, not by the order the JSON happens to
+      // list it in: `{"args": {}, "call": "x"}` is the same statement as the reverse.
+      const verbs = written.filter((k) => STATEMENT_KEYS.has(k));
+      if (verbs.length === 0) {
         this.report({
           code: "STATEMENT_UNKNOWN",
-          message: `Unknown statement \`${key ?? "(empty)"}\`.`,
+          message: `Unknown statement \`${written[0] ?? "(empty)"}\`.`,
           path: atPath,
           hint: `Use one of: ${[...STATEMENT_KEYS].join(", ")}.`,
         });
         return;
       }
+      if (verbs.length > 1) {
+        this.report({
+          code: "SCHEMA_INVALID",
+          message: `A statement has one verb, but '${verbs.join("', '")}' were written.`,
+          path: atPath,
+          hint: "Split them into two statements, one verb each.",
+        });
+        return;
+      }
+      const key = verbs[0];
 
       if (key === "create" && statement.create && typeof statement.create === "object") {
         const target = (statement.create as { entity?: string }).entity;

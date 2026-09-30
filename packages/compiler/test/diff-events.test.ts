@@ -54,7 +54,9 @@ describe("event payload changes", () => {
 
     const change = result.changes.find((c) => c.path === "events.OrderPlaced.amount");
     expect(change?.classification).toBe("breaking");
-    expect(change?.hint).toContain("Stop emitting the field");
+    // One field-map comparison serves columns, payloads, and action input, so the
+    // hint speaks about the producer that sends the field rather than one shape.
+    expect(change?.hint).toContain("Stop sending the field");
   });
 
   it("adding a required field without a default is breaking, with the two-phase hint", () => {
