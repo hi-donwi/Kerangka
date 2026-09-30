@@ -1,5 +1,5 @@
 /**
- * Kerangka CLI - openapi command
+ * Kerangka CLI - asyncapi command
  * Specification Version: 0.1
  * Status: Draft
  * License: Apache-2.0
@@ -7,10 +7,18 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { compile, generateOpenAPI } from "@kerangka/compiler";
+import { compile, generateAsyncAPI } from "@kerangka/compiler";
 import { resolveTargetFile } from "../target.js";
 
-export function openapiCommand(filePath: string, output?: string): boolean {
+export interface AsyncAPICommandOptions {
+  output?: string;
+  broker?: "kafka" | "amqp" | "nats" | "websocket";
+  host?: string;
+  topic?: string;
+}
+
+/** `keranga emit asyncapi` — the event contract a consumer subscribes to (PLAN.md §11 L0). */
+export function asyncapiCommand(filePath: string, options: AsyncAPICommandOptions = {}): boolean {
   try {
     // A workspace directory resolves to its manifest, the same as every other command.
     const fullPath = resolveTargetFile(filePath);
@@ -21,24 +29,28 @@ export function openapiCommand(filePath: string, output?: string): boolean {
 
     const source = fs.readFileSync(fullPath, "utf-8");
     const kir = compile(source, { sourcePath: fullPath });
-    const openapi = generateOpenAPI(kir);
-    const formatted = JSON.stringify(openapi, null, 2);
+    const document = generateAsyncAPI(kir, {
+      broker: options.broker,
+      host: options.host,
+      topic: options.topic,
+    });
+    const formatted = JSON.stringify(document, null, 2);
 
-    if (output && output !== "-") {
-      const outPath = path.resolve(process.cwd(), output);
+    if (options.output && options.output !== "-") {
+      const outPath = path.resolve(process.cwd(), options.output);
       const outDir = path.dirname(outPath);
       if (!fs.existsSync(outDir)) {
         fs.mkdirSync(outDir, { recursive: true });
       }
       fs.writeFileSync(outPath, formatted, "utf-8");
-      console.log(`Generated OpenAPI 3.1 specification at ${output}`);
+      console.log(`Generated AsyncAPI 3.0 specification at ${options.output}`);
     } else {
       console.log(formatted);
     }
 
     return true;
   } catch (err: any) {
-    console.error(`Error generating OpenAPI specification: ${err.message}`);
+    console.error(`Error generating AsyncAPI specification: ${err.message}`);
     return false;
   }
 }

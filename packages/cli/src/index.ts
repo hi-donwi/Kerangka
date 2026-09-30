@@ -16,6 +16,7 @@ export * from "./commands/expand.js";
 export * from "./commands/stats.js";
 export * from "./commands/test.js";
 export * from "./commands/openapi.js";
+export * from "./commands/asyncapi.js";
 export * from "./commands/graphql.js";
 export * from "./commands/mcp.js";
 export * from "./commands/uidl.js";

@@ -12,6 +12,7 @@ export * from "./compiler.js";
 export * from "./ddl/generator.js";
 export * from "./ddl/diff.js";
 export * from "./projections/openapi.js";
+export * from "./projections/asyncapi.js";
 export * from "./projections/graphql.js";
 export * from "./projections/mcp.js";
 export * from "./projections/uidl.js";
@@ -26,6 +27,7 @@ export * from "./packages/index.js";
 import { Compiler } from "./compiler.js";
 import { DDLGenerator, DDLOptions } from "./ddl/generator.js";
 import { OpenAPIGenerator, OpenAPIOptions } from "./projections/openapi.js";
+import { AsyncAPIGenerator, AsyncAPIOptions } from "./projections/asyncapi.js";
 import { GraphQLGenerator } from "./projections/graphql.js";
 import { McpGenerator, McpToolDefinition } from "./projections/mcp.js";
 import { UIDLGenerator, UIDLDocument } from "./projections/uidl.js";
@@ -65,6 +67,13 @@ export function diffDatabaseSchema(
  */
 export function generateOpenAPI(kir: KIRDocument, options?: OpenAPIOptions): Record<string, unknown> {
   return OpenAPIGenerator.generate(kir, options);
+}
+
+/**
+ * Generates an AsyncAPI 3.0 document describing the events this model emits.
+ */
+export function generateAsyncAPI(kir: KIRDocument, options?: AsyncAPIOptions): Record<string, unknown> {
+  return AsyncAPIGenerator.generate(kir, options);
 }
 
 /**

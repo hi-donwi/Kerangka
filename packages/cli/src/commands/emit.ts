@@ -7,6 +7,7 @@
 
 import { composeCommand, type ComposeCommandOptions } from "./compose.js";
 import { openapiCommand } from "./openapi.js";
+import { asyncapiCommand, type AsyncAPICommandOptions } from "./asyncapi.js";
 import { graphqlCommand } from "./graphql.js";
 import { mcpCommand } from "./mcp.js";
 import { uidlCommand } from "./uidl.js";
@@ -18,6 +19,9 @@ export interface EmitCommandOptions extends ComposeCommandOptions {
   dialect?: string;
   packageName?: string;
   target?: string;
+  broker?: "kafka" | "amqp" | "nats" | "websocket";
+  host?: string;
+  topic?: string;
 }
 
 export function emitCommand(
@@ -31,6 +35,14 @@ export function emitCommand(
 
     case "openapi":
       return openapiCommand(filePath, options.output);
+
+    case "asyncapi":
+      return asyncapiCommand(filePath, {
+        output: options.output,
+        broker: options.broker as AsyncAPICommandOptions["broker"],
+        host: options.host,
+        topic: options.topic,
+      });
 
     case "graphql":
       return graphqlCommand(filePath, options.output);

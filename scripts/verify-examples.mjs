@@ -1,8 +1,10 @@
 /**
- * Verify every shipped example: compile it, then run its declarative examples.
+ * Verify every shipped example: compile it, verify it, run its declarative examples,
+ * and emit every L0 contract from it.
  *
  * PLAN.md §23 task 10 requires `kerangka check` and `kerangka test` on every example
- * in CI. This is that gate, runnable locally with `npm run examples:verify`.
+ * in CI. This is that gate, runnable locally with `npm run examples:verify`. The
+ * emitters are part of it: a contract that only works on one model is not a contract.
  *
  * Usage: node scripts/verify-examples.mjs [examplesDir]
  * Requires a build first (`npm run build`).
@@ -30,13 +32,18 @@ if (targets.length === 0) {
   process.exit(1);
 }
 
+/** Contracts a model must be able to emit. `-` writes to stdout, which is discarded. */
+const EMIT_TARGETS = ["openapi", "asyncapi", "sql:postgres", "sql:sqlite"];
+
 let failures = 0;
 for (const target of targets) {
   const label = target.slice(examplesDir.length + 1);
   const checked = cli.checkCommand(target);
   const verified = cli.verifyCommand(target);
   const tested = cli.testCommand(target);
-  if (!checked || !verified || !tested) {
+  const contracts = EMIT_TARGETS.map((emitter) => cli.emitCommand(emitter, target, { output: "-" }));
+
+  if (!checked || !verified || !tested || contracts.some((ok) => !ok)) {
     failures += 1;
     console.error(`FAIL ${label}`);
   } else {

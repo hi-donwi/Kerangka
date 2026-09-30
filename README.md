@@ -84,6 +84,10 @@ kerangka emit compose examples/invoicing.kerangka.json -o docker-compose.yml
 kerangka emit openapi examples/invoicing.kerangka.json -o openapi.json
 kerangka emit sql:postgres examples/invoicing.kerangka.json -o schema.sql
 
+# The event contract a consumer subscribes to (AsyncAPI 3.0, CloudEvents payloads)
+kerangka emit asyncapi examples/commerce -o asyncapi.json
+kerangka emit asyncapi examples/invoicing.kerangka.json --broker nats --host events:4222
+
 # Launch zero-config dev server with interactive playground
 kerangka dev examples/invoicing.kerangka.json --port 3000
 ```

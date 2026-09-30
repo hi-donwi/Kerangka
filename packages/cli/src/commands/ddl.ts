@@ -6,6 +6,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { compile, CompilerError, generateDDL, SQLDialect } from "@kerangka/compiler";
+import { resolveTargetFile } from "../target.js";
 
 export interface DDLCommandOptions {
   dialect?: string;
@@ -16,8 +17,10 @@ export interface DDLCommandOptions {
 
 export function ddlCommand(filePath: string, options: DDLCommandOptions = {}): boolean {
   try {
-    const raw = readFileSync(filePath, "utf8");
-    const kir = compile(raw, { sourcePath: filePath });
+    // A workspace directory resolves to its manifest, the same as every other command.
+    const target = resolveTargetFile(filePath);
+    const raw = readFileSync(target, "utf8");
+    const kir = compile(raw, { sourcePath: target });
 
     const dialect = (options.dialect?.toLowerCase() ?? "postgres") as SQLDialect;
     if (dialect !== "postgres" && dialect !== "sqlite") {
