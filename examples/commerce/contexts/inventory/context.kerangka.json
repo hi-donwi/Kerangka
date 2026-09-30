@@ -40,6 +40,7 @@
       "on": "orders.OrderPlaced",
       "run": "StockReservation.create",
       "with": {
+        "id": "concat('res-', event.data.orderId)",
         "orderId": "event.data.orderId",
         "status": "active",
         "reservedAt": "now()"

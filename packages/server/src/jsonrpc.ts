@@ -227,6 +227,61 @@ function invoke(engine: Engine, store: SessionStore, method: string, params: Rec
       return engine.react(event as never);
     }
 
+    case "handle": {
+      // The host loop PLAN.md 7.4 leaves open: react, then run what the policies chose,
+      // applying the effects. Idempotency keys make at-least-once delivery safe.
+      const event = params.event;
+      if (typeof event !== "object" || event === null || Array.isArray(event)) {
+        throw failure(INVALID_PARAMS, "Missing required parameter 'event'");
+      }
+      const actor = optionalObject(params, "actor") as never;
+      const reaction = engine.react(event as never);
+      const runs: unknown[] = [];
+      const skipped: string[] = [];
+      const failed: { action: string; code?: string; error?: string }[] = [];
+
+      for (const invocation of reaction.invocations) {
+        const key = invocation.idempotencyKey;
+        if (key && !store.claim(key)) {
+          skipped.push(invocation.policy);
+          continue;
+        }
+
+        // A create action has no aggregate yet: the policy bindings are its record.
+        const record =
+          invocation.targetId && store.get(invocation.action.split(".")[0] ?? "", invocation.targetId)
+            ? (store.get(invocation.action.split(".")[0] ?? "", invocation.targetId) as Record<
+                string,
+                unknown
+              >)
+            : { ...invocation.input };
+
+        const result = engine.run(invocation.action, record, invocation.input, actor);
+        if (result.ok) {
+          store.applyEffects(invocation.action.split(".")[0] ?? "", result.effects, result.events);
+          runs.push({ policy: invocation.policy, action: invocation.action, result });
+        } else {
+          failed.push({
+            action: invocation.action,
+            code: result.code,
+            error: result.error,
+          });
+        }
+      }
+
+      return {
+        handled: reaction.handled,
+        invocations: reaction.invocations,
+        runs,
+        skipped,
+        failed,
+      };
+    }
+
+    case "claims": {
+      return { claims: store.claims() };
+    }
+
     case "clear": {
       store.clear();
       return { cleared: true };

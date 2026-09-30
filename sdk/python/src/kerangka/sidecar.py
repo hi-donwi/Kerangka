@@ -199,6 +199,22 @@ class Sidecar:
     def events(self, type: Optional[str] = None) -> List[Dict[str, Any]]:  # noqa: A002
         return self.call("events", type=type)["events"]
 
+    def handle(
+        self,
+        event: Dict[str, Any],
+        actor: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """The host loop for policies: react, run what they chose, store the effects.
+
+        Returns the invocations, the runs that succeeded, the policies skipped because
+        their idempotency key was already claimed, and the ones that refused.
+        """
+        return self.call("handle", event=event, actor=actor)
+
+    def claims(self) -> List[str]:
+        """Idempotency keys this session has already honoured."""
+        return self.call("claims")["claims"]
+
     def clear(self) -> None:
         self.call("clear")
 

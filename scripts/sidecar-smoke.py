@@ -102,11 +102,17 @@ def main() -> int:
         check("an id the session never saw reads as null",
               kerangka.get("Invoice", "inv-py-never") is None)
 
+        # A created aggregate is addressable, so the host can read it back. The policy
+        # ids exist for the same reason: the store addresses by id or not at all.
+        check("claims start empty", kerangka.claims() == [], f"claims={kerangka.claims()}")
+
         try:
             kerangka.call("teleport")
             check("an unknown method raises", False, "no error raised")
         except SidecarError as err:
             check("an unknown method raises", err.code == -32601, f"code={err.code}")
+
+    drive_policies()
 
     print()
     if failures:
@@ -114,6 +120,58 @@ def main() -> int:
         return 1
     print("all checks passed")
     return 0
+
+
+def drive_policies() -> None:
+    """Cross-context policies, driven by the same Python client.
+
+    `handle` is the host loop PLAN.md 7.4 leaves to the host: react, run what the
+    policies chose, apply the effects. A replayed event must not act twice.
+    """
+    print("\npolicy handling across contexts (commerce)\n")
+
+    with Sidecar("examples/commerce/kerangka.json", cwd=ROOT) as commerce:
+        placed = commerce.run(
+            "Order.place",
+            {
+                "id": "o-py-1",
+                "orderNumber": "ORD-PY-1",
+                "customerId": "c-1",
+                "status": "draft",
+                "lines": [{"qty": 2, "price": 100}],
+            },
+            actor={"id": "c-1", "roles": ["customer"]},
+        )
+        check("the order is placed", bool(placed.get("ok")), f"code={placed.get('code')}")
+        event = (placed.get("events") or [{}])[0]
+        check("it emitted OrderPlaced", event.get("type") == "OrderPlaced",
+              f"type={event.get('type')}")
+
+        system = {"id": "policy-runner", "roles": ["system"]}
+        handled = commerce.handle(event, actor=system)
+        actions = sorted(r["action"] for r in handled.get("runs", []))
+        check("both contexts' policies ran", actions == ["Invoice.create", "StockReservation.create"],
+              f"actions={actions}")
+
+        invoices = commerce.list("Invoice")
+        check("the billing context stored an invoice", len(invoices) == 1, f"count={len(invoices)}")
+        reservations = commerce.list("StockReservation")
+        check("the inventory context stored a reservation", len(reservations) == 1,
+              f"count={len(reservations)}")
+
+        stored_id = (invoices[0] or {}).get("id")
+        fetched = commerce.get("Invoice", stored_id) if stored_id else None
+        check("the created aggregate is addressable by id",
+              (fetched or {}).get("invoiceNumber") == "INV-o-py-1",
+              f"invoiceNumber={(fetched or {}).get('invoiceNumber')}")
+
+        replayed = commerce.handle(event, actor=system)
+        check("a replayed event runs nothing", replayed.get("runs") == [],
+              f"runs={replayed.get('runs')}")
+        check("both policies were skipped as already claimed",
+              len(replayed.get("skipped", [])) == 2, f"skipped={replayed.get('skipped')}")
+        check("the replay stored nothing new", len(commerce.list("Invoice")) == 1)
+        check("the claims are visible", len(commerce.claims()) == 2, f"claims={commerce.claims()}")
 
 
 if __name__ == "__main__":

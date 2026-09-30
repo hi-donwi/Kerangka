@@ -58,6 +58,7 @@
       "on": "orders.OrderPlaced",
       "run": "Invoice.create",
       "with": {
+        "id": "concat('inv-', event.data.orderId)",
         "invoiceNumber": "concat('INV-', event.data.orderId)",
         "orderId": "event.data.orderId",
         "customerId": "event.data.customerId",

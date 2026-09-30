@@ -29,6 +29,8 @@ export class SessionStore {
   private readonly rows = new Map<string, Map<string, StoredRecord>>();
   private readonly eventLog: CloudEvent[] = [];
   private readonly eventLogLimit: number;
+  /** Idempotency keys already honoured (PLAN.md 7.7): event id plus policy name. */
+  private readonly handled = new Set<string>();
   private revision = 0;
 
   constructor(options: SessionStoreOptions = {}) {
@@ -77,6 +79,27 @@ export class SessionStore {
     }
   }
 
+  /**
+   * Claim an idempotency key. The first claim wins; a replay of the same event against
+   * the same policy is told it was already handled, which is what makes at-least-once
+   * delivery safe (PLAN.md 7.7).
+   */
+  claim(idempotencyKey: string): boolean {
+    if (this.handled.has(idempotencyKey)) {
+      return false;
+    }
+    this.handled.add(idempotencyKey);
+    return true;
+  }
+
+  hasClaimed(idempotencyKey: string): boolean {
+    return this.handled.has(idempotencyKey);
+  }
+
+  claims(): string[] {
+    return [...this.handled];
+  }
+
   /** Write a record directly, for a host seeding the session or a test. */
   put(entity: string, record: Record<string, unknown>): StoredRecord {
     const id = record.id;
@@ -117,6 +140,7 @@ export class SessionStore {
   clear(): void {
     this.rows.clear();
     this.eventLog.length = 0;
+    this.handled.clear();
   }
 
   /** A snapshot for `describe`, so a client can see what the session holds. */
@@ -126,5 +150,14 @@ export class SessionStore {
       if (table.size > 0) out[entity] = table.size;
     }
     return out;
+  }
+
+  /** A snapshot a client can read to see what the session holds. */
+  snapshot(): { entities: Record<string, number>; events: number; claims: string[] } {
+    return {
+      entities: this.summary(),
+      events: this.eventLog.length,
+      claims: this.claims(),
+    };
   }
 }

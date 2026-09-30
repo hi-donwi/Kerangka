@@ -64,11 +64,26 @@ run stores nothing.
 
 | Method | Purpose |
 |---|---|
+| `handle(event, actor)` | The host loop: react, run the policies, apply the effects |
+| `claims()` | Idempotency keys this session already honoured |
 | `get(entity, id)` | The stored aggregate, or `None` |
 | `list(entity)` | Every stored aggregate of an entity |
 | `put(entity, record)` | Seed a record, computed the way the engine computes it |
 | `events(type=None)` | Events emitted this session |
 | `clear()` | Forget the session |
+
+`handle` is the loop PLAN.md §7.4 leaves to the host. Each policy invocation carries an
+idempotency key (event id plus policy name), and the session claims it, so a redelivered
+event runs nothing the second time:
+
+```python
+handled = kerangka.handle(event, actor={"id": "policy-runner", "roles": ["system"]})
+handled["runs"]       # the policy actions that succeeded
+handled["skipped"]    # already claimed by an earlier delivery
+handled["failed"]     # refused, with their domain code
+```
+
+An aggregate a policy creates needs an `id`, or the host cannot address what it stored.
 
 These are sidecar methods, not Runtime API ones: a native engine stays pure, and a real
 deployment brings its own database. The store is in memory, per sidecar process.

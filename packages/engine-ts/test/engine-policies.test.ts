@@ -60,6 +60,8 @@ describe("Policies across contexts", () => {
 
     const invoice = reaction.invocations.find((i) => i.action === "Invoice.create");
     expect(invoice?.input).toEqual({
+      // The policy names an id so the created aggregate is addressable by the host.
+      id: "inv-o-1",
       invoiceNumber: "INV-o-1",
       orderId: "o-1",
       customerId: "c-1",
