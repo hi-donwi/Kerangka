@@ -330,6 +330,32 @@ function invoke(engine: Engine, store: SessionStore, method: string, params: Rec
       return { entry };
     }
 
+    case "pendingEffects": {
+      // Calls, notifications, and timers: the host's work, queued in the same commit
+      // as the write that caused it. The sidecar performs none of them.
+      const type = typeof params.type === "string" ? params.type : undefined;
+      return { entries: store.pendingEffects(type) };
+    }
+
+    case "ackEffect": {
+      const id = requireString(params, "id");
+      const entry = store.ackEffect(id);
+      if (!entry) {
+        throw failure(INVALID_PARAMS, `No pending effect '${id}'`);
+      }
+      return { entry };
+    }
+
+    case "nackEffect": {
+      const id = requireString(params, "id");
+      const error = typeof params.error === "string" ? params.error : undefined;
+      const entry = store.nackEffect(id, error);
+      if (!entry) {
+        throw failure(INVALID_PARAMS, `No pending effect '${id}'`);
+      }
+      return { entry };
+    }
+
     case "claims": {
       return { claims: store.claims() };
     }

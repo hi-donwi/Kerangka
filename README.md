@@ -26,6 +26,7 @@ across stacks.
 
 ## Features
 
+- **Sidecar Host Boundary:** The sidecar is the smallest honest host: a run's aggregates, events, and host effects commit together, events wait in an outbox until acknowledged, and a `call`, notification, or timer is queued for the host to perform rather than dropped. The store performs nothing itself — it cannot know what "delivered" means.
 - **Pure Reference Engine:** Executes computations, rules, invariants, and state transitions deterministically without direct I/O.
 - **Effective-Dated Rules:** A rate or fee that changes over time keeps its history: `versions` with `validFrom`/`validTo` on a rule or a decision table, the period chosen by the field the model names (PLAN.md §5.12). A record from 2026 is decided with the 2026 rules, and `keranga verify` reports periods that overlap, leave a gap, or are not oldest first.
 - **Runtime Ports & Adapters:** Pluggable store contracts (`StorePort`, `CachePort`, `BusPort`, etc.) with out-of-the-box adapters for PostgreSQL and zero-dependency SQLite (Node 22 `node:sqlite`).
@@ -108,7 +109,7 @@ kerangka dev examples/invoicing.kerangka.json --port 3000
 | Package | Path | Description |
 |---|---|---|
 | `@kerangka/k1` | `packages/k1` | Pratt expression parser, exact decimal arithmetic, three-valued logic |
-| `@kerangka/compiler` | `packages/compiler` | Shorthand expander, linter, DDL generator, OpenAPI, GraphQL, MCP, UIDL, and Compose projectors |
+| `@kerangka/compiler` | `packages/compiler` | Shorthand expander, linter, DDL generator, JSON Schema, OpenAPI, AsyncAPI, GraphQL, MCP, UIDL, and Compose projections |
 | `@kerangka/engine-ts` | `packages/engine-ts` | Pure reference execution engine in TypeScript |
 | `@kerangka/ports` | `packages/ports` | 10 runtime port contracts and memory adapters |
 | `@kerangka/client` | `packages/client` | Offline-first client runtime, mutation outbox, and action replay sync |

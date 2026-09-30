@@ -42,6 +42,21 @@ export interface OutboxEntry {
   enqueuedAtRevision: number;
 }
 
+/**
+ * One effect the host has to perform: a call, a notification, a timer. The store
+ * never performs them — it cannot know what "delivered" means — but it queues them
+ * the way it queues events, so a host that fails to dispatch one finds it still
+ * waiting rather than gone.
+ */
+export interface HostEffectEntry {
+  id: string;
+  effect: Effect;
+  attempts: number;
+  state: "pending" | "delivered";
+  lastError?: string;
+  enqueuedAtRevision: number;
+}
+
 /** Raised when an execution's effects cannot be applied; nothing was written. */
 export class EffectApplicationError extends Error {
   readonly code = "EFFECTS_NOT_APPLIED";
@@ -60,6 +75,8 @@ export interface CommitReport {
   persisted: number;
   /** Events queued in the outbox. */
   enqueued: number;
+  /** Effects queued for the host to perform: calls, notifications, timers. */
+  queuedEffects: number;
   /** Aggregate identifiers written, for a caller that wants to read one back. */
   ids: string[];
 }
@@ -72,6 +89,7 @@ export interface SessionStoreOptions {
 export class SessionStore {
   private readonly rows = new Map<string, Map<string, StoredRecord>>();
   private readonly outbox = new Map<string, OutboxEntry>();
+  private readonly hostEffects = new Map<string, HostEffectEntry>();
   private readonly outboxLimit: number;
   /** Idempotency keys already honoured (PLAN.md 7.7): event id plus policy name. */
   private readonly handled = new Set<string>();
@@ -93,17 +111,27 @@ export class SessionStore {
   /**
    * Apply the effects of a successful execution as one commit.
    *
-   * A `persist` writes an aggregate and an `emit` queues its event; every other effect
-   * type is the host's business (mail, timers, external calls) and is dropped here.
+   * A `persist` writes an aggregate, an `emit` queues its event, and everything else
+   * (a call, a notification, a timer) is queued for the host to perform. The store
+   * performs nothing itself — it cannot know what "delivered" means — but it does not
+   * drop them either: a host that fails to dispatch one finds it still waiting.
+   *
    * Staging first is what makes this a commit: nothing is written until every aggregate
    * in the batch is known to be storable, so a bad effect cannot leave half a run
    * behind.
    */
   applyEffects(entity: string, effects: Effect[] | undefined, events: CloudEvent[] | undefined): CommitReport {
     const staged: { entity: string; id: string; record: Record<string, unknown> }[] = [];
+    // A call, a notification, a timer: the host's work, queued in the same commit as
+    // the write that caused it, so the two cannot come apart.
+    const dispatch: Effect[] = [];
 
     for (const effect of effects ?? []) {
-      if (effect.type !== "persist") continue;
+      if (effect.type !== "persist") {
+        // The event itself is queued from the run's events, not from its effect.
+        if (effect.type !== "emit") dispatch.push(effect);
+        continue;
+      }
       const target = effect.entity ?? entity;
       const record = effect.record;
       if (!record) continue;
@@ -120,8 +148,8 @@ export class SessionStore {
     }
 
     const queued = events ?? [];
-    if (staged.length === 0 && queued.length === 0) {
-      return { persisted: 0, enqueued: 0, ids: [] };
+    if (staged.length === 0 && queued.length === 0 && dispatch.length === 0) {
+      return { persisted: 0, enqueued: 0, queuedEffects: 0, ids: [] };
     }
 
     const revision = this.revision;
@@ -142,14 +170,26 @@ export class SessionStore {
     for (const row of writes) {
       this.table(row.entity).set(row.id, { ...row, revision: this.revision });
     }
+    const nextRevision = this.revision;
+    const hostEntries = dispatch.map((effect, index) => ({
+      id: `effect-${nextRevision + 1}-${index}`,
+      effect,
+      attempts: 0,
+      state: "pending" as const,
+      enqueuedAtRevision: nextRevision + 1,
+    }));
     for (const { entry } of entries) {
       this.outbox.set(entry.id, entry);
+    }
+    for (const entry of hostEntries) {
+      this.hostEffects.set(entry.id, entry);
     }
     this.trimOutbox();
 
     return {
       persisted: writes.length,
       enqueued: entries.length,
+      queuedEffects: hostEntries.length,
       ids: writes.map((w) => w.id),
     };
   }
@@ -266,6 +306,45 @@ export class SessionStore {
     return type ? events.filter((e) => e.type === type) : events;
   }
 
+  // -- Host effects -----------------------------------------------------------
+
+  /**
+   * Effects still waiting for a host to perform them, oldest first: a `call` to an
+   * extension, a notification, a scheduled timer.
+   */
+  pendingEffects(type?: string): HostEffectEntry[] {
+    return [...this.hostEffects.values()]
+      .filter((entry) => entry.state === "pending")
+      .filter((entry) => (type ? entry.effect.type === type : true))
+      .sort((a, b) => a.enqueuedAtRevision - b.enqueuedAtRevision);
+  }
+
+  /** The host performed the effect. Kept as history, like a delivered event. */
+  ackEffect(id: string): HostEffectEntry | null {
+    const entry = this.hostEffects.get(id);
+    if (!entry) return null;
+    entry.state = "delivered";
+    entry.lastError = undefined;
+    return entry;
+  }
+
+  /**
+   * The host could not perform the effect. It stays pending to be retried, and the
+   * attempt is counted so a host can alert instead of retrying forever in silence.
+   */
+  nackEffect(id: string, error?: string): HostEffectEntry | null {
+    const entry = this.hostEffects.get(id);
+    if (!entry) return null;
+    entry.state = "pending";
+    entry.attempts += 1;
+    if (error !== undefined) entry.lastError = error;
+    return entry;
+  }
+
+  hostEffect(id: string): HostEffectEntry | null {
+    return this.hostEffects.get(id) ?? null;
+  }
+
   entities(): string[] {
     return [...this.rows.keys()].filter((entity) => (this.rows.get(entity)?.size ?? 0) > 0);
   }
@@ -273,6 +352,7 @@ export class SessionStore {
   clear(): void {
     this.rows.clear();
     this.outbox.clear();
+    this.hostEffects.clear();
     this.handled.clear();
   }
 

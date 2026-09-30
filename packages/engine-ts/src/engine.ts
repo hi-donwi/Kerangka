@@ -1178,13 +1178,15 @@ export class Engine {
       }
 
       if (statement.call) {
+        // `with` is the spelling the spec and every example use (spec/semantics/cells.md);
+        // `input` is accepted for a host that builds statements programmatically. Reading
+        // only `input` dropped the declared argument of every extension call in the
+        // spec's own example.
+        const args = statement.with ?? statement.input ?? {};
         ctx.effects.push({
           type: "call",
           extension: String(statement.call),
-          input: this.resolveCell(statement.input ?? {}, ctx.record, cellScope) as Record<
-            string,
-            unknown
-          >,
+          input: this.resolveCell(args, ctx.record, cellScope) as Record<string, unknown>,
         });
         continue;
       }

@@ -50,11 +50,21 @@ describe("a commit, or nothing", () => {
     const { store, call } = session();
 
     const sent = call("run", { action: "Invoice.send", record: draft, actor: billing });
-    const commit = (sent as { commit: { persisted: number; enqueued: number; ids: string[] } }).commit;
+    const commit = (sent as {
+      commit: { persisted: number; enqueued: number; queuedEffects: number; ids: string[] };
+    }).commit;
 
-    expect(commit).toEqual({ persisted: 1, enqueued: 1, ids: ["inv-outbox-1"] });
+    // The transition also calls the sendInvoiceEmail extension, so the commit carries
+    // a third number: the work queued for the host.
+    expect(commit).toEqual({
+      persisted: 1,
+      enqueued: 1,
+      queuedEffects: 1,
+      ids: ["inv-outbox-1"],
+    });
     expect(store.get("Invoice", "inv-outbox-1")?.status).toBe("sent");
     expect(store.pending()).toHaveLength(1);
+    expect(store.pendingEffects()).toHaveLength(1);
   });
 
   it("writes neither half when one aggregate cannot be stored", () => {

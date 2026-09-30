@@ -223,6 +223,23 @@ class Sidecar:
         """Delivery failed: the entry stays queued to be retried."""
         return self.call("nack", id=entry_id, error=error)["entry"]
 
+    def pending_effects(self, type: Optional[str] = None) -> List[Dict[str, Any]]:  # noqa: A002
+        """Effects the host has to perform: calls, notifications, timers.
+
+        The sidecar performs none of them — it cannot know what "delivered" means —
+        but it queues them in the same commit as the write that caused them, so a
+        dispatch that fails leaves the effect waiting to be retried.
+        """
+        return self.call("pendingEffects", type=type)["entries"]
+
+    def ack_effect(self, entry_id: str) -> Dict[str, Any]:
+        """Tell the sidecar a queued effect was performed."""
+        return self.call("ackEffect", id=entry_id)["entry"]
+
+    def nack_effect(self, entry_id: str, error: Optional[str] = None) -> Dict[str, Any]:
+        """The effect could not be performed: it stays queued to be retried."""
+        return self.call("nackEffect", id=entry_id, error=error)["entry"]
+
     def claims(self) -> List[str]:
         """Idempotency keys this session has already honoured."""
         return self.call("claims")["claims"]

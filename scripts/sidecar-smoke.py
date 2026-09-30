@@ -121,6 +121,28 @@ def main() -> int:
         check("history keeps the delivered event",
               len(kerangka.events("InvoiceSent")) == 1)
 
+        # The host's work: the send transition calls the sendInvoiceEmail extension,
+        # and the sidecar queues that call rather than dropping it. Nothing performed
+        # it — a sidecar cannot know what "delivered" means — but a host that fails to
+        # dispatch finds it still waiting, with the invoice id it declared.
+        pending = kerangka.pending_effects()
+        check("the extension call waits for the host", len(pending) == 1,
+              f"pending={[e['effect']['type'] for e in kerangka.pending_effects()]}")
+        call_effect = (pending[0]["effect"] if pending else {})
+        check("the queued call names its extension",
+              call_effect.get("extension") == "sendInvoiceEmail",
+              f"extension={call_effect.get('extension')}")
+        check("the queued call carries the argument the model declared",
+              (call_effect.get("input") or {}).get("invoice") == "inv-py-1",
+              f"input={call_effect.get('input')}")
+        check("a failed dispatch leaves it queued and counts the attempt",
+              (lambda e: e["attempts"] == 1 and e["state"] == "pending")(
+                  kerangka.nack_effect(pending[0]["id"], "smtp unreachable")))
+        check("a performed effect leaves the queue",
+              kerangka.ack_effect(pending[0]["id"])["state"] == "delivered"
+              if pending else False)
+        check("nothing is left to perform", kerangka.pending_effects() == [])
+
         try:
             kerangka.call("teleport")
             check("an unknown method raises", False, "no error raised")
