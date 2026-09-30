@@ -6,20 +6,22 @@
 import { readFileSync } from "node:fs";
 import { compile, CompilerError } from "@kerangka/compiler";
 import { DeclarativeExample, loadEngine } from "@kerangka/engine-ts";
+import { resolveTargetFile } from "../target.js";
 
 export function testCommand(filePath: string): boolean {
+  const targetFile = resolveTargetFile(filePath);
   try {
-    const raw = readFileSync(filePath, "utf8");
-    const kir = compile(raw, { sourcePath: filePath });
+    const raw = readFileSync(targetFile, "utf8");
+    const kir = compile(raw, { sourcePath: targetFile });
 
     const examples = (kir.examples ?? []) as DeclarativeExample[];
     if (examples.length === 0) {
-      console.log(`No declarative examples found in ${filePath}`);
+      console.log(`No declarative examples found in ${targetFile}`);
       return true;
     }
 
     const engine = loadEngine(kir);
-    console.log(`\nRunning ${examples.length} declarative example(s) for ${filePath}:`);
+    console.log(`\nRunning ${examples.length} declarative example(s) for ${targetFile}:`);
 
     let passedCount = 0;
     for (const [idx, example] of examples.entries()) {
@@ -38,7 +40,7 @@ export function testCommand(filePath: string): boolean {
     return allPassed;
   } catch (err) {
     if (err instanceof CompilerError) {
-      console.error(`ERROR: Test run failed for ${filePath}:`);
+      console.error(`ERROR: Test run failed for ${targetFile}:`);
       for (const diag of err.diagnostics) {
         console.error(`  - [${diag.code}] ${diag.message}`);
       }

@@ -3,9 +3,9 @@
  * Validates document syntax, shorthand, references, and expressions.
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { compile, CompilerDiagnostic, CompilerError, KIRDocument } from "@kerangka/compiler";
+import { resolveTargetFile } from "../target.js";
 
 export interface CheckOptions {
   /** `text` (default) for people; `json` for editors, CI, and AI agents. */
@@ -73,13 +73,3 @@ function jsonReport(filePath: string, kir: KIRDocument | undefined, diagnostics:
   };
 }
 
-function resolveTargetFile(pathStr: string): string {
-  const abs = resolve(pathStr);
-  if (existsSync(abs) && statSync(abs).isDirectory()) {
-    for (const name of ["kerangka.json", "kerangka.yaml", "kerangka.yml"]) {
-      const cand = join(abs, name);
-      if (existsSync(cand)) return cand;
-    }
-  }
-  return abs;
-}
