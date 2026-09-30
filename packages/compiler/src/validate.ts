@@ -47,10 +47,27 @@ export interface ValidationInput {
   decisions: string[];
 }
 
+/** The statement vocabulary of PLAN.md 5.6. */
+const STATEMENT_KEYS = new Set([
+  "set",
+  "append",
+  "remove",
+  "create",
+  "transition",
+  "emit",
+  "call",
+  "fail",
+  "if",
+  "timer",
+  "after",
+]);
+
 export class ModelValidator {
   private readonly entityNames: string[];
   private readonly callable: Set<string>;
   private readonly functionNames: string[];
+  /** The entity whose statements are being checked, for transition lookup. */
+  private currentEntity = "";
 
   constructor(
     private readonly model: ValidationInput,
@@ -68,6 +85,7 @@ export class ModelValidator {
   }
 
   private validateEntity(name: string, entity: CompiledEntity): void {
+    this.currentEntity = name;
     const origins = this.model.origins[name]!;
     const at = (...rest: (string | number)[]) => pointer("entities", name, ...rest);
     const scope: Scope = { label: name, fields: entity.fields };
@@ -104,14 +122,108 @@ export class ModelValidator {
         }
         this.checkExpression(value, actionScope, targetPath);
       }
+      this.checkStatements(
+        (action as { do?: unknown[] }).do ?? action.then,
+        `${at("actions", actionName, "do")}`,
+      );
     }
 
     if (entity.workflow) {
       for (const [transName, trans] of Object.entries(entity.workflow.transitions)) {
         this.checkExpression(trans.when, scope, at("workflow", "transitions", transName, "when"));
+        this.checkStatements(trans.then, `${at("workflow", "transitions", transName, "then")}`);
       }
       this.checkStates(name, entity);
     }
+  }
+
+  /**
+   * PLAN.md 5.6: the statement vocabulary is fixed, so a typo is a compile error rather
+   * than a statement the engine silently ignores. Cell values are resolved at run time by
+   * the cell rule (spec/semantics/cells.md) and are not checked here.
+   */
+  private checkStatements(statements: unknown, path: string, depth = 0): void {
+    if (statements === undefined) return;
+    if (!Array.isArray(statements)) {
+      this.report({
+        code: "SCHEMA_INVALID",
+        message: "A statement list must be an array.",
+        path,
+      });
+      return;
+    }
+    if (depth > 8) {
+      this.report({
+        code: "SCHEMA_INVALID",
+        message: "Statement lists are nested too deeply.",
+        path,
+        hint: "Reduce the nesting of `if` and `then` statements.",
+      });
+      return;
+    }
+
+    const raw = this.model.rawEntities[this.currentEntity] as
+      | { workflow?: { transitions?: Record<string, { then?: unknown[] }> } }
+      | undefined;
+    const declaredTransitions = Object.keys(raw?.workflow?.transitions ?? {});
+
+    statements.forEach((entry, index) => {
+      const atPath = `${path}/${index}`;
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        this.report({
+          code: "SCHEMA_INVALID",
+          message: "A statement must be an object.",
+          path: atPath,
+        });
+        return;
+      }
+
+      const statement = entry as Record<string, unknown>;
+      const key = Object.keys(statement)[0];
+      if (!key || !STATEMENT_KEYS.has(key)) {
+        this.report({
+          code: "STATEMENT_UNKNOWN",
+          message: `Unknown statement \`${key ?? "(empty)"}\`.`,
+          path: atPath,
+          hint: `Use one of: ${[...STATEMENT_KEYS].join(", ")}.`,
+        });
+        return;
+      }
+
+      if (key === "create" && statement.create && typeof statement.create === "object") {
+        const target = (statement.create as { entity?: string }).entity;
+        if (target && !this.entityNames.includes(target)) {
+          this.report({
+            code: "UNKNOWN_ENTITY",
+            message: `\`create\` refers to unknown entity '${target}'.`,
+            path: `${atPath}/create/entity`,
+            hint: suggestion(target, this.entityNames, "Did you mean"),
+          });
+        }
+      }
+
+      if (key === "transition" && typeof statement.transition === "string") {
+        if (!declaredTransitions.includes(statement.transition)) {
+          this.report({
+            code: "UNKNOWN_TRANSITION",
+            message: `\`transition\` refers to undeclared transition '${statement.transition}'.`,
+            path: `${atPath}/transition`,
+            hint: declaredTransitions.length
+              ? `Declared transitions: ${declaredTransitions.join(", ")}.`
+              : "This entity declares no transitions.",
+          });
+        }
+      }
+
+      const nested = statement.then as unknown[] | undefined;
+      if (nested !== undefined) {
+        this.checkStatements(nested, `${atPath}/then`, depth + 1);
+      }
+      const other = statement.else as unknown[] | undefined;
+      if (other !== undefined) {
+        this.checkStatements(other, `${atPath}/else`, depth + 1);
+      }
+    });
   }
 
   private checkFieldType(field: FieldDefinition, path: string): void {

@@ -57,21 +57,41 @@ in a scope name (`event.data.orderId`) or a call (`concat(...)`) is computed.
 
 ## 4. Statement vocabulary
 
-The statement list in `then` (workflow transitions) and `do` (actions) is fixed and small:
+The statement list in `then` (workflow transitions) and `do` (actions) is fixed and small.
+`do` and `then` are the same list; an action may use either.
 
 | Statement | Meaning |
 |---|---|
 | `{"set": {"<field>": <cell>}}` | Assign fields on the target record |
+| `{"append": {"<list>": <cell>}}` | Add one element to an embedded list |
+| `{"remove": {"<list>": <cell>}}` | Remove every element of an embedded list equal to the cell |
+| `{"create": {"entity": "X", "values": {…}}}` | Create a new aggregate in the same context, as a `persist` effect |
+| `{"transition": "<name>"}` | Run another declared transition of the same entity |
 | `{"emit": "<Event>", "data": {…}}` | Raise a declared domain event |
 | `{"call": "<extension>", "with": {…}}` | Ask the host to run a registered handler |
 | `{"fail": {"code": "…", "message": "…"}}` | Abort with an error |
+| `{"if": <cell>, "then": [...], "else": [...]}` | Branch |
+| `{"timer": "<duration>"}` / `{"after": "<duration>"}` | Schedule a follow-up action |
 
-Statements run in declaration order. A `fail` aborts the whole action: no patch, no event,
-no effect. Every other statement contributes to the record, the event stream, or the effect
-list in order.
+Statements run in declaration order, and a list may be nested inside `if` or `then`.
 
-`append`, `remove`, `create`, `transition`, and `if` are declared in PLAN.md §5.6 and are
-**not yet implemented**; until they are, a model MUST NOT rely on them.
+**Branching is fail-closed.** `true` takes `then`; `false`, `null`, and an absent value take
+`else`. Any other value — a string, a number, an object — is indeterminate: the action is
+refused with `IF_INDETERMINATE` rather than taking a branch the author did not write.
+
+**A `fail` aborts the whole action**: no patch, no event, no effect. The same holds for a
+`create` whose new aggregate does not validate, for a `transition` that is not declared, and
+for a statement key outside this table (`STATEMENT_UNKNOWN`).
+
+**A `create` is validated before it is emitted.** The values are resolved with the cell rule,
+the new aggregate is computed, and it must validate; only then does a `persist` effect leave
+the engine. Existing aggregates other than the target change only through events and
+policies (§7.4).
+
+**A `transition` statement** moves the same record through another transition of its own
+entity, including that transition's own statements. It is not a recursive workflow: an entity
+may not chain transitions into a cycle, and nesting deeper than eight levels is refused with
+`STATEMENT_TOO_DEEP`.
 
 ## 5. Why the rule is fail-safe
 

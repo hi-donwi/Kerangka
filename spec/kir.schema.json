@@ -282,6 +282,10 @@
         },
         "when": { "$ref": "#/$defs/expression" },
         "run": { "type": "object" },
+        "do": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
         "then": {
           "type": "array",
           "items": { "type": "object" }

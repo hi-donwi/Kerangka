@@ -47,6 +47,22 @@ interface NormalizedArgs {
   options: RunOptions;
 }
 
+/** How deep `if` and `transition` statements may nest before the model is refused. */
+const MAX_STATEMENT_DEPTH = 8;
+
+interface StatementContext {
+  entityName: string;
+  opName: string;
+  /** The working record, mutated in place so later statements see earlier ones. */
+  record: Record<string, unknown>;
+  workingRecord: Record<string, unknown>;
+  input: Record<string, unknown>;
+  actor?: ActorContext;
+  nowIso: string;
+  events: CloudEvent[];
+  effects: Effect[];
+}
+
 export class Engine {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly ir: any;
@@ -867,50 +883,19 @@ export class Engine {
       }
 
       if (Array.isArray(transition.then)) {
-        for (const effect of transition.then) {
-          if (effect.emit) {
-            const evtData = this.resolveEventData(effect.data, nextRecord, { now: nowIso }) as Record<
-              string,
-              unknown
-            >;
-            const ce = this.createCloudEvent(effect.emit, evtData, entityName, nextRecord, actor, options.now);
-            events.push(ce);
-            effects.push({ type: "emit", event: ce });
-          }
-          if (effect.set && typeof effect.set === "object") {
-            for (const [k, v] of Object.entries(effect.set)) {
-              nextRecord[k] = this.resolveCell(v, nextRecord, {
-                input,
-                actor,
-                now: nowIso,
-              });
-            }
-          }
-          if (effect.fail && typeof effect.fail === "object") {
-            // A declared failure aborts the whole transition: no patch, no event, no effect.
-            const declared = effect.fail as { code?: string; message?: string };
-            return {
-              ok: false,
-              error: declared.message ?? declared.code ?? "Action failed",
-              code: declared.code ?? "ACTION_FAILED",
-            };
-          }
-          if (effect.call) {
-            effects.push({ type: "call", extension: effect.call, input: effect.input ?? {} });
-          }
-          if (effect.timer || effect.after) {
-            const dur = effect.after ?? (typeof effect.timer === "string" ? effect.timer : effect.timer?.after);
-            const act = effect.action ?? `${entityName}.${opName}`;
-            if (dur) {
-              effects.push({
-                type: "timer",
-                at: addDuration(nowIso, String(dur)),
-                action: act,
-                target: recordId,
-                payload: effect.payload ?? { entity: entityName, id: recordId },
-              });
-            }
-          }
+        const applied = this.applyStatements(transition.then, {
+          entityName,
+          opName,
+          record: nextRecord,
+          workingRecord,
+          input,
+          actor,
+          nowIso,
+          events,
+          effects,
+        });
+        if (!applied.ok) {
+          return { ok: false, error: applied.error, code: applied.code };
         }
       }
     } else {
@@ -922,6 +907,26 @@ export class Engine {
             actor,
             now: nowIso,
           });
+        }
+      }
+      // An action may declare the same statement list as a transition, under `do`
+      // (PLAN.md §5.6) or `then`. `run` above stays a shorthand for a single `set`.
+      const actionStatements = (action as { do?: unknown; then?: unknown }).do ??
+        (action as { then?: unknown }).then;
+      if (Array.isArray(actionStatements)) {
+        const applied = this.applyStatements(actionStatements, {
+          entityName,
+          opName,
+          record: nextRecord,
+          workingRecord,
+          input,
+          actor,
+          nowIso,
+          events,
+          effects,
+        });
+        if (!applied.ok) {
+          return { ok: false, error: applied.error, code: applied.code };
         }
       }
       if (Array.isArray(action.emit)) {
@@ -965,6 +970,234 @@ export class Engine {
       events,
       effects,
     };
+  }
+
+  /**
+   * The statement vocabulary of PLAN.md §5.6, applied in declaration order to a
+   * transition's `then` or an action's `do`. One executor, so a nested `if` behaves
+   * exactly like the top level.
+   */
+  private applyStatements(
+    statements: unknown,
+    ctx: StatementContext,
+    depth = 0,
+  ): { ok: true } | { ok: false; error: string; code: string } {
+    if (!Array.isArray(statements) || statements.length === 0) {
+      return { ok: true };
+    }
+    if (depth > MAX_STATEMENT_DEPTH) {
+      return { ok: false, error: "Statement nesting is too deep", code: "STATEMENT_TOO_DEEP" };
+    }
+
+    for (const raw of statements) {
+      if (!raw || typeof raw !== "object") continue;
+      const statement = raw as Record<string, unknown>;
+      const cellScope = { input: ctx.input, actor: ctx.actor, now: ctx.nowIso };
+
+      if (statement.if !== undefined) {
+        const condition = this.resolveCell(statement.if, ctx.record, cellScope);
+        if (condition === true) {
+          const taken = this.applyStatements(statement.then, ctx, depth + 1);
+          if (!taken.ok) return taken;
+          continue;
+        }
+        if (condition === false || condition === null || condition === undefined) {
+          const other = this.applyStatements(statement.else, ctx, depth + 1);
+          if (!other.ok) return other;
+          continue;
+        }
+        // Fail closed: an indeterminate branch is never silently taken.
+        return {
+          ok: false,
+          error: `Branch condition did not evaluate to a boolean: ${JSON.stringify(condition)}`,
+          code: "IF_INDETERMINATE",
+        };
+      }
+
+      if (statement.set && typeof statement.set === "object") {
+        for (const [k, v] of Object.entries(statement.set as Record<string, unknown>)) {
+          ctx.record[k] = this.resolveCell(v, ctx.record, cellScope);
+        }
+        continue;
+      }
+
+      if (statement.append && typeof statement.append === "object") {
+        for (const [listField, cell] of Object.entries(statement.append as Record<string, unknown>)) {
+          const value = this.resolveCell(cell, ctx.record, cellScope);
+          const current = Array.isArray(ctx.record[listField])
+            ? [...(ctx.record[listField] as unknown[])]
+            : [];
+          ctx.record[listField] = [...current, value];
+        }
+        continue;
+      }
+
+      if (statement.remove && typeof statement.remove === "object") {
+        for (const [listField, cell] of Object.entries(statement.remove as Record<string, unknown>)) {
+          const value = this.resolveCell(cell, ctx.record, cellScope);
+          const current = Array.isArray(ctx.record[listField])
+            ? (ctx.record[listField] as unknown[])
+            : [];
+          ctx.record[listField] = current.filter((item) => !this.cellEquals(item, value));
+        }
+        continue;
+      }
+
+      if (statement.create && typeof statement.create === "object") {
+        const created = this.applyCreate(statement.create as Record<string, unknown>, ctx);
+        if (!created.ok) return created;
+        continue;
+      }
+
+      if (statement.transition && typeof statement.transition === "string") {
+        const stepped = this.applyTransitionStatement(statement.transition, ctx, depth + 1);
+        if (!stepped.ok) return stepped;
+        continue;
+      }
+
+      if (statement.emit) {
+        const evtData = this.resolveEventData(statement.data, ctx.record, {
+          now: ctx.nowIso,
+        }) as Record<string, unknown>;
+        const eventName =
+          typeof statement.emit === "string"
+            ? statement.emit
+            : String((statement.emit as Record<string, unknown>).event ?? statement.emit);
+        const ce = this.createCloudEvent(
+          eventName,
+          evtData,
+          ctx.entityName,
+          ctx.record,
+          ctx.actor,
+          ctx.nowIso,
+        );
+        ctx.events.push(ce);
+        ctx.effects.push({ type: "emit", event: ce });
+        continue;
+      }
+
+      if (statement.call) {
+        ctx.effects.push({
+          type: "call",
+          extension: String(statement.call),
+          input: this.resolveCell(statement.input ?? {}, ctx.record, cellScope) as Record<
+            string,
+            unknown
+          >,
+        });
+        continue;
+      }
+
+      if (statement.fail) {
+        // A declared failure aborts the whole action: no patch, no event, no effect.
+        const declared = (statement.fail ?? {}) as { code?: string; message?: string };
+        return {
+          ok: false,
+          error: declared.message ?? declared.code ?? "Action failed",
+          code: declared.code ?? "ACTION_FAILED",
+        };
+      }
+
+      if (statement.timer || statement.after) {
+        const dur =
+          statement.after ??
+          (typeof statement.timer === "string" ? statement.timer : (statement.timer as { after?: string })?.after);
+        const act = (statement.action as string) ?? `${ctx.entityName}.${ctx.opName}`;
+        if (dur) {
+          ctx.effects.push({
+            type: "timer",
+            at: addDuration(ctx.nowIso, String(dur)),
+            action: act,
+            target: String(ctx.record.id ?? ""),
+            payload: (statement.payload as Record<string, unknown> | undefined) ?? {
+              entity: ctx.entityName,
+              id: ctx.record.id,
+            },
+          });
+        }
+        continue;
+      }
+
+      return {
+        ok: false,
+        error: `Unknown statement: ${Object.keys(statement).join(", ")}`,
+        code: "STATEMENT_UNKNOWN",
+      };
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * `{"create": {"entity": "X", "values": {…}}}`. The new aggregate is computed and
+   * validated before it is handed to the host as a `persist` effect, so a created
+   * record is never invalid.
+   */
+  private applyCreate(
+    declared: { entity?: string; values?: Record<string, unknown> },
+    ctx: StatementContext,
+  ): { ok: true } | { ok: false; error: string; code: string } {
+    const entityName = declared.entity;
+    if (!entityName) {
+      return { ok: false, error: "create requires an entity", code: "CREATE_INVALID" };
+    }
+    if (!this.ir.entities?.[entityName]) {
+      return {
+        ok: false,
+        error: `create refers to unknown entity '${entityName}'`,
+        code: "CREATE_UNKNOWN_ENTITY",
+      };
+    }
+
+    const values: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(declared.values ?? {})) {
+      values[k] = this.resolveCell(v, ctx.record, { input: ctx.input, actor: ctx.actor, now: ctx.nowIso });
+    }
+
+    const projected = this.compute(entityName, values);
+    const validation = this.validate(entityName, projected);
+    const first = validation.errors[0];
+    if (first) {
+      return { ok: false, error: first.message, code: first.code };
+    }
+
+    ctx.effects.push({ type: "persist", entity: entityName, record: projected });
+    return { ok: true };
+  }
+
+  /**
+   * `{"transition": "<name>"}` moves the same record through another declared
+   * transition of its entity, running that transition's own statements.
+   */
+  private applyTransitionStatement(
+    name: string,
+    ctx: StatementContext,
+    depth: number,
+  ): { ok: true } | { ok: false; error: string; code: string } {
+    const entity = this.ir.entities?.[ctx.entityName];
+    const target = entity?.workflow?.transitions?.[name];
+    if (!target) {
+      return {
+        ok: false,
+        error: `Unknown transition '${name}' on entity '${ctx.entityName}'`,
+        code: "TRANSITION_UNKNOWN",
+      };
+    }
+
+    const field = entity.workflow?.field;
+    if (field && target.to) {
+      ctx.record[field] = target.to;
+    }
+    return this.applyStatements(target.then, ctx, depth);
+  }
+
+  private cellEquals(a: unknown, b: unknown): boolean {
+    if (a === b) return true;
+    if (a === null || b === null || a === undefined || b === undefined) return false;
+    if (typeof a === "object" && typeof b === "object") {
+      return JSON.stringify(a) === JSON.stringify(b);
+    }
+    return String(a) === String(b);
   }
 
   run(...args: unknown[]): ExecutionResult {

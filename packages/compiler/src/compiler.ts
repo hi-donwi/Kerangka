@@ -543,11 +543,16 @@ export class Compiler {
           }
         }
 
+        // `do` (PLAN.md 5.6) and `then` are the same statement list; cells inside it are
+        // resolved at run time by the cell rule, so the statements pass through as written.
+        const statements = (actionDef as { do?: unknown }).do ?? actionDef.then;
+
         compiledActions[actionName] = {
           ...(actionDef.roles ? { roles: actionDef.roles } : {}),
           ...(Object.keys(inputDefs).length > 0 ? { input: inputDefs } : {}),
           ...(whenAst ? { when: whenAst } : {}),
           ...(Object.keys(runAssignments).length > 0 ? { run: runAssignments } : {}),
+          ...(Array.isArray(statements) ? { then: statements } : {}),
         };
       }
     }

@@ -110,6 +110,9 @@ export interface ActionDefinition {
   input?: Record<string, FieldDefinition | string>;
   when?: ExprNode | string;
   run?: Record<string, ExprNode | string | unknown>;
+  /** The statement vocabulary of PLAN.md 5.6. `do` is the declared name; `then` is accepted. */
+  do?: unknown[];
+  then?: unknown[];
 }
 
 export interface TraitUseObject {
@@ -216,6 +219,7 @@ export interface KIRDocument {
       input?: Record<string, FieldDefinition>;
       when?: ExprNode;
       run?: Record<string, ExprNode | unknown>;
+      then?: unknown[];
     }>;
   }>;
   packages?: Record<string, string>;
