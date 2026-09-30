@@ -73,5 +73,6 @@ export interface EvalContext {
   data?: Record<string, unknown>;
   user?: Record<string, unknown>;
   now?: string | Date;
+  functions?: Record<string, (args: unknown[]) => unknown>;
   [key: string]: unknown;
 }

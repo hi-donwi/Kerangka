@@ -5,7 +5,7 @@
  * License: Apache-2.0
  */
 
-import { evaluate, ExprNode, addDuration, getNextCronRun } from "@kerangka/k1";
+import { evaluate, ExprNode, addDuration, getNextCronRun, K1EvaluationError } from "@kerangka/k1";
 import {
   ActorContext,
   AvailableOperation,
@@ -13,6 +13,8 @@ import {
   CloudEvent,
   DecisionHitPolicy,
   DecisionResult,
+  DecisionRule,
+  DecisionRow,
   DecisionTableDef,
   DeclarativeExample,
   Effect,
@@ -50,6 +52,90 @@ export class Engine {
   // ---------------------------------------------------------------------------
   // Internal Helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Canonical IR keeps decision tables as `rows` keyed by column name
+   * (ADR-0002, `spec/kir.schema.json`). Host-built tables may still pass `rules`.
+   */
+  private decisionRules(table: DecisionTableDef): DecisionRule[] {
+    if (Array.isArray(table.rules)) {
+      return table.rules;
+    }
+    const rows: DecisionRow[] = Array.isArray(table.rows) ? table.rows : [];
+    return rows.map((row, index) => ({
+      id: `row-${index + 1}`,
+      inputs: table.inputs.map((col) => {
+        const cell = row[col.name];
+        return cell === undefined || cell === null ? "-" : (cell as string | number | boolean);
+      }),
+      outputs: Object.fromEntries(
+        table.outputs.map((out) => [out.name, this.coerceCell(row[out.name], out.type)]),
+      ),
+    }));
+  }
+
+  /** A row cell is written as its literal JSON value; a CSV import may deliver a string. */
+  private coerceCell(value: unknown, type?: string): unknown {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== "string") return value;
+    const declared = (type ?? "").toLowerCase();
+    const isNumeric = /^(int|integer|number|decimal|numeric|float|double|money)/.test(declared);
+    const isBoolean = /^(bool)/.test(declared);
+    if (isNumeric && /^-?\d+(\.\d+)?$/.test(value.trim())) {
+      return Number(value.trim());
+    }
+    if (isBoolean && /^(true|false)$/i.test(value.trim())) {
+      return value.trim().toLowerCase() === "true";
+    }
+    return value;
+  }
+
+  /**
+   * Model-level functions callable from a K1 expression. Decision tables are the
+   * built-in case (PLAN.md §5.8): `compute: "approverRouting(days)"`.
+   */
+  private decisionFunctions(): Record<string, (args: unknown[]) => unknown> {
+    const tables = (this.ir.decisions ?? {}) as Record<string, DecisionTableDef>;
+    const fns: Record<string, (args: unknown[]) => unknown> = {};
+    for (const name of Object.keys(tables)) {
+      fns[name] = (args: unknown[]) => this.callDecision(name, args);
+    }
+    return fns;
+  }
+
+  private callDecision(name: string, args: unknown[]): unknown {
+    const table = (this.ir.decisions ?? {})[name] as DecisionTableDef | undefined;
+    if (!table) {
+      throw new K1EvaluationError(`Unknown decision table '${name}'`, "DECISION_UNKNOWN");
+    }
+
+    // Inputs arrive positionally and are bound in declared order (PLAN.md §5.8).
+    const input: Record<string, unknown> = {};
+    table.inputs.forEach((col, index) => {
+      input[col.name] = args[index] ?? null;
+    });
+
+    const result = this.decide(name, input);
+    if (!result.matched || !result.outputs) {
+      const code = result.code ?? "DECISION_NO_MATCH";
+      throw new K1EvaluationError(
+        `${code}: ${result.error ?? `Decision table '${name}' matched no row`}`,
+        code,
+      );
+    }
+
+    const outputs = result.outputs as Record<string, unknown>;
+    const names = table.outputs.map((out) => out.name);
+    if (names.length === 1) {
+      return outputs[names[0]!];
+    }
+    return outputs;
+  }
+
+  /** Evaluation context with the model's decision tables bound as functions. */
+  private evalContext(base: Record<string, unknown>): Record<string, unknown> {
+    return { ...base, functions: this.decisionFunctions() };
+  }
 
   private normalizeArgs(args: unknown[]): NormalizedArgs {
     const arg0 = args[0];
@@ -192,10 +278,18 @@ export class Engine {
       const f = fieldDef as any;
       if (f.compute && typeof f.compute === "object") {
         try {
-          const val = evaluate(f.compute as ExprNode, { record: result, data: result });
+          const val = evaluate(
+            f.compute as ExprNode,
+            this.evalContext({ record: result, data: result }),
+          );
           result[fieldName] = val;
-        } catch {
-          // Keep prior value if evaluation fails
+        } catch (err) {
+          // A decision table that cannot decide must fail the operation, not leave the
+          // field silently unset (ADR-0008, fail closed). Other evaluation failures keep
+          // the prior value, which is what validation then reports on.
+          if (err instanceof K1EvaluationError && err.code.startsWith("DECISION_")) {
+            throw err;
+          }
         }
       }
     }
@@ -259,7 +353,7 @@ export class Engine {
       for (const rule of entity.rules) {
         if (rule.check && typeof rule.check === "object") {
           try {
-            const passed = Boolean(evaluate(rule.check as ExprNode, { record, data: record }));
+            const passed = Boolean(evaluate(rule.check as ExprNode, this.evalContext({ record, data: record })));
             if (!passed) {
               errors.push({
                 id: rule.id,
@@ -285,7 +379,7 @@ export class Engine {
       for (const inv of entity.invariants) {
         if (inv.assert && typeof inv.assert === "object") {
           try {
-            const passed = Boolean(evaluate(inv.assert as ExprNode, { record, data: record }));
+            const passed = Boolean(evaluate(inv.assert as ExprNode, this.evalContext({ record, data: record })));
             if (!passed) {
               errors.push({
                 id: inv.id,
@@ -366,13 +460,16 @@ export class Engine {
         : new Date().toISOString();
       try {
         const passed = Boolean(
-          evaluate(opDef.when as ExprNode, {
-            record: workingRecord,
-            data: workingRecord,
-            actor,
-            input,
-            now: nowIso,
-          })
+          evaluate(
+            opDef.when as ExprNode,
+            this.evalContext({
+              record: workingRecord,
+              data: workingRecord,
+              actor,
+              input,
+              now: nowIso,
+            }),
+          )
         );
         if (!passed) {
           return {
@@ -546,7 +643,7 @@ export class Engine {
                   // Ignore
                 }
               } else if (t.timer?.at) {
-                const atVal = nextRecord[t.timer.at] ?? evaluate(t.timer.at as ExprNode, { record: nextRecord, now: nowIso });
+                const atVal = nextRecord[t.timer.at] ?? evaluate(t.timer.at as ExprNode, this.evalContext({ record: nextRecord, now: nowIso }));
                 if (atVal) {
                   triggerAt = new Date(String(atVal)).toISOString();
                 }
@@ -602,13 +699,16 @@ export class Engine {
         for (const [targetField, exprOrVal] of Object.entries(action.run)) {
           if (exprOrVal && typeof exprOrVal === "object") {
             try {
-              nextRecord[targetField] = evaluate(exprOrVal as ExprNode, {
-                record: workingRecord,
-                data: workingRecord,
-                input,
-                actor,
-                now: nowIso,
-              });
+              nextRecord[targetField] = evaluate(
+                exprOrVal as ExprNode,
+                this.evalContext({
+                  record: workingRecord,
+                  data: workingRecord,
+                  input,
+                  actor,
+                  now: nowIso,
+                }),
+              );
             } catch {
               nextRecord[targetField] = exprOrVal;
             }
@@ -916,7 +1016,7 @@ export class Engine {
 
       if (p.when && typeof p.when === "object") {
         try {
-          const passed = Boolean(evaluate(p.when as ExprNode, { event: eventData, eventMetadata: event }));
+          const passed = Boolean(evaluate(p.when as ExprNode, this.evalContext({ event: eventData, eventMetadata: event })));
           if (!passed) continue;
         } catch {
           continue;
@@ -943,7 +1043,7 @@ export class Engine {
             input[k] = (eventData as any)[path];
           } else if (v && typeof v === "object") {
             try {
-              input[k] = evaluate(v as ExprNode, { event: eventData });
+              input[k] = evaluate(v as ExprNode, this.evalContext({ event: eventData }));
             } catch {
               input[k] = v;
             }
@@ -990,7 +1090,7 @@ export class Engine {
     const hitPolicy: DecisionHitPolicy = table.hitPolicy ?? "first";
     const matchingOutputs: Record<string, unknown>[] = [];
 
-    for (const rule of table.rules) {
+    for (const rule of this.decisionRules(table)) {
       let ruleMatched = true;
 
       for (let i = 0; i < table.inputs.length; i++) {
@@ -1066,18 +1166,22 @@ export class Engine {
     }
 
     if (matchingOutputs.length === 0) {
+      const tableName = table.name || String(tableOrName);
       return {
         matched: false,
         hitCount: 0,
+        error: `Decision table '${tableName}' matched no row`,
+        code: "DECISION_NO_MATCH",
       };
     }
 
     if (hitPolicy === "unique") {
       if (matchingOutputs.length > 1) {
+        const tableName = table.name || String(tableOrName);
         return {
           matched: false,
           hitCount: matchingOutputs.length,
-          error: `Unique hit policy violated: ${matchingOutputs.length} rules matched`,
+          error: `Unique hit policy violated: ${matchingOutputs.length} rules matched in '${tableName}'`,
           code: "UNIQUE_VIOLATION",
         };
       }
@@ -1155,7 +1259,7 @@ export class Engine {
             }
           }
         } else if (t.timer?.at) {
-          const atVal = record[t.timer.at] ?? evaluate(t.timer.at as ExprNode, { record, now: nowIso });
+          const atVal = record[t.timer.at] ?? evaluate(t.timer.at as ExprNode, this.evalContext({ record, now: nowIso }));
           if (atVal) {
             triggerAtIso = new Date(String(atVal)).toISOString();
           }

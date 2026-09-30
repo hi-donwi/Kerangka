@@ -427,7 +427,14 @@ function evaluateCall(node: CallNode, ctx: EvalContext): unknown {
       return addDuration(String(left), String(right));
     }
 
-    default:
+    default: {
+      // Host-supplied functions (decision tables, extensions) are resolved last, so a
+      // built-in operator or function can never be shadowed by a model-level name.
+      const custom = ctx.functions?.[op];
+      if (custom) {
+        return custom(args.map((arg) => evaluate(arg, ctx)));
+      }
       throw new K1EvaluationError(`Unknown function or operator '${op}'`, "UNKNOWN_OPERATOR");
+    }
   }
 }

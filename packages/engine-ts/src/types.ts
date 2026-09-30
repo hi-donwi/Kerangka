@@ -151,12 +151,22 @@ export interface DecisionRule {
   description?: string;
 }
 
+export interface DecisionRow {
+  [column: string]: unknown;
+}
+
 export interface DecisionTableDef {
   name: string;
   hitPolicy?: DecisionHitPolicy;
   inputs: Array<{ name: string; type?: string }>;
   outputs: Array<{ name: string; type?: string }>;
-  rules: DecisionRule[];
+  /**
+   * Canonical form (ADR-0002, `spec/kir.schema.json`): rows keyed by column name.
+   * A compiled model always has `rows`; a host that builds a table programmatically
+   * may supply `rules` instead. Exactly one of the two is used, `rules` first.
+   */
+  rows?: DecisionRow[];
+  rules?: DecisionRule[];
 }
 
 export interface DecisionResult {
