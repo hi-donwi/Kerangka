@@ -203,5 +203,98 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     const body2 = await res2.json();
     expect(body2).toEqual(body1);
   });
-});
 
+  /**
+   * The emitted document is what a client generates code from, so it has to describe
+   * the body the server actually sends. These two sites used to disagree: both action
+   * endpoints declared `200: $ref → the entity`, while the server returns an envelope.
+   * A generated client compiled against that document and then read a field the server
+   * never sent.
+   *
+   * Comparing a live response against the document is the only form of this check that
+   * cannot go stale: it fails when either side moves, and it fails without anyone
+   * remembering that a contract exists.
+   */
+  describe("the OpenAPI document describes the response it actually returns", () => {
+    const settle = async (number: string) => {
+      const created = await fetch(`${baseUrl}/api/invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          number,
+          customer: "cust-1",
+          issuedOn: "2026-09-30",
+          dueDate: "2026-10-30",
+          status: "draft",
+          lines: [{ description: "Consulting", qty: 1, unitPrice: 100 }]
+        })
+      });
+      expect(created.status).toBe(201);
+    };
+
+    const responseSchemaFor = async (path: string) => {
+      const spec = await (await fetch(`${baseUrl}/openapi.json`)).json();
+      const schema = spec.paths?.[path]?.post?.responses?.["200"]?.content?.["application/json"]
+        ?.schema;
+      expect(schema, `no 200 schema for ${path}`).toBeDefined();
+      return schema as { properties?: Record<string, unknown>; required?: string[] };
+    };
+
+    it("declares every field a transition response carries, and nothing it does not", async () => {
+      await settle("INV-002");
+      const res = await fetch(`${baseUrl}/api/invoice/INV-002/actions/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: ["billing"] })
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      const schema = await responseSchemaFor("/api/invoice/{id}/actions/send");
+      expect(Object.keys(body).sort()).toEqual(Object.keys(schema.properties ?? {}).sort());
+      expect((schema.required ?? []).sort()).toEqual(Object.keys(body).sort());
+    });
+
+    it("describes `record` as the entity, so a client reads the stored aggregate", async () => {
+      await settle("INV-003");
+      const res = await fetch(`${baseUrl}/api/invoice/INV-003/actions/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: ["billing"] })
+      });
+      const body = await res.json();
+      const schema = await responseSchemaFor("/api/invoice/{id}/actions/send");
+
+      // The record is the aggregate after the run, so it carries the entity's fields —
+      // which is what made the old `$ref` to the entity look almost right, and wrong in
+      // the one place a client actually reads from.
+      expect(schema.properties?.record).toMatchObject({
+        $ref: "#/components/schemas/Invoice"
+      });
+      expect(body.record.status).toBe("sent");
+    });
+
+    it("describes `events` as CloudEvents, with the attributes ADR-0023 requires", async () => {
+      await settle("INV-004");
+      const res = await fetch(`${baseUrl}/api/invoice/INV-004/actions/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: ["billing"] })
+      });
+      const body = await res.json();
+      const schema = await responseSchemaFor("/api/invoice/{id}/actions/send");
+
+      const items = (schema.properties?.events as { items?: { required?: string[] } }).items;
+      expect(items?.required).toContain("specversion");
+      expect(items?.required).toContain("source");
+      expect(items?.required).toContain("data");
+
+      expect(Array.isArray(body.events)).toBe(true);
+      for (const event of body.events) {
+        for (const attribute of items?.required ?? []) {
+          expect(event, `${attribute} missing from ${event.type}`).toHaveProperty(attribute);
+        }
+      }
+    });
+  });
+});

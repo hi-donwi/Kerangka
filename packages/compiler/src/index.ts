@@ -12,6 +12,7 @@ export * from "./compiler.js";
 export * from "./ddl/generator.js";
 export * from "./ddl/diff.js";
 export * from "./projections/openapi.js";
+export * from "./projections/action-result.js";
 export * from "./projections/asyncapi.js";
 export * from "./projections/graphql.js";
 export * from "./projections/mcp.js";

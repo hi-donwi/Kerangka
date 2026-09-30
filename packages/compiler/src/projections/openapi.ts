@@ -6,6 +6,7 @@
  */
 
 import { embeddedTargetsOf, toJsonSchemaField } from "./json-schema-field.js";
+import { actionResultSchema } from "./action-result.js";
 import { FieldDefinition, KIRDocument } from "../types.js";
 
 export interface OpenAPIOptions {
@@ -247,7 +248,7 @@ export class OpenAPIGenerator {
                     description: `Transition executed successfully`,
                     content: {
                       "application/json": {
-                        schema: { $ref: `#/components/schemas/${entityName}` }
+                        schema: actionResultSchema(entityName)
                       }
                     }
                   },
@@ -301,7 +302,7 @@ export class OpenAPIGenerator {
                     description: `Action ${actionName} completed`,
                     content: {
                       "application/json": {
-                        schema: { $ref: `#/components/schemas/${entityName}` }
+                        schema: actionResultSchema(entityName)
                       }
                     }
                   },
