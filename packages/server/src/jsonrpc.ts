@@ -11,6 +11,7 @@
  */
 
 import { Engine } from "@kerangka/engine-ts";
+import { SessionStore } from "./session-store.js";
 
 export const PARSE_ERROR = -32700;
 export const INVALID_REQUEST = -32600;
@@ -83,7 +84,34 @@ export function describeApp(engine: Engine): Record<string, unknown> {
   };
 }
 
-function invoke(engine: Engine, method: string, params: Record<string, unknown>): unknown {
+/**
+ * A client may name an aggregate by `id` alone. The session store fills the record in,
+ * so a client does not ship the whole aggregate back and forth, and a run always operates
+ * on what was last stored. Anything more than an `id` is taken as written.
+ */
+function hydrate(
+  store: SessionStore,
+  action: string,
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const id = record.id;
+  if (typeof id !== "string" || id.length === 0 || Object.keys(record).length !== 1) {
+    return record;
+  }
+  // An action may be `Entity.operation` or the bare operation on one entity.
+  const [maybeEntity, maybeOperation] = action.split(".");
+  if (maybeOperation && maybeEntity) {
+    const stored = store.get(maybeEntity, id);
+    if (stored) return stored;
+  }
+  for (const entity of store.entities()) {
+    const stored = store.get(entity, id);
+    if (stored) return stored;
+  }
+  return record;
+}
+
+function invoke(engine: Engine, store: SessionStore, method: string, params: Record<string, unknown>): unknown {
   switch (method) {
     case "load":
     case "describe":
@@ -129,11 +157,40 @@ function invoke(engine: Engine, method: string, params: Record<string, unknown>)
 
     case "run": {
       const action = requireString(params, "action");
-      const record = optionalObject(params, "record") ?? {};
+      const raw = optionalObject(params, "record") ?? {};
       const input = optionalObject(params, "input") ?? {};
       const actor = optionalObject(params, "actor");
       const options = optionalObject(params, "options");
-      return engine.run(action, record, input, actor, options);
+      const record = hydrate(store, action, raw);
+      const result = engine.run(action, record, input, actor, options);
+      if (result.ok) {
+        store.applyEffects(action.split(".")[0] ?? "", result.effects, result.events);
+      }
+      return result;
+    }
+
+    case "get": {
+      const entity = requireString(params, "entity");
+      const id = requireString(params, "id");
+      const record = store.get(entity, id);
+      return record ? { record } : { record: null };
+    }
+
+    case "list": {
+      const entity = requireString(params, "entity");
+      return { records: store.list(entity) };
+    }
+
+    case "events": {
+      const type = typeof params.type === "string" ? params.type : undefined;
+      return { events: store.events(type) };
+    }
+
+    case "put": {
+      const entity = requireString(params, "entity");
+      const record = optionalObject(params, "record") ?? {};
+      const computed = engine.compute(entity, record);
+      return { record: store.put(entity, computed).record };
     }
 
     case "decide": {
@@ -170,6 +227,11 @@ function invoke(engine: Engine, method: string, params: Record<string, unknown>)
       return engine.react(event as never);
     }
 
+    case "clear": {
+      store.clear();
+      return { cleared: true };
+    }
+
     default:
       throw failure(METHOD_NOT_FOUND, `Unknown method '${method}'`);
   }
@@ -179,7 +241,10 @@ function invoke(engine: Engine, method: string, params: Record<string, unknown>)
  * Build a dispatcher: one request line in, one response line out, `null` for a
  * notification or a blank line.
  */
-export function createJsonRpcDispatcher(engine: Engine): JsonRpcDispatcher {
+export function createJsonRpcDispatcher(
+  engine: Engine,
+  store: SessionStore = new SessionStore(),
+): JsonRpcDispatcher {
   return (line: string): string | null => {
     const trimmed = line.trim();
     if (trimmed.length === 0) return null;
@@ -224,7 +289,7 @@ export function createJsonRpcDispatcher(engine: Engine): JsonRpcDispatcher {
     }
 
     try {
-      const result = invoke(engine, parsed.method, params);
+      const result = invoke(engine, store, parsed.method, params);
       return JSON.stringify({ jsonrpc: "2.0", id, result });
     } catch (err) {
       if (err && typeof err === "object" && "code" in err && "message" in err) {

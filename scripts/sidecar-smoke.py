@@ -74,14 +74,33 @@ def main() -> int:
               any(e.get("type") == "InvoiceSent" for e in sent.get("events", [])),
               f"events={[e.get('type') for e in sent.get('events', [])]}")
 
+        # Persistence: the sidecar applied the persist effect, so the aggregate is now
+        # readable without the client having sent it back.
+        stored = kerangka.get("Invoice", "inv-py-1")
+        check("the sidecar stored the sent invoice",
+              (stored or {}).get("status") == "sent",
+              f"stored={stored}")
+        check("the computed total survived the round trip",
+              (stored or {}).get("total") == 300,
+              f"total={(stored or {}).get('total')}")
+        check("the session logged the emitted event",
+              any(e.get("type") == "InvoiceSent" for e in kerangka.events("InvoiceSent")))
+
         forbidden = kerangka.run("Invoice.send", draft, actor=VIEWER)
         check("a viewer is refused", forbidden.get("ok") is False and forbidden.get("code"),
               f"code={forbidden.get('code')}")
+        check("a refused run stores nothing new",
+              len(kerangka.list("Invoice")) == 1,
+              f"stored={len(kerangka.list('Invoice'))}")
 
-        paid = kerangka.run("Invoice.pay", sent["record"], actor=BILLING)
-        check("pay succeeds on the sent invoice", bool(paid.get("ok")), f"code={paid.get('code')}")
+        # Run against the stored aggregate by id alone: the sidecar supplies the record.
+        paid = kerangka.run("Invoice.pay", {"id": "inv-py-1"}, actor=BILLING)
+        check("pay succeeds on the stored invoice", bool(paid.get("ok")), f"code={paid.get('code')}")
         check("status is paid", (paid.get("record") or {}).get("status") == "paid",
               f"status={(paid.get('record') or {}).get('status')}")
+        check("the store agrees", (kerangka.get("Invoice", "inv-py-1") or {}).get("status") == "paid")
+        check("an id the session never saw reads as null",
+              kerangka.get("Invoice", "inv-py-never") is None)
 
         try:
             kerangka.call("teleport")

@@ -8,4 +8,5 @@
 
 export * from "./server.js";
 export * from "./jsonrpc.js";
+export * from "./session-store.js";
 export * from "./scheduler-runner.js";

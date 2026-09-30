@@ -180,6 +180,28 @@ class Sidecar:
     ) -> Dict[str, Any]:
         return self.call("queryPlan", query=query, params=params or {}, actor=actor)
 
+    # -- Session ---------------------------------------------------------------
+    # The sidecar applies the effects a run produces, so a session remembers what it
+    # has seen. These are sidecar methods, not Runtime API ones: a native engine is pure
+    # and a real host brings its own database.
+
+    def get(self, entity: str, id: str) -> Optional[Dict[str, Any]]:  # noqa: A002
+        """The stored aggregate, or None when the session has never seen that id."""
+        return self.call("get", entity=entity, id=id)["record"]
+
+    def list(self, entity: str) -> List[Dict[str, Any]]:  # noqa: A003
+        return self.call("list", entity=entity)["records"]
+
+    def put(self, entity: str, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Seed a record into the session, computed the way the engine computes it."""
+        return self.call("put", entity=entity, record=record)["record"]
+
+    def events(self, type: Optional[str] = None) -> List[Dict[str, Any]]:  # noqa: A002
+        return self.call("events", type=type)["events"]
+
+    def clear(self) -> None:
+        self.call("clear")
+
 
 def iter_json_lines(lines: Sequence[str]) -> Iterator[Dict[str, Any]]:
     """Parse JSON lines, skipping blanks. Useful for a host that reads the sidecar itself."""
