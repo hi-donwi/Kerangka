@@ -12,6 +12,8 @@
     "test:conformance": "vitest run conformance",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "examples:verify": "node scripts/verify-examples.mjs",
+    "verify": "npm run typecheck && npm run test && npm run examples:verify",
     "clean": "npm run --workspaces --if-present clean"
   },
   "devDependencies": {
