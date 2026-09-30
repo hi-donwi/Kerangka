@@ -98,45 +98,149 @@ export class Engine {
   }
 
   /**
+   * The one cell rule (spec/semantics/cells.md §2). A cell is computed only when it
+   * unambiguously compiles to K1 and evaluates to a non-null value; otherwise it is a
+   * literal, exactly as written. `set`, `emit.data`, action `run`, and decision-table
+   * output cells all resolve through here, so the same text means the same thing
+   * everywhere.
+   */
+  private resolveCell(
+    value: unknown,
+    record: Record<string, unknown>,
+    extra: Record<string, unknown> = {},
+  ): unknown {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.resolveCell(item, record, extra));
+    }
+    if (value && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+
+      // A declared operation: `{ "operator": "multiply", "args": [ … ] }`.
+      if (typeof obj.operator === "string") {
+        const args = (obj.args ?? obj.value ?? obj.path ?? []) as unknown[];
+        const node = { $expr: obj.operator, args: this.cellArgs(args, record, extra) };
+        return this.evaluateCellNode(node as ExprNode, record, extra, value);
+      }
+
+      if ("literal" in obj) {
+        return obj.literal;
+      }
+      if ("$bind" in obj || "$expr" in obj) {
+        return this.evaluateCellNode(obj as unknown as ExprNode, record, extra, value);
+      }
+
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        out[k] = this.resolveCell(v, record, extra);
+      }
+      return out;
+    }
+    if (typeof value !== "string") {
+      return value;
+    }
+
+    const node = this.cellNode(value, record, extra);
+    if (!node) {
+      return value;
+    }
+    return this.evaluateCellNode(node, record, extra, value);
+  }
+
+  /** Compile a cell to an expression node, or `null` when it is plainly a literal. */
+  private cellNode(
+    value: unknown,
+    record: Record<string, unknown>,
+    extra: Record<string, unknown> = {},
+  ): ExprNode | null {
+    if (value && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      if ("literal" in obj) {
+        return { literal: this.cellLiteral(obj.literal) };
+      }
+      if ("$bind" in obj || "$expr" in obj) {
+        return obj as unknown as ExprNode;
+      }
+      if (typeof obj.path === "string" && Object.keys(obj).length === 1) {
+        return { $bind: obj.path };
+      }
+      if (typeof obj.operator === "string") {
+        const args = (obj.args ?? obj.value ?? obj.path ?? []) as unknown[];
+        return { $expr: obj.operator, args: this.cellArgs(args, record, extra) };
+      }
+      return null;
+    }
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    if (trimmed.length >= 2) {
+      const first = trimmed[0];
+      const last = trimmed[trimmed.length - 1];
+      if ((first === "'" && last === "'") || (first === '"' && last === '"')) {
+        return { literal: trimmed.slice(1, -1) };
+      }
+    }
+
+    try {
+      const node = compileExpression(trimmed);
+      return "$bind" in node || "$expr" in node ? node : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A literal node accepts only JSON scalars; anything else stays a string. */
+  private cellLiteral(value: unknown): string | number | boolean | null {
+    if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return value;
+    }
+    return JSON.stringify(value);
+  }
+
+  /** Compile each declared argument of an operation cell to an expression node. */
+  private cellArgs(args: unknown[], record: Record<string, unknown>, extra: Record<string, unknown>): ExprNode[] {
+    return args.map((arg) => {
+      if (arg !== null && typeof arg === "object") {
+        return this.cellNode(arg, record, extra) ?? { literal: null };
+      }
+      if (typeof arg === "number" || typeof arg === "boolean" || arg === null) {
+        return { literal: arg };
+      }
+      if (arg === undefined) {
+        return { literal: null };
+      }
+      if (typeof arg === "string") {
+        return this.cellNode(arg, record, extra) ?? { literal: arg };
+      }
+      return { literal: null };
+    });
+  }
+
+  private evaluateCellNode(
+    node: ExprNode,
+    record: Record<string, unknown>,
+    extra: Record<string, unknown>,
+    original: unknown,
+  ): unknown {
+    try {
+      const value = evaluate(node, this.evalContext({ record, data: record, ...extra }));
+      return value === null ? original : value;
+    } catch {
+      return original;
+    }
+  }
+
+  /**
    * `then[].emit.data` values are references into the record, not literals:
-   * `{ "orderId": "id", "amount": "totalAmount" }` (PLAN.md 5.1). A call such as
-   * `now()` is evaluated; anything that does not resolve stays as written.
+   * `{ "orderId": "id", "amount": "totalAmount" }` (PLAN.md 5.1).
    */
   private resolveEventData(
     data: unknown,
     record: Record<string, unknown>,
     extra: Record<string, unknown> = {},
   ): unknown {
-    if (Array.isArray(data)) {
-      return data.map((item) => this.resolveEventData(item, record, extra));
-    }
-    if (data && typeof data === "object") {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
-        out[k] = this.resolveEventData(v, record, extra);
-      }
-      return out;
-    }
-    if (typeof data !== "string") {
-      return data;
-    }
-
-    let node: ExprNode | null = null;
-    try {
-      node = compileExpression(data);
-    } catch {
-      return data;
-    }
-    if (!node || (!("$bind" in node) && !("$expr" in node))) {
-      return data;
-    }
-
-    try {
-      const value = evaluate(node, this.evalContext({ record, data: record, ...extra }));
-      return value === null ? data : value;
-    } catch {
-      return data;
-    }
+    return this.resolveCell(data, record, extra);
   }
 
   /**
@@ -172,6 +276,34 @@ export class Engine {
       fns[name] = (args: unknown[]) => this.callDecision(name, args);
     }
     return fns;
+  }
+
+  /**
+   * Decision-table output cells follow the same cell rule (spec/semantics/cells.md §2),
+   * scoped to the row input plus `cell`/`value` for the column in question. A row may
+   * therefore compute its output from the input that matched it, and a plain literal such
+   * as `"auto"` still stays a literal.
+   */
+  private resolveDecisionOutputs(
+    outputs: Record<string, unknown>,
+    columns: { name: string; type?: string }[],
+    input: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const col of columns) {
+      const coerced = this.coerceCell(outputs[col.name], col.type);
+      out[col.name] = this.resolveCell(coerced, input, {
+        ...input,
+        cell: input[col.name],
+        value: input[col.name],
+      });
+    }
+    for (const [k, v] of Object.entries(outputs)) {
+      if (!(k in out)) {
+        out[k] = this.coerceCell(v);
+      }
+    }
+    return out;
   }
 
   private callDecision(name: string, args: unknown[]): unknown {
@@ -747,8 +879,21 @@ export class Engine {
           }
           if (effect.set && typeof effect.set === "object") {
             for (const [k, v] of Object.entries(effect.set)) {
-              nextRecord[k] = v === "now()" ? nowIso : v;
+              nextRecord[k] = this.resolveCell(v, nextRecord, {
+                input,
+                actor,
+                now: nowIso,
+              });
             }
+          }
+          if (effect.fail && typeof effect.fail === "object") {
+            // A declared failure aborts the whole transition: no patch, no event, no effect.
+            const declared = effect.fail as { code?: string; message?: string };
+            return {
+              ok: false,
+              error: declared.message ?? declared.code ?? "Action failed",
+              code: declared.code ?? "ACTION_FAILED",
+            };
           }
           if (effect.call) {
             effects.push({ type: "call", extension: effect.call, input: effect.input ?? {} });
@@ -771,25 +916,12 @@ export class Engine {
     } else {
       const action = entity.actions[opName];
       if (action.run && typeof action.run === "object") {
-        for (const [targetField, exprOrVal] of Object.entries(action.run)) {
-          if (exprOrVal && typeof exprOrVal === "object") {
-            try {
-              nextRecord[targetField] = evaluate(
-                exprOrVal as ExprNode,
-                this.evalContext({
-                  record: workingRecord,
-                  data: workingRecord,
-                  input,
-                  actor,
-                  now: nowIso,
-                }),
-              );
-            } catch {
-              nextRecord[targetField] = exprOrVal;
-            }
-          } else {
-            nextRecord[targetField] = exprOrVal;
-          }
+        for (const [targetField, cell] of Object.entries(action.run)) {
+          nextRecord[targetField] = this.resolveCell(cell, workingRecord, {
+            input,
+            actor,
+            now: nowIso,
+          });
         }
       }
       if (Array.isArray(action.emit)) {
@@ -1262,7 +1394,9 @@ export class Engine {
       }
 
       if (ruleMatched) {
-        matchingOutputs.push(rule.outputs);
+        matchingOutputs.push(
+          this.resolveDecisionOutputs(rule.outputs, table.outputs ?? [], input),
+        );
         if (hitPolicy === "first") {
           break;
         }

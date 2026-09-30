@@ -18,6 +18,7 @@ spec/
 │   ├── strings.md          Unicode semantics, pattern matching, canonical JSON
 │   ├── expressions.md      Expression AST and evaluation rules
 │   ├── rules.md            Field constraints, business rules, fail-closed validation
+│   ├── cells.md            Statement cells and the then/do statement vocabulary
 │   ├── computed.md         Computed fields and dependency graphs
 │   ├── errors.md           Error taxonomy, RFC 9457 format, diagnostics
 │   ├── modules.md          Bounded contexts, exports, and dependency graph
