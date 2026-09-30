@@ -12,7 +12,9 @@ error, or unexpected record exits non-zero, so CI can run it without a Python te
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import tempfile
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sdk", "python", "src")
@@ -34,6 +36,60 @@ def check(label: str, condition: bool, detail: str = "") -> None:
     print(f"[{status}] {label}{f' — {detail}' if detail else ''}")
     if not condition:
         failures.append(label)
+
+
+def survives_a_restart(document: str, root: str) -> None:
+    """A session file is the difference between a promise and a cache.
+
+    The in-memory sidecar forgets everything when the process exits, including the
+    events nobody delivered. This drives a durable session, kills the process, starts
+    a new one against the same file, and checks that the work the first process said
+    it had accepted is still waiting to be done.
+    """
+    print("\ndurable session across a restart\n")
+    directory = tempfile.mkdtemp(prefix="kerangka-session-")
+    session = os.path.join(directory, "session.db")
+    draft = {
+        "id": "inv-py-durable",
+        "number": "INV-PY-DURABLE",
+        "customer": "cust-1",
+        "issuedOn": "2026-09-01",
+        "dueDate": "2026-10-01",
+        "status": "draft",
+        "lines": [{"description": "Consulting", "qty": 1, "unitPrice": 100}],
+    }
+
+    try:
+        with Sidecar(document, cwd=root, session=session) as kerangka:
+            sent = kerangka.run("Invoice.send", draft, actor=BILLING)
+            check("the run is accepted", bool(sent.get("ok")), f"code={sent.get('code')}")
+            check("the commit reports the host's work",
+                  (sent.get("commit") or {}).get("queuedEffects") == 1,
+                  f"commit={sent.get('commit')}")
+        # The `with` block closed the process: this is a restart, not a second session.
+
+        with Sidecar(document, cwd=root, session=session) as restarted:
+            stored = restarted.get("Invoice", "inv-py-durable") or {}
+            check("the aggregate survived", stored.get("status") == "sent",
+                  f"status={stored.get('status')}")
+            queued = restarted.outbox("InvoiceSent")
+            check("the undelivered event is still queued", len(queued) == 1,
+                  f"pending={[e['event']['type'] for e in restarted.outbox()]}")
+            effects = restarted.pending_effects()
+            check("the unperformed effect is still waiting", len(effects) == 1,
+                  f"pending={[e['effect']['type'] for e in restarted.pending_effects()]}")
+            check("and it still carries its argument",
+                  (effects[0]["effect"].get("input") or {}).get("invoice") == "inv-py-durable"
+                  if effects else False,
+                  f"input={(effects[0]['effect'].get('input') if effects else None)}")
+            # The new process can finish what the old one promised.
+            check("the restarted host can perform the effect",
+                  restarted.ack_effect(effects[0]["id"])["state"] == "delivered"
+                  if effects else False)
+            check("and deliver the event",
+                  restarted.ack(queued[0]["id"])["state"] == "delivered" if queued else False)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def main() -> int:
@@ -150,6 +206,7 @@ def main() -> int:
             check("an unknown method raises", err.code == -32601, f"code={err.code}")
 
     drive_policies()
+    survives_a_restart(DOCUMENT, ROOT)
 
     print()
     if failures:

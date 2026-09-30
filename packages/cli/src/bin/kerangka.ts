@@ -61,6 +61,7 @@ COMMANDS:
                            uidl, sql:*, types:*)
   dev <file>              Run zero-config dev server with REST, MCP, and UIDL playground
   serve <file>            Run the sidecar: REST and metadata endpoints, or --stdio JSON-RPC
+                           (--session <file> keeps the session across a restart)
   verify <file>           Static analysis of workflows, permissions, decision tables, and events
   decisions <subcommand>  Import or export decision tables (decisions export | decisions import)
   codegen <file>          Generate typed models (TypeScript, Java 21, Python, Go)
@@ -140,6 +141,7 @@ async function main(): Promise<void> {
         event: { type: "string" },
         strict: { type: "boolean" },
         id: { type: "string" },
+        session: { type: "string" },
         "check-destructive": { type: "boolean" },
         "allow-destructive": { type: "boolean" },
         phase: { type: "string" },
@@ -345,6 +347,7 @@ async function main(): Promise<void> {
         success = await serveCommand(file!, {
           port: values.port ? parseInt(values.port, 10) : 3000,
           stdio: values.stdio,
+          session: values.session,
         });
         break;
       case "verify":

@@ -45,11 +45,16 @@ class Sidecar:
         cli: str = DEFAULT_CLI,
         cwd: Optional[str] = None,
         node: str = "node",
+        session: Optional[str] = None,
     ):
         self.document = document
         self.cli = cli
         self.cwd = cwd or os.getcwd()
         self.node = node
+        # A session file keeps aggregates, unacknowledged events, and unperformed
+        # effects across a restart; without one the session is in memory and dies
+        # with the process, which is fine for a test and wrong for a sidecar.
+        self.session = session
         self._process: Optional[subprocess.Popen] = None
         self._next_id = 0
 
@@ -65,8 +70,11 @@ class Sidecar:
         if not os.path.exists(os.path.join(self.cwd, self.document)):
             raise SidecarError(f"Document not found: {self.document}")
 
+        command = [self.node, self.cli, "serve", self.document, "--stdio"]
+        if self.session:
+            command += ["--session", self.session]
         self._process = subprocess.Popen(
-            [self.node, self.cli, "serve", self.document, "--stdio"],
+            command,
             cwd=self.cwd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

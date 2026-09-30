@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { compile, CompilerError } from "@kerangka/compiler";
-import { KerangkaServer, serveStdio } from "@kerangka/server";
+import { KerangkaServer, SqliteSessionStore, serveStdio } from "@kerangka/server";
 import { loadEngine } from "@kerangka/engine-ts";
 import { MemoryStore } from "@kerangka/ports";
 import { resolveTargetFile } from "../target.js";
@@ -20,6 +20,11 @@ export interface ServeOptions {
   quiet?: boolean;
   /** Serve JSON-RPC 2.0 over stdin/stdout instead of listening on a port. */
   stdio?: boolean;
+  /**
+   * Keep the sidecar session in this file instead of in memory, so unacknowledged
+   * events and unperformed effects survive a restart.
+   */
+  session?: string;
 }
 
 export async function serveCommand(filePath: string, options: ServeOptions = {}): Promise<boolean> {
@@ -44,8 +49,13 @@ export async function serveCommand(filePath: string, options: ServeOptions = {})
     }
 
     if (options.stdio) {
-      console.error(`kerangka serve: stdio JSON-RPC for '${kir.app}' (${fullPath})`);
-      await serveStdio(loadEngine(kir));
+      const store = options.session ? new SqliteSessionStore({ path: options.session }) : undefined;
+      console.error(
+        store
+          ? `kerangka serve: stdio JSON-RPC for '${kir.app}' (${fullPath}), session in ${options.session}`
+          : `kerangka serve: stdio JSON-RPC for '${kir.app}' (${fullPath})`
+      );
+      await serveStdio(loadEngine(kir), { store });
       return true;
     }
 

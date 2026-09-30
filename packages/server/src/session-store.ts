@@ -86,7 +86,34 @@ export interface SessionStoreOptions {
   eventLogLimit?: number;
 }
 
-export class SessionStore {
+/**
+ * What the sidecar protocol needs from a store. `SessionStore` is the in-memory one;
+ * `SqliteSessionStore` is the durable one. The protocol does not change between them,
+ * which is the whole point of writing it down.
+ */
+export interface SessionStoreLike {
+  applyEffects(entity: string, effects: Effect[] | undefined, events: CloudEvent[] | undefined): CommitReport;
+  get(entity: string, id: string): Record<string, unknown> | null;
+  has(entity: string, id: string): boolean;
+  list(entity: string): Record<string, unknown>[];
+  revisionOf(entity: string, id: string): number | null;
+  pending(): OutboxEntry[];
+  ack(id: string): OutboxEntry | null;
+  nack(id: string, error?: string): OutboxEntry | null;
+  outboxEntry(id: string): OutboxEntry | null;
+  events(type?: string): CloudEvent[];
+  pendingEffects(type?: string): HostEffectEntry[];
+  ackEffect(id: string): HostEffectEntry | null;
+  nackEffect(id: string, error?: string): HostEffectEntry | null;
+  hostEffect(id: string): HostEffectEntry | null;
+  claim(idempotencyKey: string): boolean;
+  claims(): string[];
+  entities(): string[];
+  clear(): void;
+  put(entity: string, record: Record<string, unknown>): { entity: string; id: string; record: Record<string, unknown> };
+}
+
+export class SessionStore implements SessionStoreLike {
   private readonly rows = new Map<string, Map<string, StoredRecord>>();
   private readonly outbox = new Map<string, OutboxEntry>();
   private readonly hostEffects = new Map<string, HostEffectEntry>();

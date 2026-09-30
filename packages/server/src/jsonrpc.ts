@@ -11,7 +11,12 @@
  */
 
 import { Engine } from "@kerangka/engine-ts";
-import { EffectApplicationError, OutboxEntry, SessionStore } from "./session-store.js";
+import {
+  EffectApplicationError,
+  OutboxEntry,
+  SessionStore,
+  SessionStoreLike,
+} from "./session-store.js";
 
 export const PARSE_ERROR = -32700;
 export const INVALID_REQUEST = -32600;
@@ -90,7 +95,7 @@ export function describeApp(engine: Engine): Record<string, unknown> {
  * on what was last stored. Anything more than an `id` is taken as written.
  */
 function hydrate(
-  store: SessionStore,
+  store: SessionStoreLike,
   action: string,
   record: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -111,7 +116,12 @@ function hydrate(
   return record;
 }
 
-function invoke(engine: Engine, store: SessionStore, method: string, params: Record<string, unknown>): unknown {
+function invoke(
+  engine: Engine,
+  store: SessionStoreLike,
+  method: string,
+  params: Record<string, unknown>
+): unknown {
   switch (method) {
     case "load":
     case "describe":
@@ -376,7 +386,7 @@ function invoke(engine: Engine, store: SessionStore, method: string, params: Rec
  */
 export function createJsonRpcDispatcher(
   engine: Engine,
-  store: SessionStore = new SessionStore(),
+  store: SessionStoreLike = new SessionStore(),
 ): JsonRpcDispatcher {
   return (line: string): string | null => {
     const trimmed = line.trim();
@@ -451,11 +461,16 @@ export interface StdioOptions {
   output?: NodeJS.WritableStream;
   /** Startup banner and diagnostics belong on stderr: stdout is the protocol. */
   log?: (message: string) => void;
+  /**
+   * A durable session (`keranga serve --session <path>`) keeps unacknowledged events
+   * and unperformed effects across a restart. The protocol does not change.
+   */
+  store?: SessionStoreLike;
 }
 
 /** Serve JSON-RPC over stdio until the input stream ends. */
 export function serveStdio(engine: Engine, options: StdioOptions = {}): Promise<void> {
-  const dispatch = createJsonRpcDispatcher(engine);
+  const dispatch = createJsonRpcDispatcher(engine, options.store);
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
   const log = options.log ?? ((message: string) => process.stderr.write(`${message}\n`));
