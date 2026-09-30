@@ -57,7 +57,8 @@ COMMANDS:
   mcp <file>              Generate Model Context Protocol (MCP) tool declarations
   uidl <file>             Generate UIDL screen documents for UIDL-Runtime
   compose <file>          Generate production-ready Docker Compose infrastructure
-  emit <target> <file>    Unified projector (compose, openapi, graphql, mcp, uidl, sql:*, types:*)
+  emit <target> <file>    Unified projector (compose, openapi, asyncapi, json-schema, graphql, mcp,
+                           uidl, sql:*, types:*)
   dev <file>              Run zero-config dev server with REST, MCP, and UIDL playground
   serve <file>            Run the sidecar: REST and metadata endpoints, or --stdio JSON-RPC
   verify <file>           Static analysis of workflows, permissions, decision tables, and events
@@ -135,6 +136,10 @@ async function main(): Promise<void> {
         drop: { type: "boolean" },
         audit: { type: "boolean", default: true },
         "check-breaking": { type: "boolean" },
+        entity: { type: "string" },
+        event: { type: "string" },
+        strict: { type: "boolean" },
+        id: { type: "string" },
         "check-destructive": { type: "boolean" },
         "allow-destructive": { type: "boolean" },
         phase: { type: "string" },
@@ -292,6 +297,10 @@ async function main(): Promise<void> {
           output: values.output,
           dialect: values.dialect,
           packageName: values.package,
+          entity: values.entity,
+          event: values.event,
+          strict: values.strict,
+          id: values.id,
         });
         break;
       }

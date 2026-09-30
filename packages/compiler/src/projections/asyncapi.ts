@@ -12,6 +12,7 @@
 
 import { normalizeField } from "../shorthand.js";
 import { FieldDefinition, KIRDocument } from "../types.js";
+import { embeddedTargetsOf, toJsonSchemaField } from "./json-schema-field.js";
 
 export interface AsyncAPIOptions {
   /** Broker the events travel over. Default `kafka`; also `amqp`, `nats`, `websocket`. */
@@ -45,6 +46,14 @@ export class AsyncAPIGenerator {
     const version = options.apiVersion || kir.meta?.version || "1.0.0";
     const topic = options.topic ?? `kerangka.${kir.app}.events`;
 
+    // The same mapping the OpenAPI and JSON Schema documents use; only the `$ref`
+    // base differs, because a broker binds messages by name rather than by pointer.
+    const embeddedTargets = embeddedTargetsOf(
+      (kir.entities ?? {}) as Record<string, { embedded?: boolean }>
+    );
+    const fieldSchema = (field: FieldDefinition): Record<string, unknown> =>
+      toJsonSchemaField(field, { refBase: "#/components/schemas", embeddedTargets });
+
     // The KIR flattens contexts, so an event is addressed by its name and a deployment
     // that splits contexts maps the address onto a topic in its deploy file. What the
     // model does know is who emits and who listens, and both are worth publishing.
@@ -65,7 +74,7 @@ export class AsyncAPIGenerator {
       schemas[dataSchema] = {
         type: "object",
         description: `data of the ${eventName} CloudEvent`,
-        properties: this.dataProperties(fields),
+        properties: this.dataProperties(fields, fieldSchema),
         required: this.requiredFields(fields),
       };
 
@@ -174,10 +183,13 @@ export class AsyncAPIGenerator {
     });
   }
 
-  private static dataProperties(fields: Record<string, unknown>): Record<string, unknown> {
+  private static dataProperties(
+    fields: Record<string, unknown>,
+    fieldSchema: (field: FieldDefinition) => Record<string, unknown>
+  ): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [fieldName, declared] of Object.entries(fields ?? {})) {
-      out[fieldName] = this.mapFieldToJsonSchema(this.normalizeField(declared));
+      out[fieldName] = fieldSchema(this.normalizeField(declared));
     }
     return out;
   }
@@ -198,71 +210,5 @@ export class AsyncAPIGenerator {
       return normalizeField(declared);
     }
     return normalizeField((declared ?? {}) as FieldDefinition);
-  }
-
-  private static mapFieldToJsonSchema(field: FieldDefinition): Record<string, unknown> {
-    const schema: Record<string, unknown> = {};
-    const type = (field?.type ?? "string").toLowerCase();
-
-    switch (type) {
-      case "string":
-      case "uuid":
-      case "email":
-      case "text":
-        schema.type = "string";
-        if (type === "uuid") schema.format = "uuid";
-        if (type === "email") schema.format = "email";
-        if (field?.unique) schema.description = "unique";
-        break;
-      case "int":
-      case "integer":
-        schema.type = "integer";
-        break;
-      case "decimal":
-      case "numeric":
-      case "money":
-      case "number":
-      case "float":
-      case "double":
-        schema.type = "number";
-        break;
-      case "bool":
-      case "boolean":
-        schema.type = "boolean";
-        break;
-      case "date":
-        schema.type = "string";
-        schema.format = "date";
-        break;
-      case "datetime":
-      case "timestamp":
-        schema.type = "string";
-        schema.format = "date-time";
-        break;
-      case "enum":
-        schema.type = "string";
-        if (field.values && field.values.length > 0) schema.enum = field.values;
-        break;
-      case "ref":
-        schema.type = "string";
-        schema.description = `Reference to ${field.target || "entity"}`;
-        break;
-      case "list":
-        schema.type = "array";
-        schema.items = field.element ? this.mapFieldToJsonSchema(field.element) : {};
-        break;
-      case "json":
-        schema.type = "object";
-        break;
-      default:
-        schema.type = "string";
-    }
-
-    if (field?.min !== undefined) schema.minimum = field.min;
-    if (field?.max !== undefined) schema.maximum = field.max;
-    if (field?.default !== undefined) schema.default = field.default;
-    if (field?.description) schema.description = field.description;
-
-    return schema;
   }
 }

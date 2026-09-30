@@ -33,7 +33,7 @@ if (targets.length === 0) {
 }
 
 /** Contracts a model must be able to emit. `-` writes to stdout, which is discarded. */
-const EMIT_TARGETS = ["openapi", "asyncapi", "sql:postgres", "sql:sqlite"];
+const EMIT_TARGETS = ["openapi", "asyncapi", "json-schema", "sql:postgres", "sql:sqlite"];
 
 let failures = 0;
 for (const target of targets) {

@@ -28,6 +28,7 @@ import { Compiler } from "./compiler.js";
 import { DDLGenerator, DDLOptions } from "./ddl/generator.js";
 import { OpenAPIGenerator, OpenAPIOptions } from "./projections/openapi.js";
 import { AsyncAPIGenerator, AsyncAPIOptions } from "./projections/asyncapi.js";
+import { JSONSchemaGenerator, JSONSchemaOptions, JSON_SCHEMA_DIALECT } from "./projections/json-schema.js";
 import { GraphQLGenerator } from "./projections/graphql.js";
 import { McpGenerator, McpToolDefinition } from "./projections/mcp.js";
 import { UIDLGenerator, UIDLDocument } from "./projections/uidl.js";
@@ -75,6 +76,17 @@ export function generateOpenAPI(kir: KIRDocument, options?: OpenAPIOptions): Rec
 export function generateAsyncAPI(kir: KIRDocument, options?: AsyncAPIOptions): Record<string, unknown> {
   return AsyncAPIGenerator.generate(kir, options);
 }
+
+/**
+ * Generates a JSON Schema 2020-12 document: one definition per entity, one per event
+ * payload, with `readOnly` on what the engine computes.
+ */
+export function generateJSONSchema(kir: KIRDocument, options?: JSONSchemaOptions): Record<string, unknown> {
+  return JSONSchemaGenerator.generate(kir, options);
+}
+
+/** The dialect every emitted document declares. */
+export { JSON_SCHEMA_DIALECT };
 
 /**
  * Generates a GraphQL Schema Definition Language (SDL) string from a compiled KIR document.

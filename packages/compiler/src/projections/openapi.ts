@@ -5,6 +5,7 @@
  * License: Apache-2.0
  */
 
+import { embeddedTargetsOf, toJsonSchemaField } from "./json-schema-field.js";
 import { FieldDefinition, KIRDocument } from "../types.js";
 
 export interface OpenAPIOptions {
@@ -17,6 +18,14 @@ export class OpenAPIGenerator {
     const title = kir.meta?.title || kir.app;
     const version = options.apiVersion || kir.meta?.version || "1.0.0";
     const serverUrl = options.serverUrl || "http://localhost:3000";
+
+    // One mapping, shared with every JSON-shaped projection: the only thing this
+    // document supplies is where its `$ref` pointers point.
+    const embeddedTargets = embeddedTargetsOf(
+      (kir.entities ?? {}) as Record<string, { embedded?: boolean }>
+    );
+    const fieldSchema = (field: FieldDefinition): Record<string, unknown> =>
+      toJsonSchemaField(field, { refBase: "#/components/schemas", embeddedTargets });
 
     const schemas: Record<string, unknown> = {
       ProblemDetails: {
@@ -55,7 +64,7 @@ export class OpenAPIGenerator {
       const createRequired: string[] = [];
 
       for (const [fieldName, field] of Object.entries(entity.fields)) {
-        const propSchema = this.mapFieldToJsonSchema(field);
+        const propSchema = fieldSchema(field);
         entityProperties[fieldName] = propSchema;
 
         if (field.required) {
@@ -258,7 +267,7 @@ export class OpenAPIGenerator {
             const actionInputSchema: Record<string, unknown> = {};
             if (action.input) {
               for (const [fieldName, field] of Object.entries(action.input)) {
-                actionInputSchema[fieldName] = this.mapFieldToJsonSchema(field);
+                actionInputSchema[fieldName] = fieldSchema(field);
               }
             }
 
@@ -339,80 +348,5 @@ export class OpenAPIGenerator {
         }
       }
     };
-  }
-
-  private static mapFieldToJsonSchema(field: FieldDefinition): Record<string, unknown> {
-    const schema: Record<string, unknown> = {};
-
-    switch (field.type) {
-      case "string":
-        schema.type = "string";
-        break;
-      case "email":
-        schema.type = "string";
-        schema.format = "email";
-        break;
-      case "date":
-        schema.type = "string";
-        schema.format = "date";
-        break;
-      case "datetime":
-        schema.type = "string";
-        schema.format = "date-time";
-        break;
-      case "time":
-        schema.type = "string";
-        schema.format = "time";
-        break;
-      case "int":
-      case "integer":
-        schema.type = "integer";
-        break;
-      case "float":
-        schema.type = "number";
-        schema.format = "float";
-        break;
-      case "decimal":
-        schema.type = "number";
-        schema.description = field.precision && field.scale
-          ? `Exact decimal(${field.precision},${field.scale})`
-          : "Exact decimal";
-        break;
-      case "boolean":
-      case "bool":
-        schema.type = "boolean";
-        break;
-      case "enum":
-        schema.type = "string";
-        if (field.values) {
-          schema.enum = field.values;
-        }
-        break;
-      case "ref":
-        schema.type = "string";
-        schema.description = `Reference to ${field.target || "entity"}`;
-        break;
-      case "list":
-        schema.type = "array";
-        if (field.element) {
-          if (field.element.type === "ref" && field.element.target) {
-            schema.items = { $ref: `#/components/schemas/${field.element.target}` };
-          } else {
-            schema.items = this.mapFieldToJsonSchema(field.element);
-          }
-        } else {
-          schema.items = {};
-        }
-        break;
-      default:
-        schema.type = "string";
-    }
-
-    if (field.min !== undefined) schema.minimum = field.min;
-    if (field.max !== undefined) schema.maximum = field.max;
-    if (field.default !== undefined) schema.default = field.default;
-    if (field.description) schema.description = field.description;
-
-    return schema;
   }
 }

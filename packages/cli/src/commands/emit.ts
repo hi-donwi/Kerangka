@@ -8,6 +8,7 @@
 import { composeCommand, type ComposeCommandOptions } from "./compose.js";
 import { openapiCommand } from "./openapi.js";
 import { asyncapiCommand, type AsyncAPICommandOptions } from "./asyncapi.js";
+import { jsonSchemaCommand, type JSONSchemaCommandOptions } from "./json-schema.js";
 import { graphqlCommand } from "./graphql.js";
 import { mcpCommand } from "./mcp.js";
 import { uidlCommand } from "./uidl.js";
@@ -22,6 +23,10 @@ export interface EmitCommandOptions extends ComposeCommandOptions {
   broker?: "kafka" | "amqp" | "nats" | "websocket";
   host?: string;
   topic?: string;
+  entity?: string;
+  event?: string;
+  strict?: boolean;
+  id?: string;
 }
 
 export function emitCommand(
@@ -43,6 +48,16 @@ export function emitCommand(
         host: options.host,
         topic: options.topic,
       });
+
+    case "json-schema":
+    case "jsonschema":
+      return jsonSchemaCommand(filePath, {
+        output: options.output,
+        entity: options.entity,
+        event: options.event,
+        strict: options.strict,
+        id: options.id,
+      } satisfies JSONSchemaCommandOptions);
 
     case "graphql":
       return graphqlCommand(filePath, options.output);
@@ -81,7 +96,7 @@ export function emitCommand(
 
     default:
       console.error(
-        `Error: Unsupported emit target '${target}'. Supported targets: compose, openapi, graphql, mcp, uidl, sql:postgres, sql:sqlite, types:ts, types:java, types:python, types:go`
+        `Error: Unsupported emit target '${target}'. Supported targets: compose, openapi, asyncapi, json-schema, graphql, mcp, uidl, sql:postgres, sql:sqlite, types:ts, types:java, types:python, types:go`
       );
       return false;
   }

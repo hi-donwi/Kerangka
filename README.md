@@ -91,6 +91,12 @@ kerangka emit sql:postgres examples/invoicing.kerangka.json -o schema.sql
 kerangka emit asyncapi examples/commerce -o asyncapi.json
 kerangka emit asyncapi examples/invoicing.kerangka.json --broker nats --host events:4222
 
+# The data shape and form contract (JSON Schema 2020-12): one definition per entity
+# and per event payload, readOnly on what the engine computes
+kerangka emit json-schema examples/invoicing.kerangka.json -o schema.json
+kerangka emit json-schema examples/invoicing.kerangka.json --entity Invoice   # one form
+kerangka emit json-schema examples/commerce --event OrderPlaced              # one payload
+
 # Launch zero-config dev server with interactive playground
 kerangka dev examples/invoicing.kerangka.json --port 3000
 ```
