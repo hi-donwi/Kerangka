@@ -8,6 +8,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { compile, diffModels } from "@kerangka/compiler";
+import { resolveTargetFile } from "../target.js";
 
 export interface DiffCommandOptions {
   checkBreaking?: boolean;
@@ -15,8 +16,9 @@ export interface DiffCommandOptions {
 
 export function diffCommand(oldPath: string, newPath: string, options: DiffCommandOptions = {}): boolean {
   try {
-    const fullOld = path.resolve(process.cwd(), oldPath);
-    const fullNew = path.resolve(process.cwd(), newPath);
+    // A workspace directory resolves to its manifest, the same as every other command.
+    const fullOld = resolveTargetFile(oldPath);
+    const fullNew = resolveTargetFile(newPath);
 
     if (!fs.existsSync(fullOld)) {
       console.error(`Error: Base file not found: ${oldPath}`);
@@ -30,8 +32,8 @@ export function diffCommand(oldPath: string, newPath: string, options: DiffComma
     const oldSource = fs.readFileSync(fullOld, "utf-8");
     const newSource = fs.readFileSync(fullNew, "utf-8");
 
-    const oldKir = compile(oldSource, { sourceFile: oldPath });
-    const newKir = compile(newSource, { sourceFile: newPath });
+    const oldKir = compile(oldSource, { sourcePath: fullOld });
+    const newKir = compile(newSource, { sourcePath: fullNew });
 
     const result = diffModels(oldKir, newKir);
 
@@ -46,6 +48,10 @@ export function diffCommand(oldPath: string, newPath: string, options: DiffComma
     for (const change of result.changes) {
       const tag = change.classification.toUpperCase().padEnd(10);
       console.log(`[${tag}] ${change.path}: ${change.message}`);
+      // A breaking change with a two-phase path says so here, where the developer is.
+      if (options.checkBreaking && change.hint) {
+        console.log(`           → ${change.hint}`);
+      }
     }
 
     if (options.checkBreaking && result.hasBreakingChanges) {

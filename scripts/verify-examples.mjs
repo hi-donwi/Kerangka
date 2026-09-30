@@ -42,8 +42,11 @@ for (const target of targets) {
   const verified = cli.verifyCommand(target);
   const tested = cli.testCommand(target);
   const contracts = EMIT_TARGETS.map((emitter) => cli.emitCommand(emitter, target, { output: "-" }));
+  // A model against itself must report no changes, and no breaking ones: it proves the
+  // differ sees the same structure the compiler produced, for every shipped example.
+  const selfDiff = cli.diffCommand(target, target, { checkBreaking: true });
 
-  if (!checked || !verified || !tested || contracts.some((ok) => !ok)) {
+  if (!checked || !verified || !tested || !selfDiff || contracts.some((ok) => !ok)) {
     failures += 1;
     console.error(`FAIL ${label}`);
   } else {

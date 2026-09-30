@@ -74,6 +74,8 @@ kerangka codegen examples/invoicing.kerangka.json --target python -o models.py
 kerangka codegen examples/invoicing.kerangka.json --target go -o models.go
 
 # Analyze breaking and structural changes between model versions
+# Entities, workflows, event payloads, and policies: an event is a contract with
+# every consumer that subscribes to it (ADR-0032)
 kerangka diff old.json new.json --check-breaking
 
 # Generate production-ready Docker Compose infrastructure
