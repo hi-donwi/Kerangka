@@ -65,6 +65,9 @@ run stores nothing.
 | Method | Purpose |
 |---|---|
 | `handle(event, actor)` | The host loop: react, run the policies, apply the effects |
+| `outbox(type=None)` | Events still waiting to be delivered, oldest first |
+| `ack(id)` | A queued event was delivered |
+| `nack(id, error)` | Delivery failed; the entry stays queued and counts the attempt |
 | `claims()` | Idempotency keys this session already honoured |
 | `get(entity, id)` | The stored aggregate, or `None` |
 | `list(entity)` | Every stored aggregate of an entity |
@@ -84,6 +87,36 @@ handled["failed"]     # refused, with their domain code
 ```
 
 An aggregate a policy creates needs an `id`, or the host cannot address what it stored.
+
+### A commit, or nothing
+
+A run's aggregates and its events are one commit: if any aggregate in the batch cannot be
+stored, nothing is written and the run comes back as an error rather than a success the
+host cannot honour.
+
+```python
+result = kerangka.run("Invoice.send", record, actor=actor)
+result["commit"]      # {"persisted": 1, "enqueued": 1, "ids": ["inv-1"]}
+```
+
+### The outbox
+
+An emitted event is queued, not delivered. A host takes what is pending, delivers it, and
+says so; a failure leaves the entry queued with the attempt counted, so a broker outage
+retries instead of losing the event.
+
+```python
+for entry in kerangka.outbox():
+    try:
+        broker.publish(entry["event"])
+        kerangka.ack(entry["id"])
+    except OSError as err:
+        kerangka.nack(entry["id"], str(err))
+```
+
+The sidecar never delivers anything itself — it cannot know what "delivered" means. A
+crash between publishing and acknowledging redelivers, so a consumer must be idempotent;
+the same reason `handle` claims an idempotency key.
 
 These are sidecar methods, not Runtime API ones: a native engine stays pure, and a real
 deployment brings its own database. The store is in memory, per sidecar process.

@@ -106,6 +106,21 @@ def main() -> int:
         # ids exist for the same reason: the store addresses by id or not at all.
         check("claims start empty", kerangka.claims() == [], f"claims={kerangka.claims()}")
 
+        # The outbox: an emitted event waits until a host says it was delivered. The
+        # aggregate is stored either way, so a broker outage cannot lose the write.
+        queued = kerangka.outbox("InvoiceSent")
+        check("the emitted event waits in the outbox", len(queued) == 1,
+              f"pending={[e['event']['type'] for e in kerangka.outbox()]}")
+        check("a failed delivery stays queued and counts the attempt",
+              (lambda e: e["attempts"] == 1 and e["state"] == "pending")(
+                  kerangka.nack(queued[0]["id"], "broker unreachable")))
+        check("nothing is pending twice after one event", len(kerangka.outbox()) == 1)
+        check("a delivered event leaves the queue",
+              kerangka.ack(queued[0]["id"])["state"] == "delivered")
+        check("the queue is empty once delivered", kerangka.outbox() == [])
+        check("history keeps the delivered event",
+              len(kerangka.events("InvoiceSent")) == 1)
+
         try:
             kerangka.call("teleport")
             check("an unknown method raises", False, "no error raised")

@@ -59,10 +59,19 @@ describe("the sidecar session store", () => {
     expect((fetched.result as unknown as { record: { status: string } }).record.status).toBe("paid");
   });
 
-  it("stores nothing for an aggregate with no id to address it by", () => {
+  it("refuses a run whose aggregate has no id, and stores nothing", () => {
     const { call } = session();
-    const sent = call("run", { action: "Invoice.send", record: { ...draft, id: undefined }, actor: billing });
-    expect((sent.result as unknown as { ok: boolean }).ok).toBe(true);
+    const sent = call("run", {
+      action: "Invoice.send",
+      record: { ...draft, id: undefined },
+      actor: billing,
+    });
+
+    // The engine says the run succeeded, so a host that cannot keep it must not report
+    // success either: the run comes back as a protocol error carrying the code.
+    expect(sent.result).toBeUndefined();
+    expect(sent.error?.code).toBe(-32000);
+    expect(JSON.stringify(sent.error)).toContain("EFFECTS_NOT_APPLIED");
 
     const listed = call("list", { entity: "Invoice" });
     expect((listed.result as unknown as { records: never[] }).records).toEqual([]);

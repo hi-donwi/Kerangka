@@ -11,7 +11,7 @@
  */
 
 import { Engine } from "@kerangka/engine-ts";
-import { SessionStore } from "./session-store.js";
+import { EffectApplicationError, OutboxEntry, SessionStore } from "./session-store.js";
 
 export const PARSE_ERROR = -32700;
 export const INVALID_REQUEST = -32600;
@@ -163,10 +163,24 @@ function invoke(engine: Engine, store: SessionStore, method: string, params: Rec
       const options = optionalObject(params, "options");
       const record = hydrate(store, action, raw);
       const result = engine.run(action, record, input, actor, options);
-      if (result.ok) {
-        store.applyEffects(action.split(".")[0] ?? "", result.effects, result.events);
+      if (!result.ok) {
+        return result;
       }
-      return result;
+      try {
+        const commit = store.applyEffects(
+          action.split(".")[0] ?? "",
+          result.effects,
+          result.events
+        );
+        return { ...result, commit };
+      } catch (err) {
+        // The engine says the run succeeded, so a host that could not keep it must not
+        // report success. Nothing was written: applyEffects stages before it commits.
+        if (err instanceof EffectApplicationError) {
+          throw failure(ENGINE_ERROR, err.message, { code: err.code });
+        }
+        throw err;
+      }
     }
 
     case "get": {
@@ -258,8 +272,21 @@ function invoke(engine: Engine, store: SessionStore, method: string, params: Rec
 
         const result = engine.run(invocation.action, record, invocation.input, actor);
         if (result.ok) {
-          store.applyEffects(invocation.action.split(".")[0] ?? "", result.effects, result.events);
-          runs.push({ policy: invocation.policy, action: invocation.action, result });
+          try {
+            store.applyEffects(
+              invocation.action.split(".")[0] ?? "",
+              result.effects,
+              result.events
+            );
+            runs.push({ policy: invocation.policy, action: invocation.action, result });
+          } catch (err) {
+            // Nothing was written for this policy; the others are unaffected.
+            failed.push({
+              action: invocation.action,
+              code: err instanceof EffectApplicationError ? err.code : "EFFECTS_NOT_APPLIED",
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
         } else {
           failed.push({
             action: invocation.action,
@@ -276,6 +303,31 @@ function invoke(engine: Engine, store: SessionStore, method: string, params: Rec
         skipped,
         failed,
       };
+    }
+
+    case "outbox": {
+      const type = typeof params.type === "string" ? params.type : undefined;
+      const entries = store.pending().filter((entry) => !type || entry.event.type === type);
+      return { entries };
+    }
+
+    case "ack": {
+      const id = requireString(params, "id");
+      const entry = store.ack(id);
+      if (!entry) {
+        throw failure(INVALID_PARAMS, `No outbox entry '${id}'`);
+      }
+      return { entry };
+    }
+
+    case "nack": {
+      const id = requireString(params, "id");
+      const error = typeof params.error === "string" ? params.error : undefined;
+      const entry = store.nack(id, error);
+      if (!entry) {
+        throw failure(INVALID_PARAMS, `No outbox entry '${id}'`);
+      }
+      return { entry };
     }
 
     case "claims": {
@@ -351,11 +403,17 @@ export function createJsonRpcDispatcher(
         const rpcError = err as { code?: number; message?: string; data?: unknown };
         // An engine failure that already carries a stable code keeps it.
         const code = typeof rpcError.code === "number" ? rpcError.code : ENGINE_ERROR;
-        return invalid(
-          code >= ENGINE_ERROR && code !== METHOD_NOT_FOUND
-            ? { code: ENGINE_ERROR, message: String(rpcError.message), data: { code } }
-            : { code, message: String(rpcError.message), ...(rpcError.data === undefined ? {} : { data: rpcError.data }) },
-        );
+        // A failure that already carries a stable code keeps it. `data` set by the
+        // method layer is the domain code as a string; otherwise the numeric one goes in.
+        const data =
+          rpcError.data !== undefined
+            ? rpcError.data
+            : { code: code >= ENGINE_ERROR && code !== METHOD_NOT_FOUND ? ENGINE_ERROR : code };
+        return invalid({
+          code: code >= ENGINE_ERROR && code !== METHOD_NOT_FOUND ? ENGINE_ERROR : code,
+          message: String(rpcError.message),
+          data,
+        });
       }
       return invalid(failure(ENGINE_ERROR, err instanceof Error ? err.message : String(err)));
     }

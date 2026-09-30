@@ -211,6 +211,18 @@ class Sidecar:
         """
         return self.call("handle", event=event, actor=actor)
 
+    def outbox(self, type: Optional[str] = None) -> List[Dict[str, Any]]:  # noqa: A002
+        """Events still waiting for a host to deliver them, oldest first."""
+        return self.call("outbox", type=type)["entries"]
+
+    def ack(self, entry_id: str) -> Dict[str, Any]:
+        """Tell the sidecar a queued event was delivered."""
+        return self.call("ack", id=entry_id)["entry"]
+
+    def nack(self, entry_id: str, error: Optional[str] = None) -> Dict[str, Any]:
+        """Delivery failed: the entry stays queued to be retried."""
+        return self.call("nack", id=entry_id, error=error)["entry"]
+
     def claims(self) -> List[str]:
         """Idempotency keys this session has already honoured."""
         return self.call("claims")["claims"]
