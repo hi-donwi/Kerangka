@@ -99,6 +99,41 @@ export function verifyDecisionTables(
     const table = tableRaw as any;
     if (!table || typeof table !== "object") continue;
 
+    // A versioned table (§5.12) carries its rows per period, so each period is
+    // analysed as the table it is: overlaps and gaps are per period, not across them.
+    if (Array.isArray(table.versions) && table.versions.length > 0) {
+      table.versions.forEach((version: unknown, index: number) => {
+        const period = (version ?? {}) as Record<string, unknown>;
+        const from = typeof period.validFrom === "string" ? period.validFrom : `#${index + 1}`;
+        const to = typeof period.validTo === "string" ? ` to ${period.validTo}` : "";
+        findings.push(
+          ...analyzeRows(
+            { ...table, rows: period.rows ?? period.rules, versions: undefined },
+            pointer("decisions", tableName, "versions", String(index)),
+            `Decision table '${tableName}' version ${from}${to}`,
+            locator
+          )
+        );
+      });
+      continue;
+    }
+
+    findings.push(...analyzeRows(table, pointer("decisions", tableName), `Decision table '${tableName}'`, locator));
+  }
+
+  return findings;
+}
+
+/** Overlapping rows, catch-all rows, and numerical gaps in one table. */
+function analyzeRows(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  table: any,
+  tablePtr: string,
+  label: string,
+  locator?: SourceLocator
+): CompilerDiagnostic[] {
+  const findings: CompilerDiagnostic[] = [];
+  {
     const hitPolicy = table.hitPolicy || "first";
     const inputs: Array<{ name: string; type?: string }> = Array.isArray(table.inputs) ? table.inputs : [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -113,20 +148,19 @@ export function verifyDecisionTables(
           }))
         : [];
 
-    const tablePtr = pointer("decisions", tableName);
     const tablePos = locator?.locate(tablePtr);
 
     if (inputs.length > 0 && rules.length === 0) {
       findings.push({
         severity: "error",
         code: "DECISION_EMPTY_TABLE",
-        message: `Decision table '${tableName}' declares inputs but contains no rules.`,
+        message: `${label} declares inputs but contains no rules.`,
         path: tablePtr,
         line: tablePos?.line,
         column: tablePos?.column,
-        hint: `Add rules to table '${tableName}' or specify a default output.`,
+        hint: `Add rules to ${label} or specify a default output.`,
       });
-      continue;
+      return findings;
     }
 
     // Check for catch-all default row ("-" in all input cells)
@@ -170,14 +204,28 @@ export function verifyDecisionTables(
           }
         }
 
+        // A specific row next to a catch-all row is how a table expresses "this tier
+        // gets a different answer": under 'first' the specific row shadows the
+        // catch-all, which is the point. Under 'unique' both really do match, so the
+        // finding stays an error there.
+        const wildcards = (rule: { inputs?: unknown[] }) =>
+          Array.isArray(rule.inputs)
+            ? rule.inputs.every(
+                (cell) => cell === "-" || cell === "" || cell === undefined || cell === null
+              )
+            : false;
+        if (allColumnsOverlap && hitPolicy !== "unique" && wildcards(ruleA) !== wildcards(ruleB)) {
+          allColumnsOverlap = false;
+        }
+
         if (allColumnsOverlap) {
-          const ruleBPtr = pointer("decisions", tableName, "rules", j);
+          const ruleBPtr = `${tablePtr}/rules/${j}`;
           const ruleBPos = locator?.locate(ruleBPtr);
           const isUniquePolicy = hitPolicy === "unique";
           findings.push({
             severity: isUniquePolicy ? "error" : "warning",
             code: "DECISION_OVERLAPPING_ROWS",
-            message: `Decision table '${tableName}' has overlapping rules: rule #${i + 1} and rule #${j + 1} can match the same inputs.`,
+            message: `${label} has overlapping rules: rule #${i + 1} and rule #${j + 1} can match the same inputs.`,
             path: ruleBPtr,
             line: ruleBPos?.line,
             column: ruleBPos?.column,
@@ -216,7 +264,7 @@ export function verifyDecisionTables(
           findings.push({
             severity: "error",
             code: "DECISION_TABLE_GAP",
-            message: `Decision table '${tableName}' has a gap: input values below ${first.min} are not covered by any rule.`,
+            message: `${label} has a gap: input values below ${first.min} are not covered by any rule.`,
             path: tablePtr,
             line: tablePos?.line,
             column: tablePos?.column,
@@ -232,7 +280,7 @@ export function verifyDecisionTables(
             findings.push({
               severity: "error",
               code: "DECISION_TABLE_GAP",
-              message: `Decision table '${tableName}' has a gap between ${curr.max} and ${next.min}: no rule matches this range.`,
+              message: `${label} has a gap between ${curr.max} and ${next.min}: no rule matches this range.`,
               path: tablePtr,
               line: tablePos?.line,
               column: tablePos?.column,
@@ -616,6 +664,260 @@ export function verifyEvents(
 /**
  * Top-level static verification function for a Kerangka model.
  */
+/**
+ * Verifies effective-dated periods (PLAN.md §5.12): a rule or decision table that
+ * declares `versions` resolves to the version whose period contains the effective
+ * date, so a period that overlaps, leaves a gap, or is written out of order changes
+ * results without saying so.
+ */
+export function verifyEffectiveDated(
+  doc: KIRDocument | Record<string, unknown>,
+  locator?: SourceLocator
+): CompilerDiagnostic[] {
+  const findings: CompilerDiagnostic[] = [];
+  const document = doc as {
+    decisions?: Record<string, unknown>;
+    entities?: Record<string, { fields?: Record<string, unknown>; rules?: unknown[] }>;
+  };
+
+  for (const [tableName, raw] of Object.entries(document.decisions ?? {})) {
+    const table = raw as {
+      effectiveDate?: string;
+      rows?: unknown;
+      versions?: unknown;
+    };
+    if (Array.isArray(table.rows) && Array.isArray(table.versions)) {
+      findings.push({
+        severity: "error",
+        code: "EFFECTIVE_AMBIGUOUS_ROWS",
+        message: `Decision table '${tableName}' declares both 'rows' and 'versions'.`,
+        path: pointer("decisions", tableName),
+        line: locator?.locate(pointer("decisions", tableName))?.line,
+        column: locator?.locate(pointer("decisions", tableName))?.column,
+        hint: "A versioned table takes its rows from the applicable period; move the rows into a version.",
+      });
+    }
+    findings.push(
+      ...verifyPeriods(
+        table.versions,
+        pointer("decisions", tableName, "versions"),
+        `Decision table '${tableName}'`,
+        locator
+      )
+    );
+  }
+
+  for (const [entityName, entity] of Object.entries(document.entities ?? {})) {
+    const fieldNames = new Set(Object.keys(entity.fields ?? {}));
+    for (const [i, raw] of (entity.rules ?? []).entries()) {
+      const rule = raw as {
+        id?: string;
+        effectiveDate?: string;
+        versions?: unknown;
+      };
+      const at = pointer("entities", entityName, "rules", i);
+      const label = `Rule '${rule.id ?? i + 1}' of ${entityName}`;
+
+      if (rule.effectiveDate && !fieldNames.has(rule.effectiveDate)) {
+        const pos = locator?.locate(`${at}/effectiveDate`);
+        findings.push({
+          severity: "error",
+          code: "EFFECTIVE_DATE_UNKNOWN_FIELD",
+          message: `${label} selects versions by '${rule.effectiveDate}', which ${entityName} does not declare.`,
+          path: `${at}/effectiveDate`,
+          line: pos?.line,
+          column: pos?.column,
+          hint: `Declare the field, or drop effectiveDate so the date of the run selects the version.`,
+        });
+      }
+
+      findings.push(...verifyPeriods(rule.versions, `${at}/versions`, label, locator));
+    }
+  }
+
+  return findings;
+}
+
+interface VersionPeriod {
+  validFrom?: unknown;
+  validTo?: unknown;
+}
+
+/** One ordered list of periods: valid dates, no overlap, no gap, no duplicate start. */
+function verifyPeriods(
+  raw: unknown,
+  at: string,
+  label: string,
+  locator?: SourceLocator
+): CompilerDiagnostic[] {
+  const findings: CompilerDiagnostic[] = [];
+  if (raw === undefined) return findings;
+
+  if (!Array.isArray(raw)) {
+    const pos = locator?.locate(at);
+    findings.push({
+      severity: "error",
+      code: "EFFECTIVE_VERSIONS_MALFORMED",
+      message: `${label} declares 'versions', which is not a list of periods.`,
+      path: at,
+      line: pos?.line,
+      column: pos?.column,
+      hint: "Each version is an object with validFrom and optional validTo.",
+    });
+    return findings;
+  }
+
+  if (raw.length === 0) {
+    const pos = locator?.locate(at);
+    findings.push({
+      severity: "error",
+      code: "EFFECTIVE_VERSIONS_EMPTY",
+      message: `${label} declares 'versions' but lists no period, so nothing ever applies.`,
+      path: at,
+      line: pos?.line,
+      column: pos?.column,
+      hint: "Add a version, or drop 'versions' and declare the check or rows directly.",
+    });
+    return findings;
+  }
+
+  const at_ = (index: number, key?: string) => (key ? `${at}/${index}/${key}` : `${at}/${index}`);
+  const start: Array<VersionPeriod & { from: number | null; to: number | null; implicitTo?: boolean; index: number }> = raw.map((version, index) => {
+    const period = (version ?? {}) as VersionPeriod;
+    const from = parseBoundary(period.validFrom);
+    const to = parseBoundary(period.validTo);
+
+    if (period.validFrom !== undefined && from === null) {
+      const pos = locator?.locate(at_(index, "validFrom"));
+      findings.push({
+        severity: "error",
+        code: "EFFECTIVE_VERSION_INVALID_DATE",
+        message: `${label} version ${index + 1} has validFrom '${String(period.validFrom)}', which is not a date.`,
+        path: at_(index, "validFrom"),
+        line: pos?.line,
+        column: pos?.column,
+        hint: "Write it as YYYY-MM-DD.",
+      });
+    }
+    if (period.validTo !== undefined && to === null) {
+      const pos = locator?.locate(at_(index, "validTo"));
+      findings.push({
+        severity: "error",
+        code: "EFFECTIVE_VERSION_INVALID_DATE",
+        message: `${label} version ${index + 1} has validTo '${String(period.validTo)}', which is not a date.`,
+        path: at_(index, "validTo"),
+        line: pos?.line,
+        column: pos?.column,
+        hint: "Write it as YYYY-MM-DD, or omit it for an open period.",
+      });
+    }
+    if (from !== null && to !== null && to < from) {
+      const pos = locator?.locate(at_(index, "validTo"));
+      findings.push({
+        severity: "error",
+        code: "EFFECTIVE_VERSION_INVALID_RANGE",
+        message: `${label} version ${index + 1} ends before it starts.`,
+        path: at_(index, "validTo"),
+        line: pos?.line,
+        column: pos?.column,
+        hint: "validTo is the first date the version no longer applies.",
+      });
+    }
+
+    return { index, from, to };
+  });
+
+  // A version without `validTo` ends the day before the next one starts: §5.12's own
+  // example is a list of `validFrom` alone, and that is what a reader expects.
+  const DAY = 86_400_000;
+  start.forEach((version, index) => {
+    const next = start[index + 1];
+    if (version.to === null && next?.from !== null && next?.from !== undefined) {
+      version.to = next.from - DAY;
+      version.implicitTo = true;
+    }
+  });
+
+  for (let i = 0; i < start.length - 1; i++) {
+    const current = start[i]!;
+    const next = start[i + 1]!;
+    if (current.from === null || next.from === null) continue;
+
+    if (next.from < current.from) {
+      const pos = locator?.locate(at_(next.index, "validFrom"));
+      findings.push({
+        severity: "error",
+        code: "EFFECTIVE_VERSIONS_UNSORTED",
+        message: `${label} version ${next.index + 1} starts before version ${current.index + 1}; the list must read oldest first.`,
+        path: at_(next.index, "validFrom"),
+        line: pos?.line,
+        column: pos?.column,
+        hint: "Sort the versions by validFrom.",
+      });
+      continue;
+    }
+
+    if (next.from === current.from) {
+      const pos = locator?.locate(at_(next.index, "validFrom"));
+      findings.push({
+        severity: "error",
+        code: "EFFECTIVE_VERSIONS_DUPLICATE_START",
+        message: `${label} versions ${current.index + 1} and ${next.index + 1} start on the same day.`,
+        path: at_(next.index, "validFrom"),
+        line: pos?.line,
+        column: pos?.column,
+        hint: "One version per day; the later one replaces the earlier.",
+      });
+      continue;
+    }
+
+    if (current.to === null) continue;
+
+    if (current.to >= next.from) {
+      const pos = locator?.locate(at_(current.index, "validTo"));
+      findings.push({
+        severity: "error",
+        code: "EFFECTIVE_VERSIONS_OVERLAP",
+        message: `${label} version ${current.index + 1} runs to ${day(current.to)}, which is also version ${next.index + 1}'s first day.`,
+        path: at_(current.index, "validTo"),
+        line: pos?.line,
+        column: pos?.column,
+        hint: `Close version ${current.index + 1} on ${day(next.from - DAY)}; a day belongs to one version.`,
+      });
+      continue;
+    }
+
+    if (current.to < next.from - DAY) {
+      const pos = locator?.locate(at_(next.index, "validFrom"));
+      findings.push({
+        severity: "error",
+        code: "EFFECTIVE_VERSIONS_GAP",
+        message: `${label} has no version between ${day(current.to)} and ${day(next.from)}.`,
+        path: at_(next.index, "validFrom"),
+        line: pos?.line,
+        column: pos?.column,
+        hint: `Add a version covering ${day(current.to + DAY)} to ${day(next.from - DAY)}, or make the periods meet.`,
+      });
+    }
+  }
+
+  return findings;
+}
+
+/** A period boundary as a date, because an epoch in a diagnostic helps nobody. */
+function day(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/** A period boundary, compared as a day. `null` when it is absent or unreadable. */
+function parseBoundary(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return null;
+  const parsed = Date.parse(value.length === 10 ? `${value}T00:00:00Z` : value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 export function verifyDocument(
   doc: KIRDocument | Record<string, unknown>,
   sourceText?: string
@@ -629,6 +931,7 @@ export function verifyDocument(
     ...verifyPermissions(doc, locator),
     ...verifyEvents(doc, locator),
     ...verifyPolicyTargets(doc, locator),
+    ...verifyEffectiveDated(doc, locator),
   ];
 
   const errors = findings.filter((f) => f.severity === "error");

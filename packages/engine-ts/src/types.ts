@@ -167,6 +167,28 @@ export interface DecisionTableDef {
    */
   rows?: DecisionRow[];
   rules?: DecisionRule[];
+  /**
+   * Effective-dated periods (PLAN.md §5.12). When present, the version whose period
+   * contains the effective date supplies the rows.
+   */
+  versions?: DecisionVersion[];
+  /** The input field that selects a version. Defaults to the date of the call. */
+  effectiveDate?: string;
+}
+
+export interface DecisionVersion {
+  validFrom: string;
+  validTo?: string;
+  rows?: DecisionRow[];
+  rules?: DecisionRule[];
+}
+
+/** One period of a rule (PLAN.md §5.12), as the engine sees it. */
+export interface RuleVersionDef {
+  validFrom: string;
+  validTo?: string;
+  check: unknown;
+  message?: string;
 }
 
 export interface DecisionResult {

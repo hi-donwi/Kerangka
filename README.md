@@ -27,8 +27,10 @@ across stacks.
 ## Features
 
 - **Pure Reference Engine:** Executes computations, rules, invariants, and state transitions deterministically without direct I/O.
+- **Effective-Dated Rules:** A rate or fee that changes over time keeps its history: `versions` with `validFrom`/`validTo` on a rule or a decision table, the period chosen by the field the model names (PLAN.md §5.12). A record from 2026 is decided with the 2026 rules, and `keranga verify` reports periods that overlap, leave a gap, or are not oldest first.
 - **Runtime Ports & Adapters:** Pluggable store contracts (`StorePort`, `CachePort`, `BusPort`, etc.) with out-of-the-box adapters for PostgreSQL and zero-dependency SQLite (Node 22 `node:sqlite`).
 - **Declarative Projections:**
+  - **JSON Schema 2020-12:** One definition per entity and per event payload, with `readOnly` on what the engine computes.
   - **OpenAPI 3.1 & REST API:** Generates comprehensive OpenAPI specifications and RFC 9457 Problem Details error schemas.
   - **GraphQL SDL:** Generates complete GraphQL schemas with queries, mutations, and filter inputs.
   - **Model Context Protocol (MCP):** Generates tool schemas for AI coding agents (`list_*`, `get_*`, `create_*`, `update_*`, `delete_*`, `transition_*`).

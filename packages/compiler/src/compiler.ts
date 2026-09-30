@@ -443,27 +443,50 @@ export class Compiler {
 
     // Compile rules
     const compiledRules = (entity.rules ?? []).map((rule, i) => {
-      let checkAst: ExprNode;
-      if (typeof rule.check === "string") {
-        try {
-          checkAst = compileExpression(rule.check);
-        } catch (err) {
-          this.addError(
-            "EXPRESSION_ERROR",
-            `Invalid rule check expression '${rule.check}' in ${entityName}: ${(err as Error).message}`,
-            `${origins.rules[i] ?? pointer("entities", entityName, "rules", i)}/check`,
-            EXPRESSION_HINT
-          );
-          checkAst = { literal: false };
-        }
-      } else {
-        checkAst = rule.check;
+      const rulePointer = origins.rules[i] ?? pointer("entities", entityName, "rules", i);
+      const checkAst = this.compileCheck(
+        rule.check,
+        `${rulePointer}/check`,
+        `rule '${rule.id}' of ${entityName}`
+      );
+
+      // §5.12: a versioned rule keeps every period, or the history of a record is
+      // silently rewritten by the first rate change.
+      if (rule.versions !== undefined && !Array.isArray(rule.versions)) {
+        this.addError(
+          "EFFECTIVE_VERSIONS_MALFORMED",
+          `Rule '${rule.id}' of ${entityName} declares 'versions', which is not a list of periods.`,
+          `${rulePointer}/versions`,
+          "Each version is an object with validFrom and optional validTo."
+        );
+      } else if (Array.isArray(rule.versions) && rule.versions.length === 0) {
+        this.addError(
+          "EFFECTIVE_VERSIONS_EMPTY",
+          `Rule '${rule.id}' of ${entityName} declares 'versions' but lists no period, so nothing ever applies.`,
+          `${rulePointer}/versions`,
+          "Add a version, or drop 'versions' and declare the check directly."
+        );
       }
+      const versions = Array.isArray(rule.versions)
+        ? rule.versions.map((version, j) => ({
+          validFrom: version.validFrom,
+          validTo: version.validTo,
+          check: this.compileCheck(
+            version?.check,
+            `${rulePointer}/versions/${j}/check`,
+            `rule '${rule.id}' of ${entityName}`
+          ),
+          message: version?.message,
+        }))
+        : undefined;
+
       return {
         id: rule.id,
         field: rule.field,
         message: rule.message,
         check: checkAst,
+        ...(rule.effectiveDate ? { effectiveDate: rule.effectiveDate } : {}),
+        ...(versions && versions.length > 0 ? { versions } : {}),
       };
     });
 
@@ -628,6 +651,29 @@ export class Compiler {
       transitions: compiledTransitions,
       ...(rawWorkflow.tasks ? { tasks: rawWorkflow.tasks } : {}),
     };
+  }
+
+  /**
+   * A rule check, written as an expression string or already parsed. An unparsable
+   * check is a diagnostic and a false predicate, never a rule that silently passes.
+   */
+  private compileCheck(
+    check: ExprNode | string,
+    at: string,
+    subject: string
+  ): ExprNode {
+    if (typeof check !== "string") return check;
+    try {
+      return compileExpression(check);
+    } catch (err) {
+      this.addError(
+        "EXPRESSION_ERROR",
+        `Invalid check expression in ${subject}: ${(err as Error).message}`,
+        at,
+        EXPRESSION_HINT
+      );
+      return { literal: false };
+    }
   }
 
   private addError(code: string, message: string, path?: string, hint?: string): void {

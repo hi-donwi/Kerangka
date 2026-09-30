@@ -15,7 +15,8 @@
       "fields": {
         "name": "string!",
         "email": "email!",
-        "creditLimit": "decimal(12,2) >= 0 = 0"
+        "creditLimit": "decimal(12,2) >= 0 = 0",
+        "tier": "string = \"standard\""
       }
     },
     "Invoice": {
@@ -225,5 +226,46 @@
         "error": "GUARD_FAILED"
       }
     }
-  ]
+  ],
+  "decisions": {
+    "creditLimitFor": {
+      "effectiveDate": "issuedOn",
+      "inputs": [
+        {
+          "name": "tier",
+          "type": "string"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "limit",
+          "type": "decimal"
+        }
+      ],
+      "versions": [
+        {
+          "validFrom": "2026-01-01",
+          "rows": [
+            {
+              "tier": "-",
+              "limit": "5000.00"
+            }
+          ]
+        },
+        {
+          "validFrom": "2027-01-01",
+          "rows": [
+            {
+              "tier": "gold",
+              "limit": "25000.00"
+            },
+            {
+              "tier": "-",
+              "limit": "10000.00"
+            }
+          ]
+        }
+      ]
+    }
+  }
 }

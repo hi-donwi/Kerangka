@@ -352,6 +352,80 @@ export class Engine {
   }
 
   /** Evaluation context with the model's decision tables bound as functions. */
+  /**
+   * The date a period is chosen by: the field the model names, or the date of the
+   * call. A record keeps the rules that were valid when it happened, so this is
+   * explicit input rather than whatever the clock says later (PLAN.md §5.12).
+   */
+  private effectiveDateOf(
+    fieldName: string | undefined,
+    source: Record<string, unknown>,
+    now?: string | Date
+  ): { value: unknown; error?: string } {
+    if (!fieldName) {
+      return { value: now ? (typeof now === "string" ? now : now.toISOString()) : new Date().toISOString() };
+    }
+    const value = source?.[fieldName];
+    if (value === undefined || value === null || value === "") {
+      return {
+        value: undefined,
+        error: `Field '${fieldName}' selects the effective date but the record has no value for it.`,
+      };
+    }
+    return { value };
+  }
+
+  /**
+   * The version whose period contains the effective date. Periods are half-open in
+   * the sense §5.12 reads them: `validFrom` and `validTo` are both inclusive days, a
+   * version without `validTo` ends the day before the next one starts, and a date
+   * outside every period is an error rather than a silent fall-through — which is why
+   * `keranga verify` rejects overlaps and gaps before a run can reach here.
+   */
+  private applicableVersion(
+    versions: EffectiveVersion[],
+    effective: { value: unknown; error?: string }
+  ):
+    | { version: EffectiveVersion; error?: undefined; code?: undefined }
+    | { version?: undefined; error: string; code: string } {
+    if (effective.error !== undefined) {
+      return { error: effective.error, code: "EFFECTIVE_DATE_MISSING" };
+    }
+
+    const at = dayOf(effective.value);
+    if (at === null) {
+      return {
+        error: `'${String(effective.value)}' is not a date, so no period can be selected.`,
+        code: "EFFECTIVE_DATE_INVALID",
+      };
+    }
+
+    const periods = versions;
+    let applicable: EffectiveVersion | undefined;
+    for (const version of periods) {
+      const from = dayOf(version?.validFrom);
+      if (from === null || at < from) continue;
+      applicable = version;
+    }
+
+    if (applicable) {
+      const to = dayOf(applicable.validTo);
+      if (to !== null && at > to) {
+        return {
+          error: `No version covers ${isoDay(at)}; the closest one ended on ${isoDay(to)}.`,
+          code: "EFFECTIVE_VERSION_GAP",
+        };
+      }
+    } else {
+      return {
+        error: `No version covers ${isoDay(at)}; the first one starts on ${isoDay(dayOf(periods[0]?.validFrom) ?? at)}.`,
+        code: "EFFECTIVE_VERSION_BEFORE_ORIGIN",
+      };
+    }
+
+    return { version: applicable! };
+  }
+
   private evalContext(base: Record<string, unknown>): Record<string, unknown> {
     return { ...base, functions: this.decisionFunctions() };
   }
@@ -516,7 +590,11 @@ export class Engine {
     return result;
   }
 
-  validate(entityName: string, record: Record<string, unknown>): ValidationResult {
+  validate(
+    entityName: string,
+    record: Record<string, unknown>,
+    now?: string | Date
+  ): ValidationResult {
     const entity = this.ir.entities?.[entityName];
     if (!entity) {
       return {
@@ -570,14 +648,37 @@ export class Engine {
     // 2. Business Rules validation
     if (Array.isArray(entity.rules)) {
       for (const rule of entity.rules) {
-        if (rule.check && typeof rule.check === "object") {
+        // A versioned rule (PLAN.md §5.12) keeps the check that was valid when the
+        // record happened, so a rate change does not rewrite history.
+        let check: unknown = rule.check;
+        let message: string = rule.message;
+        if (Array.isArray(rule.versions) && rule.versions.length > 0) {
+          const chosen = this.applicableVersion(rule.versions, this.effectiveDateOf(
+            rule.effectiveDate,
+            record,
+            now
+          ));
+          if (chosen.error !== undefined) {
+            errors.push({
+              id: rule.id,
+              field: rule.field,
+              message: chosen.error,
+              code: chosen.code,
+            });
+            continue;
+          }
+          check = chosen.version.check;
+          message = chosen.version.message ?? rule.message;
+        }
+
+        if (check && typeof check === "object") {
           try {
-            const passed = Boolean(evaluate(rule.check as ExprNode, this.evalContext({ record, data: record })));
+            const passed = Boolean(evaluate(check as ExprNode, this.evalContext({ record, data: record })));
             if (!passed) {
               errors.push({
                 id: rule.id,
                 field: rule.field,
-                message: rule.message,
+                message,
                 code: "RULE_FAILED",
               });
             }
@@ -585,7 +686,7 @@ export class Engine {
             errors.push({
               id: rule.id,
               field: rule.field,
-              message: rule.message,
+              message,
               code: "RULE_EVALUATION_ERROR",
             });
           }
@@ -1538,21 +1639,38 @@ export class Engine {
 
   decide(
     tableOrName: DecisionTableDef | string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    now?: string | Date
   ): DecisionResult {
-    let table: DecisionTableDef | undefined;
-    if (typeof tableOrName === "string") {
-      table = this.ir.decisions?.[tableOrName];
-    } else {
-      table = tableOrName;
-    }
+    const declared: DecisionTableDef | undefined =
+      typeof tableOrName === "string" ? this.ir.decisions?.[tableOrName] : tableOrName;
 
-    if (!table) {
+    if (!declared) {
       return {
         matched: false,
         hitCount: 0,
         error: `Decision table '${String(tableOrName)}' not found`,
         code: "TABLE_NOT_FOUND",
+      };
+    }
+
+    let table: DecisionTableDef = declared;
+
+    // A versioned table (PLAN.md §5.12) decides with the rows of the period that
+    // contains the effective date, so a fee change applies from its own day.
+    if (Array.isArray(table.versions) && table.versions.length > 0) {
+      const tableName = table.name || String(tableOrName);
+      const chosen = this.applicableVersion(
+        table.versions,
+        this.effectiveDateOf(table.effectiveDate, input, now)
+      );
+      if (chosen.error !== undefined) {
+        return { matched: false, hitCount: 0, error: chosen.error, code: chosen.code };
+      }
+      table = {
+        ...table,
+        rows: chosen.version.rows,
+        rules: chosen.version.rules,
       };
     }
 
@@ -1877,4 +1995,35 @@ export class Engine {
 
     return { passed: true, actual };
   }
+}
+
+/** One period as the engine reads it: a rule's check, or a table's rows. */
+interface EffectiveVersion {
+  validFrom?: string;
+  validTo?: string;
+  check?: unknown;
+  message?: string;
+  rows?: DecisionRow[];
+  rules?: DecisionRule[];
+}
+
+/** A date as a UTC day, or `null` when it is not one. Periods are days, not instants. */
+function dayOf(value: unknown): number | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate());
+  }
+  if (typeof value === "number") return Number.isNaN(value) ? null : value;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const text = value.trim();
+  const day = /^(?:"')?(\d{4}-\d{2}-\d{2})/.exec(text);
+  if (day) {
+    const parsed = Date.parse(`${day[1]}T00:00:00Z`);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  const parsed = Date.parse(text);
+  return Number.isNaN(parsed) ? null : Date.UTC(new Date(parsed).getUTCFullYear(), new Date(parsed).getUTCMonth(), new Date(parsed).getUTCDate());
+}
+
+function isoDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
 }

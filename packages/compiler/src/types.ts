@@ -75,11 +75,26 @@ export interface FieldDefinition {
   renamedFrom?: string;
 }
 
+/**
+ * One period of a rule (PLAN.md §5.12). A record keeps the check that was valid when
+ * it happened, so a rate change does not rewrite history.
+ */
+export interface RuleVersion {
+  validFrom: string;
+  validTo?: string;
+  check: ExprNode | string;
+  message?: string;
+}
+
 export interface RuleDefinition {
   id: string;
   field?: string;
   message: string;
   check: ExprNode | string;
+  /** Periods of this rule; the applicable one is chosen by the effective date. */
+  versions?: RuleVersion[];
+  /** The record field that selects a version. Defaults to `ctx.now`. */
+  effectiveDate?: string;
 }
 
 export interface InvariantDefinition {
@@ -197,7 +212,14 @@ export interface KIRDocument {
     embedded: boolean;
     fields: Record<string, FieldDefinition>;
     readFilter?: string;
-    rules?: { id: string; field?: string; message: string; check: ExprNode }[];
+    rules?: {
+      id: string;
+      field?: string;
+      message: string;
+      check: ExprNode;
+      effectiveDate?: string;
+      versions?: { validFrom: string; validTo?: string; check: ExprNode; message?: string }[];
+    }[];
     invariants?: { id: string; message: string; assert: ExprNode }[];
     permissions?: Record<string, unknown>;
     workflow?: {
