@@ -826,6 +826,67 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
       }
     });
 
+    /**
+     * The other direction of the drift. The earlier tests assert the document *contains* a
+     * path; this one asserts the server actually answers it, so a route described in
+     * `operational-openapi.ts` and never implemented is caught too. Documenting a route that
+     * does not work is the same defect as serving one nobody can find — it just wastes a
+     * generated client's time instead of a person's.
+     *
+     * Both directions are needed. The document is not derived from the router, so nothing
+     * structural keeps the two in step; a test that only walks one side passes happily while
+     * the other rots.
+     */
+    it("actually serves every operational route it documents", async () => {
+      const port = 4009;
+      const server = new KerangkaServer(kir, {
+        port,
+        quiet: true,
+        store: new MemoryStore(),
+        session: new SessionStore()
+      });
+      await server.start();
+      try {
+        const spec = await specFrom(`http://localhost:${port}`);
+        const operational = [
+          ["/api/mcp/tools", "GET"],
+          ["/api/mcp/call", "POST"],
+          ["/api/events", "GET"],
+          ["/api/events/nonexistent/ack", "POST"],
+          ["/api/events/nonexistent/nack", "POST"],
+          ["/api/effects", "GET"],
+          ["/api/effects/nonexistent/ack", "POST"],
+          ["/api/effects/nonexistent/nack", "POST"]
+        ] as const;
+
+        for (const [route, method] of operational) {
+          // The document uses `{id}` templates, so a probe with a literal id in it maps to
+          // the templated path. Comparing the raw probe would test nothing.
+          const documented = route.replace("/nonexistent/", "/{id}/");
+          expect(spec.paths[documented], `${method} ${route} is not documented`).toBeDefined();
+          const res = await fetch(`http://localhost:${port}${route}`, {
+            method,
+            ...(method === "POST"
+              ? { headers: { "content-type": "application/json" }, body: "{}" }
+              : {})
+          });
+          // 404 here means the documented "no such id" answer, which is a served route.
+          // 501 would mean the server declines to serve a route it documents.
+          expect([200, 400, 404], `${method} ${route} answered ${res.status}`).toContain(res.status);
+        }
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("serves the queue routes it documents as 501 only when there is no session", async () => {
+      // The converse: documented-with-a-session, and the document omits them without one.
+      // A guessed path still gets an honest 501 rather than a 404 that looks like a typo.
+      const res = await fetch(`${baseUrl}/api/events`);
+      expect(res.status).toBe(501);
+      expect((await res.json()).status).toBe(501);
+    });
+
     it("resolves every $ref in the document, operational routes included", async () => {
       const port = 4008;
       const server = new KerangkaServer(kir, {

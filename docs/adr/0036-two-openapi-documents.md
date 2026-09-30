@@ -79,6 +79,7 @@ and leaving it out would keep "the served document is complete" false.
 | Merge the operational routes into every emitted document, always | Same problem, and it would put transport concerns into a compiler that should know only about models. |
 | Serve the emitted document unchanged and let clients discover routes at runtime | Discovery is not a contract. A generated client still cannot call the outbox. |
 | Declare the operational routes as a model extension | Makes a deployment detail part of the model, which every other emitter would then have to understand. |
+| Generate the operational document from the router's own route table | The right end state, and the router has no table — it dispatches on `pathname ===` strings inside one method. Building the table is a larger change to the server than this defect warrants, so this run tests both directions of drift instead and leaves the generation for later. |
 
 ## Follow-up
 
@@ -86,4 +87,6 @@ and leaving it out would keep "the served document is complete" false.
 - [x] The server merges them in the constructor, keyed on whether a session is configured
 - [x] A `$ref` resolution test over the whole served document
 - [x] A guard that the emitted document stays model-only
+- [x] A test that every documented operational route is actually served, and that every
+      operational route the server serves is documented — both directions of drift
 - [x] README states which document is which
