@@ -29,6 +29,7 @@ import { graphCommand } from "../commands/graph.js";
 import { initCommand } from "../commands/init.js";
 import { addCommand } from "../commands/add.js";
 import { serveCommand } from "../commands/serve.js";
+import { runCommand } from "../commands/run.js";
 import { verifyCommand } from "../commands/verify.js";
 import { decisionsExportCommand, decisionsImportCommand } from "../commands/decisions.js";
 import { pkgCommand } from "../commands/pkg.js";
@@ -58,7 +59,7 @@ COMMANDS:
   compose <file>          Generate production-ready Docker Compose infrastructure
   emit <target> <file>    Unified projector (compose, openapi, graphql, mcp, uidl, sql:*, types:*)
   dev <file>              Run zero-config dev server with REST, MCP, and UIDL playground
-  serve <file>            Run production/sidecar server with REST and metadata endpoints
+  serve <file>            Run the sidecar: REST and metadata endpoints, or --stdio JSON-RPC
   verify <file>           Static analysis of workflows, permissions, decision tables, and events
   decisions <subcommand>  Import or export decision tables (decisions export | decisions import)
   codegen <file>          Generate typed models (TypeScript, Java 21, Python, Go)
@@ -67,6 +68,7 @@ COMMANDS:
   expand <file>           Display expanded entity models with resolved shorthands
   stats <file>            Display architectural metrics and complexity analysis
   test <file>             Execute declarative examples against the reference engine
+  run <file> <action>     Execute one action and print the result (--record, --input, --actor)
 
 OPTIONS:
   -d, --dialect <name>    SQL dialect for 'ddl' and 'db diff' (postgres | sqlite, default: postgres)
@@ -85,6 +87,12 @@ OPTIONS:
   --run <action>          Target action for 'add policy' (e.g. Invoice.create)
   --name <id>             Application name for 'init'
   --fail-on <severity>    Lowest severity that fails 'lint' (error | warning, default: error)
+  --stdio                 Serve JSON-RPC 2.0 over stdin/stdout instead of HTTP
+  --record <path>         Initial record JSON file for 'run' (inline JSON also accepted)
+  --input <path>          Action input JSON file for 'run' (inline JSON also accepted)
+  --actor <path>          Actor JSON file for 'run', e.g. {"id":"u1","roles":["billing"]}
+  --now <iso>             Fixed clock for 'run' (deterministic traces and timers)
+  --trace                 Include the evaluation trace in the 'run' result
   -o, --output <path>     Output file or directory path (use '-' for stdout)
   -p, --port <number>     Port for dev server (default: 3000)
   --drop                  Include DROP TABLE IF EXISTS statements in DDL
@@ -107,6 +115,8 @@ EXAMPLES:
   kerangka graph examples/commerce
   kerangka graph examples/commerce --topology distributed
   kerangka dev examples/invoicing.kerangka.json --port 3000
+  kerangka run examples/invoicing.kerangka.json Invoice.send --record invoice.json --actor actor.json
+  kerangka serve examples/todo.kerangka.json --stdio
 `);
 }
 
@@ -140,6 +150,12 @@ async function main(): Promise<void> {
         from: { type: "string" },
         into: { type: "string" },
         "hit-policy": { type: "string" },
+        stdio: { type: "boolean" },
+        record: { type: "string" },
+        input: { type: "string" },
+        actor: { type: "string" },
+        now: { type: "string" },
+        trace: { type: "boolean" },
       },
       allowPositionals: true,
     });
@@ -301,9 +317,25 @@ async function main(): Promise<void> {
           port: values.port ? parseInt(values.port, 10) : 3000,
         });
         break;
+      case "run": {
+        const action = positionals[2];
+        if (!action) {
+          console.error("Error: 'run' requires an action: kerangka run <file> <Entity.action> [--record r.json]");
+          process.exit(1);
+        }
+        success = runCommand(file!, action, {
+          record: values.record,
+          input: values.input,
+          actor: values.actor,
+          now: values.now,
+          trace: values.trace,
+        });
+        break;
+      }
       case "serve":
         success = await serveCommand(file!, {
           port: values.port ? parseInt(values.port, 10) : 3000,
+          stdio: values.stdio,
         });
         break;
       case "verify":
