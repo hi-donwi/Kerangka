@@ -843,6 +843,87 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
      * documented, matched, and then answered with a 500 — the one combination that is worse
      * than either defect alone, because the document looks right and the route exists.
      */
+    /**
+     * Every route is either in the document or carries a reason it is not. There is no third
+     * state, which is what makes "the document describes the server" a claim you can check
+     * rather than one you have to believe.
+     *
+     * The interesting half is the exclusions. Four routes are served and deliberately
+     * undocumented, and the reasons differ: two serve HTML for a person, one serves this
+     * document, one serves SDL text that a GraphQL client generates from. A test that only
+     * checked the included routes would pass just as happily if the exclusions had been
+     * accidental.
+     */
+    it("gives every route either a place in the document or a reason for its absence", () => {
+      for (const route of OPERATIONAL_ROUTES) {
+        if (route.document.included) continue;
+        expect(
+          route.document.reason.trim().length,
+          `route ${route.path} is excluded with no stated reason`
+        ).toBeGreaterThan(40);
+      }
+    });
+
+    it("documents the UIDL routes, which were served and invisible", async () => {
+      // The real gap this run closed: a UIDL runtime fetches these, and neither was in the
+      // document. `/` and `/schema.graphql` are genuinely not API surface, but these are.
+      const spec = await specFrom(baseUrl);
+      expect(spec.paths["/uidl"]?.get?.operationId).toBe("list_uidl_documents");
+      expect(spec.paths["/uidl/{docId}"]?.get?.operationId).toBe("get_uidl_document");
+      expect(spec.paths["/uidl/{docId}"].get.responses["404"]).toBeDefined();
+      expect(spec.components.schemas.UIDLDocument).toBeDefined();
+      // The tree is recursive, so the node schema has to be a real $ref rather than an
+      // inlined copy — a cycle cannot be inlined, and a truncated tree misleads a runtime.
+      expect(spec.components.schemas.UIDLDocument.properties.root.$ref).toBe(
+        "#/components/schemas/UIDLNode"
+      );
+      expect(spec.components.schemas.UIDLNode.properties.children.items.$ref).toBe(
+        "#/components/schemas/UIDLNode"
+      );
+    });
+
+    it("leaves the routes that are not API surface out, and still serves them", async () => {
+      const spec = await specFrom(baseUrl);
+      for (const route of OPERATIONAL_ROUTES.filter((r) => !r.document.included)) {
+        expect(spec.paths[route.path], `${route.path} was documented despite being excluded`)
+          .toBeUndefined();
+      }
+      // Excluded from the document is not excluded from the server. The playground, the
+      // document, the SDL and the UIDL index all still answer.
+      for (const route of OPERATIONAL_ROUTES.filter((r) => !r.document.included)) {
+        const res = await fetch(`${baseUrl}${route.path}`);
+        expect(res.status, `${route.path} is excluded from the document but not served`)
+          .toBe(200);
+      }
+    });
+
+    it("describes a UIDL document the way the server actually returns one", async () => {
+      // The schema is written by hand, so it is checked against a real response rather than
+      // against the type. Every required member is present, and the recursive parts are real.
+      const spec = await specFrom(baseUrl);
+      const required = spec.components.schemas.UIDLDocument.required as string[];
+      const list = await (await fetch(`${baseUrl}/uidl`)).json();
+      expect(list.documents.length).toBeGreaterThan(0);
+
+      const doc = await (await fetch(`${baseUrl}/uidl/${list.documents[0]}`)).json();
+      for (const member of required) {
+        expect(doc, `the served document has no '${member}'`).toHaveProperty(member);
+      }
+      expect(doc.$schema).toBe("https://uidl.dev/schema/v1/document.schema.json");
+      expect(doc.root).toHaveProperty("id");
+      expect(doc.root).toHaveProperty("type");
+    });
+
+    it("serves a UIDL route by its template, and 404s an id that does not exist", async () => {
+      // The pattern is built from `/uidl/{docId}`, so a nested path is not a document.
+      const res = await fetch(`${baseUrl}/uidl/nonexistent`);
+      expect(res.status).toBe(404);
+      expect((await res.json()).status).toBe(404);
+      // The former handler split on `/` and took the second segment, so a deeper path used
+      // to resolve. It must not: the route is one id, not a path into a tree.
+      expect((await fetch(`${baseUrl}/uidl/invoices/extra`)).status).toBe(404);
+    });
+
     it("declares a handler the server actually has, for every route", () => {
       // Reach the prototype: these are the methods the table names, not private state.
       const proto = KerangkaServer.prototype as unknown as Record<string, unknown>;

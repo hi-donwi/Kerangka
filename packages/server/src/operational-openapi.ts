@@ -58,7 +58,18 @@ export interface OperationalRoute {
   unavailableCode?: string;
   /** The detail message for that 501. */
   unavailableDetail?: string;
-  tag: "host" | "mcp";
+  tag: "host" | "mcp" | "uidl" | "meta";
+  /**
+   * Whether this route belongs in the served document, and why.
+   *
+   * This is a decision per route, not a rule, and the decision is not always "yes". A
+   * generated client cannot call a route that returns a page for a person to look at, so
+   * documenting `/playground` would add a method that returns a string of HTML and call it
+   * API surface. The honest reason is written down here, which is what makes the claim
+   * "the document describes the server" checkable rather than aspirational: a route is either
+   * documented or it carries a reason it is not, and there is no third state to fall into.
+   */
+  document: { included: true } | { included: false; reason: string };
 }
 
 /**
@@ -163,6 +174,54 @@ const hostEffectEntry = {
   additionalProperties: false
 };
 
+/**
+ * The UIDL document, as `/uidl/{docId}` returns it.
+ *
+ * `root` and everything under it is left open on purpose. A UIDL node's shape depends
+ * entirely on its `type`, and enumerating the types here would mean this file has to be
+ * updated whenever the UIDL projection gains one — a document schema that goes stale is
+ * worse than a permissive one, because a stale schema rejects valid documents. The
+ * `$schema` member is what a runtime validates against.
+ */
+const uidlDocumentSchema = {
+  type: "object",
+  description:
+    "A UIDL screen document. See the UIDL document schema, which `$schema` points at.",
+  required: ["version", "id", "name", "root"],
+  properties: {
+    $schema: { type: "string", format: "uri" },
+    version: { type: "string", description: "The UIDL specification version." },
+    id: { type: "string" },
+    name: { type: "string" },
+    route: { type: "string" },
+    theme: { type: "string" },
+    state: { type: "object", additionalProperties: true },
+    dataSources: { type: "object", additionalProperties: true },
+    root: { $ref: "#/components/schemas/UIDLNode" }
+  },
+  additionalProperties: true
+};
+
+const uidlNodeSchema = {
+  type: "object",
+  description:
+    "A node in the UIDL tree. `type` decides the shape, so the members are open here; see " +
+    "the UIDL document schema for the per-type shapes.",
+  required: ["id", "type"],
+  properties: {
+    id: { type: "string" },
+    type: { type: "string" },
+    name: { type: "string" },
+    props: { type: "object", additionalProperties: true },
+    style: { type: "object", additionalProperties: true },
+    children: { type: "array", items: { $ref: "#/components/schemas/UIDLNode" } },
+    slots: { type: "object", additionalProperties: true },
+    bindings: { type: "object", additionalProperties: true },
+    events: { type: "object", additionalProperties: true }
+  },
+  additionalProperties: true
+};
+
 const nackBody = {
   required: false,
   content: {
@@ -191,6 +250,7 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleMcpTools",
     operationId: "list_mcp_tools",
     tag: "mcp",
+    document: { included: true },
     summary: "List the MCP tools this model exposes",
     description: "One tool per entity action, plus `list_<entity>` and `get_<entity>`."
   },
@@ -201,6 +261,7 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleMcpCallRoute",
     operationId: "call_mcp_tool",
     tag: "mcp",
+    document: { included: true },
     summary: "Invoke an MCP tool",
     description:
       "Runs a model action through the tool interface. The result is the same envelope an " +
@@ -228,6 +289,7 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleListEvents",
     operationId: "list_pending_events",
     tag: "host",
+    document: { included: true },
     summary: "List the events waiting to be delivered",
     description:
       "Entries a run promised and no host has settled yet. A `nack` keeps an entry here " +
@@ -244,6 +306,7 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleEventSettlement",
     operationId: "ack_event",
     tag: "host",
+    document: { included: true },
     summary: "Record that a host delivered the event",
     description:
       "Marks the entry delivered. It stays as history rather than being deleted, so a " +
@@ -259,6 +322,7 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleEventSettlement",
     operationId: "nack_event",
     tag: "host",
+    document: { included: true },
     summary: "Record that a host could not deliver the event",
     description:
       "Keeps the entry pending for another attempt and counts it. The optional `error` " +
@@ -275,6 +339,7 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleListEffects",
     operationId: "list_pending_effects",
     tag: "host",
+    document: { included: true },
     summary: "List the host effects waiting to be performed",
     description:
       "The drain for undelivered effects. Only useful when the server was given a session " +
@@ -291,6 +356,7 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleEffectSettlement",
     operationId: "ack_effect",
     tag: "host",
+    document: { included: true },
     summary: "Record that a host performed the effect",
     description:
       "Marks the effect delivered. It stays as history rather than being deleted, so a " +
@@ -307,6 +373,7 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleEffectSettlement",
     operationId: "nack_effect",
     tag: "host",
+    document: { included: true },
     summary: "Record that a host could not perform the effect",
     description:
       "Keeps the effect pending for another attempt and counts it. The optional `error` " +
@@ -316,6 +383,107 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     unavailableCode: "EFFECT_QUEUE_UNAVAILABLE",
     unavailableDetail:
       "This server was started without a session, so there is no effect queue to acknowledge."
+  },
+  {
+    path: "/",
+    method: "GET",
+    session: "not-needed",
+    handler: "handlePlayground",
+    operationId: "get_playground",
+    tag: "meta",
+    summary: "The playground page",
+    description:
+      "A page for a person, not an API. It is here because the server serves it, and it is " +
+      "not in the document because a generated client calling it would receive a string of " +
+      "HTML and have nothing useful to do with it.",
+    document: {
+      included: false,
+      reason:
+        "Serves an HTML page for a person. A generated client method for it would return a " +
+        "string of markup, which is not API surface."
+    }
+  },
+  {
+    path: "/playground",
+    method: "GET",
+    session: "not-needed",
+    handler: "handlePlayground",
+    operationId: "get_playground_alias",
+    tag: "meta",
+    summary: "The playground page, at its second address",
+    description:
+      "The same page as `/`. It is a separate entry rather than a second path on one " +
+      "operation so that a client generating from the document can see both addresses, " +
+      "which is what the server really answers.",
+    document: {
+      included: false,
+      reason:
+        "Serves the same HTML page as `/`, for the same reason: it is a page for a person, " +
+        "not API surface."
+    }
+  },
+  {
+    path: "/openapi.json",
+    method: "GET",
+    session: "not-needed",
+    handler: "handleOpenApi",
+    operationId: "get_openapi",
+    tag: "meta",
+    summary: "This document",
+    description: "The served OpenAPI document, which is what a client generator reads.",
+    document: {
+      included: false,
+      reason:
+        "It is this document. A path item inside it would have to describe a document whose " +
+        "own content is what is being described, and every generator would then emit a " +
+        "method whose result is the schema of the method."
+    }
+  },
+  {
+    path: "/schema.graphql",
+    method: "GET",
+    session: "not-needed",
+    handler: "handleGraphQLSchema",
+    operationId: "get_graphql_schema",
+    tag: "meta",
+    summary: "The GraphQL schema, as SDL",
+    description:
+      "The GraphQL type system for this model, in SDL. Text, not JSON, and generated from " +
+      "the model rather than served as data.",
+    document: {
+      included: false,
+      reason:
+        "Returns SDL text rather than JSON. The GraphQL schema is the contract for a GraphQL " +
+        "client, which generates itself from this endpoint; describing it inside the OpenAPI " +
+        "document would describe the description."
+    }
+  },
+  {
+    path: "/uidl",
+    method: "GET",
+    session: "not-needed",
+    handler: "handleListUidl",
+    operationId: "list_uidl_documents",
+    tag: "uidl",
+    summary: "List the UIDL screen documents this model projects to",
+    description:
+      "One document per declared view, plus the navigation shell. A UIDL runtime fetches " +
+      "these to render the model's screens.",
+    document: { included: true }
+  },
+  {
+    path: "/uidl/{docId}",
+    method: "GET",
+    session: "not-needed",
+    handler: "handleUidlDocument",
+    operationId: "get_uidl_document",
+    tag: "uidl",
+    summary: "Fetch one UIDL screen document",
+    description:
+      "The document a UIDL runtime renders. Its `$schema` member points at the UIDL document " +
+      "schema, so a runtime can validate what it received.",
+    errorResponses: { "404": "No UIDL document with that id." },
+    document: { included: true }
   }
 ];
 
@@ -381,6 +549,9 @@ export function operationalOpenAPI(withQueues: boolean): {
   const paths: Record<string, unknown> = {};
 
   for (const route of servedRoutes(withQueues)) {
+    // A route excluded from the document carries its reason on the table; it is served
+    // either way. The two are separate questions and were previously one.
+    if (!route.document.included) continue;
     const existing = (paths[route.path] ?? {}) as Record<string, unknown>;
     const parameters = route.path.includes("{")
       ? [param((/\{(\w+)\}/.exec(route.path) as RegExpExecArray)[1] as string, route.tag)]
@@ -418,6 +589,26 @@ export function operationalOpenAPI(withQueues: boolean): {
               }
             }
           }
+        }
+      };
+    } else if (route.path === "/uidl") {
+      responses["200"] = {
+        description: "The document ids this model projects to.",
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              required: ["documents"],
+              properties: { documents: { type: "array", items: { type: "string" } } }
+            }
+          }
+        }
+      };
+    } else if (route.tag === "uidl") {
+      responses["200"] = {
+        description: "The UIDL document.",
+        content: {
+          "application/json": { schema: { $ref: "#/components/schemas/UIDLDocument" } }
         }
       };
     } else if (route.tag === "host") {
@@ -460,6 +651,8 @@ export function operationalOpenAPI(withQueues: boolean): {
         },
         additionalProperties: true
       },
+      UIDLDocument: uidlDocumentSchema,
+      UIDLNode: uidlNodeSchema,
       ...(withQueues ? { OutboxEntry: outboxEntry, HostEffectEntry: hostEffectEntry } : {})
     }
   };

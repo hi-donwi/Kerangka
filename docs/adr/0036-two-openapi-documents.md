@@ -46,6 +46,36 @@ Two properties follow, and both are tested:
 `/api/mcp/*` is included for the same reason as the queues. It was never model-derived either,
 and leaving it out would keep "the served document is complete" false.
 
+### Documented, or excluded with a reason
+
+The table covers every route the server serves outside the model's own REST surface, including
+the metadata ones. Each entry says whether it belongs in the document, and the four that do not
+carry the reason in writing:
+
+| Route | Excluded because |
+|---|---|
+| `/`, `/playground` | Serves an HTML page for a person. A generated client method would return a string of markup. |
+| `/openapi.json` | It *is* this document. A path item would describe a document whose own content is what is being described. |
+| `/schema.graphql` | Returns SDL text, which a GraphQL client generates itself from. Describing it inside the OpenAPI document describes the description. |
+| `/uidl`, `/uidl/{docId}` | **Not excluded.** A UIDL runtime fetches these, so they are API surface and were previously invisible. |
+
+The point of writing the reasons down is that "the served document describes the server" becomes
+a claim with no third state: a route is either in the document or it carries a reason it is not.
+There is no "forgot about it" case left, and a test enforces it — a reason under forty
+characters fails, because a terse one is a label rather than a reason.
+
+Excluded from the document is not excluded from the server. A test asserts every excluded route
+still answers 200, since silently dropping a route while tidying the document would be a
+regression that reads as a cleanup.
+
+### A behaviour change worth stating
+
+`/uidl` was previously matched with `startsWith("/uidl")` and the document id taken as the
+second path segment, so `/uidl/invoices/extra` resolved to the `invoices` document. It is now
+matched against the template `/uidl/{docId}` and answers 404. A document is one id, not a path
+into a tree, and the old behaviour answered a different question than the path asked. A test
+pins it.
+
 ## Consequences
 
 ### The table
@@ -113,4 +143,7 @@ each pattern captures exactly the parameters its path template declares.
       document
 - [x] Handlers as named methods, with a test that every declared name resolves
 - [x] A test that each pattern captures exactly the parameters its path template declares
+- [x] The metadata routes in the table, each marked documented or excluded-with-a-reason
+- [x] `/uidl` and `/uidl/{docId}` documented, with a recursive `UIDLNode` schema
+- [x] A test that every excluded route still answers, so tidying cannot drop one
 - [x] README states which document is which

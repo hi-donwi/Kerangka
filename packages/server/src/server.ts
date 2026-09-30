@@ -235,27 +235,10 @@ export class KerangkaServer {
       return;
     }
 
-    // Static / Metadata endpoints
-    if (pathname === "/" || pathname === "/playground") {
-      this.sendHtml(res, this.renderPlaygroundHtml());
-      return;
-    }
-
-    if (pathname === "/openapi.json") {
-      this.sendJson(res, 200, this.openApiSpec);
-      return;
-    }
-
-    if (pathname === "/schema.graphql") {
-      res.setHeader("Content-Type", "text/plain; charset=utf-8");
-      res.statusCode = 200;
-      res.end(this.graphqlSchema);
-      return;
-    }
-
-    // Operational routes, matched against the one table that also describes them. See
-    // `operational-openapi.ts`: the document a client fetches and the routes this router
-    // serves come from the same declaration, so neither can drift from the other.
+    // Everything this server serves that the model does not describe, matched against the
+    // one table that also says which of them belong in the document. See
+    // `operational-openapi.ts`: a route cannot be served without being declared, and a route
+    // excluded from the document carries the reason it is excluded.
     const operational = matchRoute(pathname, method, this.session !== null);
     if (operational) {
       await this.serveOperationalRoute(operational.route, operational.params, req, res, url);
@@ -266,30 +249,14 @@ export class KerangkaServer {
     // says which one it is; the answer says how to fix it.
     if (!this.session) {
       const unavailable = OPERATIONAL_ROUTES.find(
-        (route) => route.session === "required" && route.pattern.test(pathname) && route.method === method
+        (route) =>
+          route.session === "required" && route.method === method && route.pattern.test(pathname)
       );
       if (unavailable) {
         const { code, detail } = unavailableFor(unavailable);
         this.sendProblem(res, 501, "Not Implemented", detail, code);
         return;
       }
-    }
-
-    // UIDL documents endpoints
-    if (pathname.startsWith("/uidl")) {
-      const parts = pathname.split("/").filter(Boolean);
-      if (parts.length === 1) {
-        this.sendJson(res, 200, { documents: Object.keys(this.uidlDocs) });
-        return;
-      }
-      const docId = parts[1] || "";
-      const doc = this.uidlDocs[docId];
-      if (doc) {
-        this.sendJson(res, 200, doc);
-      } else {
-        this.sendProblem(res, 404, "Not Found", `UIDL document '${docId}' not found.`, "NOT_FOUND");
-      }
-      return;
     }
 
     // REST API routes (/api/{entity}...)
@@ -714,6 +681,38 @@ export class KerangkaServer {
    * route. `unavailableFor` supplies the code and the message from the table, so a route
    * cannot answer with a code its own description does not mention.
    */
+  private handlePlayground({ res, server }: OperationalContext): void {
+    (server as KerangkaServer).sendHtml(res, (server as KerangkaServer).renderPlaygroundHtml());
+  }
+
+  private handleOpenApi({ res, server }: OperationalContext): void {
+    (server as KerangkaServer).sendJson(res, 200, (server as KerangkaServer).openApiSpec);
+  }
+
+  private handleGraphQLSchema({ res, server }: OperationalContext): void {
+    const owner = server as KerangkaServer;
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.statusCode = 200;
+    res.end(owner.graphqlSchema);
+  }
+
+  private handleListUidl({ res, server }: OperationalContext): void {
+    (server as KerangkaServer).sendJson(res, 200, {
+      documents: Object.keys((server as KerangkaServer).uidlDocs)
+    });
+  }
+
+  private handleUidlDocument({ res, server, params }: OperationalContext): void {
+    const owner = server as KerangkaServer;
+    const docId = decodeURIComponent(params[0] ?? "");
+    const doc = owner.uidlDocs[docId];
+    if (!doc) {
+      owner.sendProblem(res, 404, "Not Found", `UIDL document '${docId}' not found.`, "NOT_FOUND");
+      return;
+    }
+    owner.sendJson(res, 200, doc);
+  }
+
   /** What a handler is given: the route it is serving, and the request's own parts. */
   private operationalContext(
     route: OperationalRoute,
