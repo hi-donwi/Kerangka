@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile } from "@kerangka/compiler";
 import { MemoryStore } from "@kerangka/ports";
-import { SessionStore } from "../src/index.js";
+import { SessionStore, OPERATIONAL_ROUTES, matchRoute, servedRoutes } from "../src/index.js";
 import type { ConnectorsPort } from "@kerangka/ports";
 import { KerangkaServer } from "../src/index.js";
 
@@ -837,6 +837,57 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
      * structural keeps the two in step; a test that only walks one side passes happily while
      * the other rots.
      */
+    /**
+     * The table is the one declaration of each operational route, and the router matches
+     * against it. A route named in the table with a handler the server does not have would be
+     * documented, matched, and then answered with a 500 — the one combination that is worse
+     * than either defect alone, because the document looks right and the route exists.
+     */
+    it("declares a handler the server actually has, for every route", () => {
+      // Reach the prototype: these are the methods the table names, not private state.
+      const proto = KerangkaServer.prototype as unknown as Record<string, unknown>;
+      const names = new Set(
+        OPERATIONAL_ROUTES.map((route) => `${route.handler}@${route.path}`)
+      );
+      expect(names.size).toBe(OPERATIONAL_ROUTES.length);
+      for (const route of OPERATIONAL_ROUTES) {
+        expect(
+          typeof proto[route.handler],
+          `route ${route.path} names a handler '${route.handler}' that does not exist`
+        ).toBe("function");
+      }
+    });
+
+    it("gives every route a unique operationId, so a generated client can name it", () => {
+      const ids = OPERATIONAL_ROUTES.map((route) => route.operationId);
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it("captures exactly the path parameters the document declares", () => {
+      for (const route of OPERATIONAL_ROUTES) {
+        const declared = [...route.path.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
+        const match = matchRoute(route.path.replace(/\{(\w+)\}/g, "abc"), route.method, true);
+        expect(match?.route.path, `${route.path} did not match its own template`).toBe(route.path);
+        expect(match?.params.length, `${route.path} captures the wrong number of segments`)
+          .toBe(declared.length);
+      }
+    });
+
+    it("serves a queue route only when a session exists, and matches it either way", () => {
+      // Matched-but-unserved is the 501 path; not matched at all would be a 404 that reads
+      // like a typo. A host that guessed the route deserves the honest answer.
+      expect(matchRoute("/api/events", "GET", true)?.route.operationId).toBe("list_pending_events");
+      expect(matchRoute("/api/events", "GET", false)).toBeNull();
+      expect(servedRoutes(false).some((r) => r.path.startsWith("/api/events"))).toBe(false);
+      expect(servedRoutes(true).some((r) => r.path.startsWith("/api/events"))).toBe(true);
+    });
+
+    it("does not let a queue route match the wrong method", () => {
+      expect(matchRoute("/api/events", "POST", true)).toBeNull();
+      expect(matchRoute("/api/events/abc/ack", "GET", true)).toBeNull();
+      expect(matchRoute("/api/mcp/tools", "POST", true)).toBeNull();
+    });
+
     it("actually serves every operational route it documents", async () => {
       const port = 4009;
       const server = new KerangkaServer(kir, {

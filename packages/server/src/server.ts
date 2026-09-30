@@ -29,7 +29,14 @@ import {
 import { CloudEvent, Effect, Engine } from "@kerangka/engine-ts";
 import { SchedulerRunner } from "./scheduler-runner.js";
 import { SessionStoreLike } from "./session-store.js";
-import { operationalOpenAPI } from "./operational-openapi.js";
+import {
+  matchRoute,
+  unavailableFor,
+  operationalOpenAPI,
+  OPERATIONAL_ROUTES,
+  type OperationalRoute,
+  type OperationalContext
+} from "./operational-openapi.js";
 
 export interface ServerOptions {
   port?: number;
@@ -246,118 +253,26 @@ export class KerangkaServer {
       return;
     }
 
-    if (pathname === "/api/mcp/tools") {
-      this.sendJson(res, 200, { tools: this.mcpTools });
+    // Operational routes, matched against the one table that also describes them. See
+    // `operational-openapi.ts`: the document a client fetches and the routes this router
+    // serves come from the same declaration, so neither can drift from the other.
+    const operational = matchRoute(pathname, method, this.session !== null);
+    if (operational) {
+      await this.serveOperationalRoute(operational.route, operational.params, req, res, url);
       return;
     }
 
-    // The drain for the events a run emitted. Same queue discipline as the effects, and
-    // same reason for answering 501 rather than an empty list: no session means nothing is
-    // queued, and an empty list would read as "nothing was emitted".
-    if (pathname === "/api/events" && method === "GET") {
-      if (!this.session) {
-        this.sendProblem(
-          res,
-          501,
-          "Not Implemented",
-          "This server was started without a session, so emitted events are returned in the " +
-            "action response but not queued. Start it with a session to drain them.",
-          "EVENT_OUTBOX_UNAVAILABLE"
-        );
+    // A route that needs a session, asked for by a client that guessed the path. The table
+    // says which one it is; the answer says how to fix it.
+    if (!this.session) {
+      const unavailable = OPERATIONAL_ROUTES.find(
+        (route) => route.session === "required" && route.pattern.test(pathname) && route.method === method
+      );
+      if (unavailable) {
+        const { code, detail } = unavailableFor(unavailable);
+        this.sendProblem(res, 501, "Not Implemented", detail, code);
         return;
       }
-      this.sendJson(res, 200, { events: this.session.pending() });
-      return;
-    }
-
-    const eventAction = /^\/api\/events\/([^/]+)\/(ack|nack)$/.exec(pathname);
-    if (eventAction && method === "POST") {
-      if (!this.session) {
-        this.sendProblem(
-          res,
-          501,
-          "Not Implemented",
-          "This server was started without a session, so there is no outbox to acknowledge.",
-          "EVENT_OUTBOX_UNAVAILABLE"
-        );
-        return;
-      }
-      const [, rawId, action] = eventAction;
-      if (rawId === undefined || action === undefined) {
-        this.sendProblem(res, 404, "Not Found", "Not an outbox path.", "EVENT_NOT_FOUND");
-        return;
-      }
-      const id = decodeURIComponent(rawId);
-      const body = action === "nack" ? await this.readJsonBody(req) : {};
-      const entry =
-        action === "ack"
-          ? this.session.ack(id)
-          : this.session.nack(id, typeof body?.error === "string" ? body.error : undefined);
-      if (!entry) {
-        this.sendProblem(res, 404, "Not Found", `No queued event '${id}'.`, "EVENT_NOT_FOUND");
-        return;
-      }
-      this.sendJson(res, 200, { event: entry });
-      return;
-    }
-
-    // The drain for undelivered effects. Only useful when the server was given a session
-    // to queue them into; without one there is nothing queued and the answer says so
-    // rather than pretending the queue is empty because nothing can fail.
-    if (pathname === "/api/effects" && method === "GET") {
-      if (!this.session) {
-        this.sendProblem(
-          res,
-          501,
-          "Not Implemented",
-          "This server was started without a session, so undelivered effects are reported in " +
-            "the action response but not queued. Start it with a session to drain them.",
-          "EFFECT_QUEUE_UNAVAILABLE"
-        );
-        return;
-      }
-      const type = url.searchParams.get("type") ?? undefined;
-      this.sendJson(res, 200, { effects: this.session.pendingEffects(type) });
-      return;
-    }
-
-    const effectAction = /^\/api\/effects\/([^/]+)\/(ack|nack)$/.exec(pathname);
-    if (effectAction && method === "POST") {
-      if (!this.session) {
-        this.sendProblem(
-          res,
-          501,
-          "Not Implemented",
-          "This server was started without a session, so there is no queue to acknowledge.",
-          "EFFECT_QUEUE_UNAVAILABLE"
-        );
-        return;
-      }
-      const [, rawId, action] = effectAction;
-      if (rawId === undefined || action === undefined) {
-        this.sendProblem(res, 404, "Not Found", "Not an effect queue path.", "EFFECT_NOT_FOUND");
-        return;
-      }
-      const id = decodeURIComponent(rawId);
-      // Read for the `nack` reason only; an empty body is `{}`, so `ack` needs no read.
-      const body = action === "nack" ? await this.readJsonBody(req) : {};
-      const entry =
-        action === "ack"
-          ? this.session.ackEffect(id)
-          : this.session.nackEffect(id, typeof body?.error === "string" ? body.error : undefined);
-      if (!entry) {
-        this.sendProblem(res, 404, "Not Found", `No queued effect '${id}'.`, "EFFECT_NOT_FOUND");
-        return;
-      }
-      this.sendJson(res, 200, { effect: entry });
-      return;
-    }
-
-    if (pathname === "/api/mcp/call" && method === "POST") {
-      const body = await this.readJsonBody(req);
-      const result = await this.handleMcpCall(body);
-      this.sendJson(res, 200, result);
-      return;
     }
 
     // UIDL documents endpoints
@@ -789,6 +704,119 @@ export class KerangkaServer {
         content: [{ type: "text", text: `Error: ${message}` }],
       };
     }
+  }
+
+  /**
+   * Serve one operational route, named by the table.
+   *
+   * The 501 lives here rather than in each handler, because it is the same answer for every
+   * route that needs a session and it is a property of the deployment rather than of the
+   * route. `unavailableFor` supplies the code and the message from the table, so a route
+   * cannot answer with a code its own description does not mention.
+   */
+  /** What a handler is given: the route it is serving, and the request's own parts. */
+  private operationalContext(
+    route: OperationalRoute,
+    params: string[],
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: URL
+  ): OperationalContext {
+    return { route, params, req, res, url, session: this.session, server: this };
+  }
+
+  private handleMcpTools({ res, server }: OperationalContext): void {
+    this.sendJson(res, 200, { tools: (server as KerangkaServer).mcpTools });
+  }
+
+  private async handleMcpCallRoute({ req, res }: OperationalContext): Promise<void> {
+    const body = await this.readJsonBody(req);
+    this.sendJson(res, 200, await this.handleMcpCall(body));
+  }
+
+  private handleListEvents({ res, session }: OperationalContext): void {
+    this.sendJson(res, 200, { events: session!.pending() });
+  }
+
+  private handleListEffects({ res, session, url }: OperationalContext): void {
+    this.sendJson(res, 200, {
+      effects: session!.pendingEffects(url.searchParams.get("type") ?? undefined)
+    });
+  }
+
+  private async handleEventSettlement(
+    { route, params, req, res, session }: OperationalContext
+  ): Promise<void> {
+    // The pattern captures only the id; `ack` or `nack` is in the route's own path, so the
+    // two settlement routes differ by name and not by a captured segment.
+    const action = route.path.endsWith("/nack") ? "nack" : "ack";
+    const id = decodeURIComponent(params[0] ?? "");
+    // Read for the `nack` reason only; an empty body is `{}`, so `ack` needs no read.
+    const body = action === "nack" ? await this.readJsonBody(req) : {};
+    const entry =
+      action === "ack"
+        ? session!.ack(id)
+        : session!.nack(id, typeof body?.error === "string" ? body.error : undefined);
+    if (!entry) {
+      this.sendProblem(res, 404, "Not Found", `No queued event '${id}'.`, "EVENT_NOT_FOUND");
+      return;
+    }
+    this.sendJson(res, 200, { event: entry });
+  }
+
+  private async handleEffectSettlement(
+    { route, params, req, res, session }: OperationalContext
+  ): Promise<void> {
+    const action = route.path.endsWith("/nack") ? "nack" : "ack";
+    const id = decodeURIComponent(params[0] ?? "");
+    const body = action === "nack" ? await this.readJsonBody(req) : {};
+    const entry =
+      action === "ack"
+        ? session!.ackEffect(id)
+        : session!.nackEffect(id, typeof body?.error === "string" ? body.error : undefined);
+    if (!entry) {
+      this.sendProblem(res, 404, "Not Found", `No queued effect '${id}'.`, "EFFECT_NOT_FOUND");
+      return;
+    }
+    this.sendJson(res, 200, { effect: entry });
+  }
+
+  /**
+   * Serve one operational route, by the name the table gives it.
+   *
+   * The 501 lives here rather than in each handler, because it is the same answer for every
+   * route that needs a session and it is a property of the deployment rather than of the
+   * route. `unavailableFor` supplies the code and the message from the table, so a route
+   * cannot answer with a code its own description does not mention.
+   */
+  private async serveOperationalRoute(
+    route: OperationalRoute,
+    params: string[],
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: URL
+  ): Promise<void> {
+    if (route.session === "required" && !this.session) {
+      const { code, detail } = unavailableFor(route);
+      this.sendProblem(res, 501, "Not Implemented", detail, code);
+      return;
+    }
+
+    const context = this.operationalContext(route, params, req, res, url);
+    const handler = (this as unknown as Record<string, unknown>)[route.handler];
+    if (typeof handler !== "function") {
+      // Unreachable while every name in the table resolves, and a test proves it. A route
+      // declared without a handler must fail loudly, not serve a 200 with no body.
+      this.sendProblem(
+        res,
+        500,
+        "Internal Server Error",
+        `No handler for the declared route ${route.path}.`,
+        "OPERATIONAL_ROUTE_UNHANDLED"
+      );
+      return;
+    }
+    await (handler as (context: OperationalContext) => void | Promise<void>).call(this, context);
   }
 
   private sendJson(res: http.ServerResponse, status: number, data: unknown): void {

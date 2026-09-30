@@ -48,6 +48,27 @@ and leaving it out would keep "the served document is complete" false.
 
 ## Consequences
 
+### The table
+
+`OPERATIONAL_ROUTES` is the one declaration of each operational route: its path, the matcher
+built from that path, whether it needs a session, the name of the handler on the server, and
+its OpenAPI shape. The router matches against it and `operationalOpenAPI` builds the document
+from it, so a route cannot be served without being described or described without being
+served. This replaced an if-chain in `server.ts` (`pathname === "/api/events" && method ===
+"GET"`, then a regex for the settlement pair) *and* a hand-written document — two declarations
+of the same list.
+
+Handlers are named on the table and defined as private methods, not held as closures in the
+table. Closures would hide the control flow inside a data structure, and a name here plus a
+method there reintroduces the mapping the table exists to remove. A test walks the table and
+asserts every name resolves to a real method, so a route added without a handler fails the
+build rather than serving a 500 with no body.
+
+The path parameters are the one thing the table cannot be trusted to hold alone: a matcher
+built from `/api/events/{id}/ack` captures one segment, while the regex it replaced captured
+two, id and the action. The action is now read from the route's own path, and a test asserts
+each pattern captures exactly the parameters its path template declares.
+
 ### Positive
 
 - A client generated against a running server can see, and call, the outbox and the effect
@@ -79,7 +100,6 @@ and leaving it out would keep "the served document is complete" false.
 | Merge the operational routes into every emitted document, always | Same problem, and it would put transport concerns into a compiler that should know only about models. |
 | Serve the emitted document unchanged and let clients discover routes at runtime | Discovery is not a contract. A generated client still cannot call the outbox. |
 | Declare the operational routes as a model extension | Makes a deployment detail part of the model, which every other emitter would then have to understand. |
-| Generate the operational document from the router's own route table | The right end state, and the router has no table — it dispatches on `pathname ===` strings inside one method. Building the table is a larger change to the server than this defect warrants, so this run tests both directions of drift instead and leaves the generation for later. |
 
 ## Follow-up
 
@@ -89,4 +109,8 @@ and leaving it out would keep "the served document is complete" false.
 - [x] A guard that the emitted document stays model-only
 - [x] A test that every documented operational route is actually served, and that every
       operational route the server serves is documented — both directions of drift
+- [x] `OPERATIONAL_ROUTES` as the single declaration, read by both the router and the
+      document
+- [x] Handlers as named methods, with a test that every declared name resolves
+- [x] A test that each pattern captures exactly the parameters its path template declares
 - [x] README states which document is which
