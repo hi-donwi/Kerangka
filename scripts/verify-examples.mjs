@@ -34,8 +34,9 @@ let failures = 0;
 for (const target of targets) {
   const label = target.slice(examplesDir.length + 1);
   const checked = cli.checkCommand(target);
+  const verified = cli.verifyCommand(target);
   const tested = cli.testCommand(target);
-  if (!checked || !tested) {
+  if (!checked || !verified || !tested) {
     failures += 1;
     console.error(`FAIL ${label}`);
   } else {

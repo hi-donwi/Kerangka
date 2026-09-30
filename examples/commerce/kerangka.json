@@ -5,6 +5,11 @@
     "title": "Modular E-Commerce Reference System",
     "timezone": "UTC"
   },
+  "roles": [
+    "customer",
+    "system",
+    "admin"
+  ],
   "contexts": [
     "orders",
     "billing",

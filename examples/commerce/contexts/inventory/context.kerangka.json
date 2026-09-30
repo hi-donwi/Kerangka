@@ -3,7 +3,9 @@
   "glossary": {
     "StockReservation": "Temporary hold placed on warehouse stock for a pending order"
   },
-  "dependsOn": ["orders"],
+  "dependsOn": [
+    "orders"
+  ],
   "entities": {
     "StockReservation": {
       "fields": {
@@ -15,11 +17,20 @@
         "field": "status",
         "transitions": {
           "fulfill": {
-            "from": "active", "to": "fulfilled"
+            "from": "active",
+            "to": "fulfilled"
           },
           "cancel": {
-            "from": "active", "to": "cancelled"
+            "from": "active",
+            "to": "cancelled"
           }
+        }
+      },
+      "actions": {
+        "create": {
+          "roles": [
+            "system"
+          ]
         }
       }
     }

@@ -3,9 +3,13 @@
   "glossary": {
     "Invoice": "A formal financial demand for payment associated with an order"
   },
-  "dependsOn": ["orders"],
+  "dependsOn": [
+    "orders"
+  ],
   "exports": {
-    "events": ["InvoicePaid"]
+    "events": [
+      "InvoicePaid"
+    ]
   },
   "entities": {
     "Invoice": {
@@ -21,12 +25,30 @@
         "field": "status",
         "transitions": {
           "markPaid": {
-            "from": "issued", "to": "paid",
+            "from": "issued",
+            "to": "paid",
             "then": [
-              { "set": { "paidAt": "now()" } },
-              { "emit": "InvoicePaid", "data": { "invoiceId": "id", "orderId": "orderId" } }
+              {
+                "set": {
+                  "paidAt": "now()"
+                }
+              },
+              {
+                "emit": "InvoicePaid",
+                "data": {
+                  "invoiceId": "id",
+                  "orderId": "orderId"
+                }
+              }
             ]
           }
+        }
+      },
+      "actions": {
+        "create": {
+          "roles": [
+            "system"
+          ]
         }
       }
     }
