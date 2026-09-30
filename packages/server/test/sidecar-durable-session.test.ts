@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { compile } from "@kerangka/compiler";
@@ -388,6 +388,110 @@ describe("a session file belongs to one sidecar", () => {
       expect(second.get("Invoice", "inv-durable-1")).not.toBeNull();
       first.close();
       second.close();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+/**
+ * The claim has to be enforced across a process boundary, not merely between two
+ * objects in one process. These tests run a real second process against the same file
+ * — one that exits cleanly and one that is killed — because a claim that only works
+ * in-process would be a lock on a JavaScript object rather than on the file.
+ *
+ * They need the built package, since the child runs the real store. Without a build
+ * they are skipped rather than passing quietly: `npm test` resolves workspace imports
+ * through `dist`, and a false green here would be worse than a visible skip.
+ */
+const serverDist = resolve(__dirname, "../dist/index.js");
+const built = existsSync(serverDist);
+
+const holder = (path: string) => {
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      // The handler is installed before readiness is announced. Announcing first
+      // races it: a SIGTERM that lands before Node owns the signal takes the default
+      // action and kills the process, which is indistinguishable from a crash.
+      `const { SqliteSessionStore } = require(${JSON.stringify(serverDist)});
+       const store = new SqliteSessionStore({ path: ${JSON.stringify(path)}, owner: "holder process" });
+       process.on("SIGTERM", () => { store.close(); process.exit(0); });
+       setInterval(() => {}, 1 << 30);
+       process.stdout.write("claimed\\n");`
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] }
+  );
+  const exited = new Promise<void>((resolveExit) => {
+    child.once("exit", () => resolveExit());
+  });
+  const claimed = new Promise<number>((resolveClaim) => {
+    child.stdout!.once("data", () => resolveClaim(child.pid!));
+  });
+  return { child, claimed, exited };
+};
+
+const stopped = (child: ChildProcess) =>
+  new Promise<void>((resolveExit) => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolveExit();
+    child.once("exit", () => resolveExit());
+  });
+
+describe.skipIf(!built)("a session file is claimed across processes", () => {
+  it("refuses a sidecar in another process, naming that process", async () => {
+    const { path, cleanup } = workspace();
+    const other = holder(path);
+    try {
+      const pid = await other.claimed;
+      expect(pid).not.toBe(process.pid);
+
+      let error: unknown;
+      try {
+        new SqliteSessionStore({ path, owner: "this process" });
+      } catch (err) {
+        error = err;
+      }
+      expect(error).toBeInstanceOf(SessionLockedError);
+      expect((error as SessionLockedError).holder?.owner).toBe("holder process");
+      expect((error as SessionLockedError).holder?.pid).toBe(pid);
+      other.child.kill("SIGKILL");
+      await other.exited;
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("takes the file over when the other sidecar is killed", async () => {
+    const { path, cleanup } = workspace();
+    const other = holder(path);
+    try {
+      await other.claimed;
+      other.child.kill("SIGKILL");
+      await other.exited;
+
+      const recovered = new SqliteSessionStore({ path, owner: "this process" });
+      expect(recovered.lockHolder()?.owner).toBe("this process");
+      recovered.put("Invoice", draft);
+      recovered.close();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("finds the claim already released when the other sidecar exits cleanly", async () => {
+    const { path, cleanup } = workspace();
+    const other = holder(path);
+    try {
+      await other.claimed;
+      other.child.kill("SIGTERM");
+      await stopped(other.child);
+      expect(other.child.signalCode).toBeNull();
+      expect(other.child.exitCode).toBe(0);
+
+      const next = new SqliteSessionStore({ path, owner: "this process" });
+      expect(next.lockHolder()?.owner).toBe("this process");
+      next.close();
     } finally {
       cleanup();
     }
