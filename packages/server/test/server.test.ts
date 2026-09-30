@@ -589,4 +589,160 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
       }
     });
   });
+
+  /**
+   * The last transport gap: events came back in the response and were stored nowhere, so a
+   * client that dropped the response lost the event. With a session they are queued in the
+   * outbox, alongside the undelivered effects, in one transaction.
+   */
+  describe("a host drains the events a run emitted", () => {
+    const outboxServer = async (port: number) => {
+      const session = new SessionStore();
+      const server = new KerangkaServer(kir, {
+        port,
+        quiet: true,
+        store: new MemoryStore(),
+        session
+        // The default registry, so `sendInvoiceEmail` is unhandled and also queued as an
+        // undelivered effect. These tests are about the outbox; the effect queue has its
+        // own describe above.
+      });
+      await server.start();
+      return { base: `http://localhost:${port}`, session, stop: () => server.stop() };
+    };
+
+    const settle = async (base: string, number: string) => {
+      const created = await fetch(`${base}/api/invoice`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          number,
+          customer: "cust-1",
+          issuedOn: "2026-09-30",
+          dueDate: "2026-10-30",
+          status: "draft",
+          lines: [{ description: "Consulting", qty: 1, unitPrice: 100 }]
+        })
+      });
+      expect(created.status).toBe(201);
+    };
+
+    const send = async (base: string, number: string) => {
+      const res = await fetch(`${base}/api/invoice/${number}/actions/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roles: ["billing"] })
+      });
+      expect(res.status).toBe(200);
+      return (await res.json()) as { events: Array<{ id: string; type: string }> };
+    };
+
+    it("queues what the response also returned, keyed by the CloudEvent id", async () => {
+      const harness = await outboxServer(3999);
+      try {
+        await settle(harness.base, "INV-070");
+        const body = await send(harness.base, "INV-070");
+        expect(body.events.length).toBeGreaterThan(0);
+
+        const { events } = await (await fetch(`${harness.base}/api/events`)).json();
+        expect(events).toHaveLength(body.events.length);
+        // The response and the outbox carry the same ids, so a host correlates without the
+        // contract having to grow a second list.
+        expect(events.map((entry: { id: string }) => entry.id)).toEqual(
+          body.events.map((event) => event.id)
+        );
+        expect(events[0].state).toBe("pending");
+        expect(events[0].attempts).toBe(0);
+      } finally {
+        await harness.stop();
+      }
+    });
+
+    it("keeps an event pending when delivery fails, and counts the attempt", async () => {
+      const harness = await outboxServer(4000);
+      try {
+        await settle(harness.base, "INV-071");
+        await send(harness.base, "INV-071");
+
+        const { events } = await (await fetch(`${harness.base}/api/events`)).json();
+        const id = events[0].id as string;
+        const nacked = await fetch(`${harness.base}/api/events/${encodeURIComponent(id)}/nack`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ error: "broker refused the connection" })
+        });
+        expect(nacked.status).toBe(200);
+        const { event } = await nacked.json();
+        expect(event.state).toBe("pending");
+        expect(event.attempts).toBe(1);
+        expect(event.lastError).toBe("broker refused the connection");
+      } finally {
+        await harness.stop();
+      }
+    });
+
+    it("stops offering an event once the host acknowledges it", async () => {
+      const harness = await outboxServer(4001);
+      try {
+        await settle(harness.base, "INV-072");
+        await send(harness.base, "INV-072");
+
+        const { events } = await (await fetch(`${harness.base}/api/events`)).json();
+        const acked = await fetch(
+          `${harness.base}/api/events/${encodeURIComponent(events[0].id)}/ack`,
+          { method: "POST" }
+        );
+        expect(acked.status).toBe(200);
+        expect((await acked.json()).event.state).toBe("delivered");
+
+        const after = await (await fetch(`${harness.base}/api/events`)).json();
+        expect(after.events).toHaveLength(0);
+      } finally {
+        await harness.stop();
+      }
+    });
+
+    it("queues a re-emitted event once, so a host cannot deliver it twice", async () => {
+      // A retried request re-runs the action and re-emits the same CloudEvent id. Queuing
+      // it twice is the failure an outbox exists to prevent, so the id is the key.
+      const harness = await outboxServer(4002);
+      try {
+        await settle(harness.base, "INV-073");
+        await send(harness.base, "INV-073");
+        const first = await (await fetch(`${harness.base}/api/events`)).json();
+        expect(first.events).toHaveLength(1);
+
+        // Directly through the store, because a second `send` on a `sent` invoice is
+        // refused by the state guard rather than re-emitting.
+        harness.session.enqueueDelivery(first.events.map((e: { event: unknown }) => e.event), []);
+        const second = await (await fetch(`${harness.base}/api/events`)).json();
+        expect(second.events).toHaveLength(1);
+      } finally {
+        await harness.stop();
+      }
+    });
+
+    it("404s an acknowledgement for an event that is not queued", async () => {
+      const harness = await outboxServer(4003);
+      try {
+        const res = await fetch(`${harness.base}/api/events/evt_nope/ack`, { method: "POST" });
+        expect(res.status).toBe(404);
+        expect((await res.json()).code).toBe("EVENT_NOT_FOUND");
+      } finally {
+        await harness.stop();
+      }
+    });
+
+    it("answers 501 rather than an empty outbox when there is no session", async () => {
+      const plain = new KerangkaServer(kir, { port: 4004, quiet: true, store: new MemoryStore() });
+      await plain.start();
+      try {
+        const res = await fetch("http://localhost:4004/api/events");
+        expect(res.status).toBe(501);
+        expect((await res.json()).code).toBe("EVENT_OUTBOX_UNAVAILABLE");
+      } finally {
+        await plain.stop();
+      }
+    });
+  });
 });

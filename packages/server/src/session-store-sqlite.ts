@@ -451,6 +451,57 @@ export class SqliteSessionStore implements SessionStoreLike {
 
   // -- Host effects -----------------------------------------------------------
 
+  enqueueDelivery(
+    events: CloudEvent[] | undefined,
+    effects: Effect[] | undefined,
+    entity?: string
+  ): { events: OutboxEntry[]; effects: HostEffectEntry[] } {
+    // One transaction for the pair. Two calls would leave a crash between them, which is
+    // the window the HTTP path already has to accept for the record write; there is no
+    // reason to add a second one inside the queue.
+    this.assertHeld();
+    this.db.exec("BEGIN IMMEDIATE");
+    let revision = 0;
+    const queued: OutboxEntry[] = [];
+    const undelivered: HostEffectEntry[] = [];
+    try {
+      revision = this.revision() + 1;
+      const insertEvent = this.db.prepare(
+        `INSERT OR IGNORE INTO _session_outbox (id, event, entity, attempts, state, revision)
+         VALUES (?, ?, ?, 0, 'pending', ?)`
+      );
+      (events ?? []).forEach((event, index) => {
+        const id = event.id ?? `outbox-${revision}-${index}`;
+        // `INSERT OR IGNORE` on the CloudEvent id: a retried run re-emits the same id, and
+        // re-inserting would reset the attempt count as well as duplicating the delivery.
+        const result = insertEvent.run(id, JSON.stringify(event), entity ?? null, revision);
+        if (result.changes === 0) return;
+        queued.push({ id, event, entity, attempts: 0, state: "pending", enqueuedAtRevision: revision });
+      });
+
+      const insertEffect = this.db.prepare(
+        `INSERT INTO _session_effects (id, effect, attempts, state, revision)
+         VALUES (?, ?, 0, 'pending', ?)`
+      );
+      (effects ?? []).forEach((effect, index) => {
+        // `failed-` for the same reason as `enqueueEffect`: a commit mints
+        // `effect-<revision>-<index>`, and the two must not share an id space.
+        const id = `failed-effect-${revision}-${index}`;
+        insertEffect.run(id, JSON.stringify(effect), revision);
+        undelivered.push({ id, effect, attempts: 0, state: "pending", enqueuedAtRevision: revision });
+      });
+
+      this.db
+        .prepare("UPDATE _session_meta SET value = ? WHERE key = 'revision'")
+        .run(String(revision));
+      this.db.exec("COMMIT");
+      return { events: queued, effects: undelivered };
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
   enqueueEffect(effect: Effect): HostEffectEntry {
     // Its own transaction, because unlike a commit this is not joining a write: the point
     // is that the failure survives even though the record it belongs to is already stored.

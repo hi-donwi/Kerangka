@@ -113,6 +113,22 @@ export interface SessionStoreLike {
    * instead, and a host drains it like any other queued effect.
    */
   enqueueEffect(effect: Effect): HostEffectEntry;
+  /**
+   * Record everything a run owed the outside world, in one transaction.
+   *
+   * The events it emitted, and the effects it could not deliver. Both, together, because
+   * they are one fact — "this run promised these and could not do those" — and two
+   * separate calls would leave a crash between them, which is the window ADR-0034 accepted
+   * for the record write. This closes it for everything the queue knows about.
+   *
+   * Events are keyed by their CloudEvent id, so a run that is retried enqueues the same
+   * event once rather than twice.
+   */
+  enqueueDelivery(
+    events: CloudEvent[] | undefined,
+    effects: Effect[] | undefined,
+    entity?: string
+  ): { events: OutboxEntry[]; effects: HostEffectEntry[] };
   ackEffect(id: string): HostEffectEntry | null;
   nackEffect(id: string, error?: string): HostEffectEntry | null;
   hostEffect(id: string): HostEffectEntry | null;
@@ -349,6 +365,33 @@ export class SessionStore implements SessionStoreLike {
    * Effects still waiting for a host to perform them, oldest first: a `call` to an
    * extension, a notification, a scheduled timer.
    */
+  enqueueDelivery(
+    events: CloudEvent[] | undefined,
+    effects: Effect[] | undefined,
+    entity?: string
+  ): { events: OutboxEntry[]; effects: HostEffectEntry[] } {
+    const queued: OutboxEntry[] = [];
+    const undelivered: HostEffectEntry[] = [];
+    (events ?? []).forEach((event, index) => {
+      const id = event.id ?? `outbox-${this.revision + 1}-${index}`;
+      // A retried run re-emits the same CloudEvent id. Queuing it twice would make a host
+      // deliver it twice, which is the one thing an outbox exists to prevent.
+      if (this.outbox.has(id)) return;
+      queued.push({
+        id,
+        event,
+        entity,
+        attempts: 0,
+        state: "pending",
+        enqueuedAtRevision: this.revision + 1
+      });
+    });
+    for (const effect of effects ?? []) undelivered.push(this.enqueueEffect(effect));
+    for (const entry of queued) this.outbox.set(entry.id, entry);
+    this.trimOutbox();
+    return { events: queued, effects: undelivered };
+  }
+
   enqueueEffect(effect: Effect): HostEffectEntry {
     this.revision += 1;
     const entry: HostEffectEntry = {

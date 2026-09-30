@@ -26,7 +26,7 @@ import {
   StoreScheduler,
   ScheduledJob,
 } from "@kerangka/ports";
-import { Engine, Effect } from "@kerangka/engine-ts";
+import { CloudEvent, Effect, Engine } from "@kerangka/engine-ts";
 import { SchedulerRunner } from "./scheduler-runner.js";
 import { SessionStoreLike } from "./session-store.js";
 
@@ -220,6 +220,56 @@ export class KerangkaServer {
 
     if (pathname === "/api/mcp/tools") {
       this.sendJson(res, 200, { tools: this.mcpTools });
+      return;
+    }
+
+    // The drain for the events a run emitted. Same queue discipline as the effects, and
+    // same reason for answering 501 rather than an empty list: no session means nothing is
+    // queued, and an empty list would read as "nothing was emitted".
+    if (pathname === "/api/events" && method === "GET") {
+      if (!this.session) {
+        this.sendProblem(
+          res,
+          501,
+          "Not Implemented",
+          "This server was started without a session, so emitted events are returned in the " +
+            "action response but not queued. Start it with a session to drain them.",
+          "EVENT_OUTBOX_UNAVAILABLE"
+        );
+        return;
+      }
+      this.sendJson(res, 200, { events: this.session.pending() });
+      return;
+    }
+
+    const eventAction = /^\/api\/events\/([^/]+)\/(ack|nack)$/.exec(pathname);
+    if (eventAction && method === "POST") {
+      if (!this.session) {
+        this.sendProblem(
+          res,
+          501,
+          "Not Implemented",
+          "This server was started without a session, so there is no outbox to acknowledge.",
+          "EVENT_OUTBOX_UNAVAILABLE"
+        );
+        return;
+      }
+      const [, rawId, action] = eventAction;
+      if (rawId === undefined || action === undefined) {
+        this.sendProblem(res, 404, "Not Found", "Not an outbox path.", "EVENT_NOT_FOUND");
+        return;
+      }
+      const id = decodeURIComponent(rawId);
+      const body = action === "nack" ? await this.readJsonBody(req) : {};
+      const entry =
+        action === "ack"
+          ? this.session.ack(id)
+          : this.session.nack(id, typeof body?.error === "string" ? body.error : undefined);
+      if (!entry) {
+        this.sendProblem(res, 404, "Not Found", `No queued event '${id}'.`, "EVENT_NOT_FOUND");
+        return;
+      }
+      this.sendJson(res, 200, { event: entry });
       return;
     }
 
@@ -518,7 +568,7 @@ export class KerangkaServer {
 
         // Dispatch side-effects (call, notify, timer, cancel-timer)
         const undelivered = await this.dispatchEffects(result.effects, entityName, id, tenantId);
-        this.queueUndelivered(undelivered);
+        this.recordDelivery(result.events, undelivered, entityName);
         const effectsFailed = undelivered.map(reportable);
 
         // Present only when something was not delivered, so a successful run's response is
@@ -965,17 +1015,27 @@ export class KerangkaServer {
    * the failure is now something a host can drain, retry and acknowledge, instead of a log
    * line that named a problem nobody could act on.
    */
-  private queueUndelivered(undelivered: UndeliveredEffect[]): void {
+  private recordDelivery(
+    events: CloudEvent[] | undefined,
+    undelivered: UndeliveredEffect[],
+    entityName: string
+  ): void {
     if (!this.session) return;
-    for (const failure of undelivered) {
-      try {
-        this.session.enqueueEffect(failure.effect);
-      } catch (err) {
-        // The queue is a second store and can fail on its own. Losing that must not lose
-        // the run's own outcome, and the caller is already being told about the effect.
-        if (!this.quiet) {
-          console.warn("[kerangka] Failed to queue an undelivered effect:", err);
-        }
+    try {
+      // Both halves in one transaction: the events this run emitted and the effects it
+      // could not deliver are one fact about what the run promised. The record write is
+      // still a separate store and a separate moment — that window is ADR-0034's stated
+      // limit — but nothing inside the queue is left half-recorded.
+      this.session.enqueueDelivery(
+        events,
+        undelivered.map((failure) => failure.effect),
+        entityName
+      );
+    } catch (err) {
+      // The queue is a second store and can fail on its own. Losing that must not lose
+      // the run's own outcome, and the caller is already being told about the effects.
+      if (!this.quiet) {
+        console.warn("[kerangka] Failed to record this run's events and undelivered effects:", err);
       }
     }
   }
@@ -1000,7 +1060,11 @@ export class KerangkaServer {
         actor: { id: "system" },
       });
       if (res.effects && res.effects.length > 0) {
-        this.queueUndelivered(await this.dispatchEffects(res.effects, entityName, recordId));
+        this.recordDelivery(
+          res.events,
+          await this.dispatchEffects(res.effects, entityName, recordId),
+          entityName
+        );
       }
     }
   }

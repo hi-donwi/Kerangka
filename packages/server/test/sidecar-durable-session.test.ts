@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { compile } from "@kerangka/compiler";
 import { loadEngine } from "@kerangka/engine-ts";
+import type { SessionStoreLike } from "../src/index.js";
 import {
   createJsonRpcDispatcher,
   SessionLockedError,
@@ -560,6 +561,65 @@ describe("a queued failure does not collide with a commit's effect ids", () => {
       expect(entries).toHaveLength(2);
       expect(new Set(entries.map((entry) => entry.id)).size).toBe(entries.length);
       store.close();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+/**
+ * `enqueueDelivery` is the HTTP path's one call for "this run emitted these and could not
+ * do those". Both stores have to agree on it, because the durable one is the one that
+ * survives a restart and the in-memory one is what most tests exercise.
+ */
+describe("both session stores record a run's delivery the same way", () => {
+  const emitted = () => [
+    {
+      specversion: "1.0" as const,
+      id: "evt-parity-1",
+      source: "kerangka://parity",
+      type: "InvoiceSent",
+      time: "2026-09-30T00:00:00.000Z",
+      datacontenttype: "application/json" as const,
+      data: { invoice: "inv-parity-1" }
+    }
+  ];
+  const undelivered = [
+    { type: "call" as const, extension: "sendInvoiceEmail", input: { invoice: "inv-parity-1" } }
+  ];
+
+  const record = (session: SessionStoreLike) => {
+    const first = session.enqueueDelivery(emitted(), undelivered, "Invoice");
+    // The same events and effects again, as a retried request would re-emit them.
+    const second = session.enqueueDelivery(emitted(), undelivered, "Invoice");
+    return {
+      first: { events: first.events.length, effects: first.effects.length },
+      second: { events: second.events.length, effects: second.effects.length },
+      pending: session.pending().length,
+      pendingEffects: session.pendingEffects().length
+    };
+  };
+
+  it("queues an event once and an effect once, in both stores", () => {
+    const { path, cleanup } = workspace();
+    try {
+      const durable = sidecar(path);
+      const memory = sidecar(":memory:");
+      const inMemory = record(memory.store);
+      const onDisk = record(durable.store);
+
+      expect(onDisk).toEqual(inMemory);
+      // The event is keyed by its CloudEvent id, so the second call queues nothing.
+      // The effect has no natural key, so it is queued again — two undelivered copies of
+      // one failed call is the honest outcome, and a host acking both is harmless.
+      expect(inMemory).toEqual({
+        first: { events: 1, effects: 1 },
+        second: { events: 0, effects: 1 },
+        pending: 1,
+        pendingEffects: 2
+      });
+      durable.close();
+      memory.close();
     } finally {
       cleanup();
     }

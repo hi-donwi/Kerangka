@@ -74,9 +74,9 @@ A regression test covers the collision for both stores.
 
 - `/api/effects/*` is a hand-written route and is not in the emitted OpenAPI document, exactly
   as `/api/mcp/*` is not. That gap predates this decision and now covers more surface.
-- This says nothing about **events**. The HTTP server still returns events in the response and
-  stores them nowhere, so a client that drops the response loses the event. That is a larger
-  gap, and the next architectural decision should be consistent with this one.
+- **Events** were out of scope here and are [ADR-0035](0035-http-event-outbox.md), which shares
+  one transaction with this queue and so closes the window *inside* the queue. The window
+  between the record write and the enqueue remains, and is recorded there.
 
 ## Alternatives Considered
 
@@ -92,5 +92,5 @@ A regression test covers the collision for both stores.
 - [x] `enqueueEffect` on `SessionStoreLike`, `SessionStore` and `SqliteSessionStore`
 - [x] `KerangkaServer({ session })` and the three drain endpoints
 - [x] Id-namespace regression tests
-- [ ] An outbox for **events** on the HTTP path, sharing one transaction with the effect queue
-      so the window above closes rather than being engineered around
+- [x] An outbox for **events** on the HTTP path, sharing one transaction with the effect queue —
+      [ADR-0035](0035-http-event-outbox.md), which closes the queue-internal half of the window
