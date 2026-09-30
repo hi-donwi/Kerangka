@@ -745,4 +745,122 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
       }
     });
   });
+
+  /**
+   * The emitter's document is about the model; the served one is about a running server, and
+   * a client that fetches `/openapi.json` from a running server has to see the routes that
+   * server actually serves. `/api/events` and `/api/effects` are exactly the surface a host
+   * needs, and before this they were invisible to anyone generating a client from the
+   * document.
+   */
+  describe("the served document describes the routes this server serves", () => {
+    const specFrom = async (base: string) => (await (await fetch(`${base}/openapi.json`)).json());
+
+    it("includes the MCP routes, which were never model-derived", async () => {
+      const spec = await specFrom(baseUrl);
+      expect(spec.paths["/api/mcp/tools"]?.get?.operationId).toBe("list_mcp_tools");
+      expect(spec.paths["/api/mcp/call"]?.post?.operationId).toBe("call_mcp_tool");
+    });
+
+    it("keeps the model surface intact alongside them", async () => {
+      const spec = await specFrom(baseUrl);
+      expect(spec.paths["/api/invoice"]).toBeDefined();
+      expect(spec.paths["/api/customer/{id}"]).toBeDefined();
+      expect(spec.components.schemas.Invoice).toBeDefined();
+    });
+
+    it("omits the queue routes when there is no session, rather than advertising a 501", async () => {
+      const spec = await specFrom(baseUrl);
+      // The server under test has no session. A path it cannot serve should not appear.
+      expect(spec.paths["/api/events"]).toBeUndefined();
+      expect(spec.paths["/api/effects"]).toBeUndefined();
+      expect(spec.components.schemas.OutboxEntry).toBeUndefined();
+    });
+
+    it("includes the queue routes and their schemas when a session is configured", async () => {
+      const port = 4006;
+      const server = new KerangkaServer(kir, {
+        port,
+        quiet: true,
+        store: new MemoryStore(),
+        session: new SessionStore()
+      });
+      await server.start();
+      try {
+        const spec = await specFrom(`http://localhost:${port}`);
+        expect(spec.paths["/api/events"]?.get?.operationId).toBe("list_pending_events");
+        expect(spec.paths["/api/events/{id}/ack"]?.post?.operationId).toBe("ack_event");
+        expect(spec.paths["/api/events/{id}/nack"]?.post?.operationId).toBe("nack_event");
+        expect(spec.paths["/api/effects"]?.get?.operationId).toBe("list_pending_effects");
+        expect(spec.paths["/api/effects/{id}/ack"]?.post?.operationId).toBe("ack_effect");
+        expect(spec.paths["/api/effects/{id}/nack"]?.post?.operationId).toBe("nack_effect");
+
+        expect(spec.components.schemas.OutboxEntry).toBeDefined();
+        expect(spec.components.schemas.HostEffectEntry).toBeDefined();
+        // The outbox entry's `event` is the CloudEvent envelope, so the schema has to exist
+        // or a generated client sees a dangling reference.
+        expect(spec.components.schemas.OutboxEntry.properties.event.$ref).toBe(
+          "#/components/schemas/CloudEvent"
+        );
+        expect(spec.components.schemas.CloudEvent).toBeDefined();
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("declares the 404 a host gets for an id that is not queued", async () => {
+      const port = 4007;
+      const server = new KerangkaServer(kir, {
+        port,
+        quiet: true,
+        store: new MemoryStore(),
+        session: new SessionStore()
+      });
+      await server.start();
+      try {
+        const spec = await specFrom(`http://localhost:${port}`);
+        expect(spec.paths["/api/events/{id}/ack"].post.responses["404"]).toBeDefined();
+        expect(spec.paths["/api/effects/{id}/nack"].post.responses["404"]).toBeDefined();
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("resolves every $ref in the document, operational routes included", async () => {
+      const port = 4008;
+      const server = new KerangkaServer(kir, {
+        port,
+        quiet: true,
+        store: new MemoryStore(),
+        session: new SessionStore()
+      });
+      await server.start();
+      try {
+        const spec = await specFrom(`http://localhost:${port}`);
+        const refs = new Set<string>();
+        const walk = (node: unknown) => {
+          if (Array.isArray(node)) return node.forEach(walk);
+          if (node === null || typeof node !== "object") return;
+          for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+            if (key === "$ref" && typeof value === "string") refs.add(value);
+            else walk(value);
+          }
+        };
+        walk(spec);
+
+        expect(refs.size).toBeGreaterThan(0);
+        for (const ref of refs) {
+          // A dangling reference is worse than a missing schema: the document looks complete
+          // and every client generated from it fails to compile.
+          const [, kind, name] = /^#\/components\/(schemas|responses)\/(.+)$/.exec(ref) ?? [];
+          expect(kind, `unexpected $ref '${ref}'`).toBeDefined();
+          const target =
+            kind === "schemas" ? spec.components.schemas : spec.components.responses;
+          expect(target, `dangling $ref '${ref}'`).toHaveProperty(name as string);
+        }
+      } finally {
+        await server.stop();
+      }
+    });
+  });
 });

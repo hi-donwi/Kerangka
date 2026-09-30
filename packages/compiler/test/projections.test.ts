@@ -126,4 +126,35 @@ describe("Kerangka Projections", () => {
       expect(navDoc.root.type).toBe("AppShell");
     });
   });
+
+  /**
+   * The emitted document is about the model. The served one is about a running server, and
+   * carries the operational routes a deployment has — `/api/events` and `/api/effects` only
+   * when a session is configured. Those live in `packages/server`, and it matters that they
+   * stay there: an emitted document is a file a consumer generates a client from, and
+   * advertising `/api/events` to someone who then runs the model with no session would be a
+   * promise the code cannot keep.
+   */
+  describe("the emitted document describes the model, not a deployment", () => {
+    it("carries no operational routes", () => {
+      const spec = generateOpenAPI(kir) as {
+        paths: Record<string, unknown>;
+        components: { schemas: Record<string, unknown> };
+      };
+      for (const path of Object.keys(spec.paths)) {
+        expect(path, `${path} is a deployment route, not a model one`).toMatch(
+          /^\/api\/[a-z]/
+        );
+        expect(path).not.toMatch(/mcp|events|effects/i);
+      }
+    });
+
+    it("carries no queue or MCP schemas", () => {
+      const spec = generateOpenAPI(kir) as {
+        components: { schemas: Record<string, unknown> };
+      };
+      expect(spec.components.schemas).not.toHaveProperty("OutboxEntry");
+      expect(spec.components.schemas).not.toHaveProperty("HostEffectEntry");
+    });
+  });
 });

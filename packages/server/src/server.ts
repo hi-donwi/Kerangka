@@ -29,6 +29,7 @@ import {
 import { CloudEvent, Effect, Engine } from "@kerangka/engine-ts";
 import { SchedulerRunner } from "./scheduler-runner.js";
 import { SessionStoreLike } from "./session-store.js";
+import { operationalOpenAPI } from "./operational-openapi.js";
 
 export interface ServerOptions {
   port?: number;
@@ -88,6 +89,32 @@ const reportable = ({ index, type, target, code }: UndeliveredEffect): FailedEff
   code
 });
 
+/**
+ * Add the routes the server serves that the model does not describe.
+ *
+ * The emitter's document is about the model; this server is about a running deployment, and
+ * a document a client fetches from a running server has to describe the running server. The
+ * queue routes appear only when a session is configured, because a path this deployment
+ * cannot serve should not be advertised.
+ */
+function withOperationalRoutes(
+  spec: Record<string, unknown>,
+  withQueues: boolean
+): Record<string, unknown> {
+  const extra = operationalOpenAPI(withQueues);
+  const paths = (spec.paths ?? {}) as Record<string, unknown>;
+  const components = (spec.components ?? {}) as Record<string, unknown>;
+  const schemas = (components.schemas ?? {}) as Record<string, unknown>;
+  return {
+    ...spec,
+    paths: { ...paths, ...extra.paths },
+    components: {
+      ...components,
+      schemas: { ...schemas, ...extra.schemas }
+    }
+  };
+}
+
 export class KerangkaServer {
   readonly kir: KIRDocument;
   readonly port: number;
@@ -134,9 +161,10 @@ export class KerangkaServer {
       },
     });
 
-    this.openApiSpec = generateOpenAPI(kir, {
-      serverUrl: `http://${this.host}:${this.port}`,
-    });
+    this.openApiSpec = withOperationalRoutes(
+      generateOpenAPI(kir, { serverUrl: `http://${this.host}:${this.port}` }),
+      this.session !== null
+    );
     this.graphqlSchema = generateGraphQL(kir);
     this.mcpTools = generateMcpTools(kir);
     this.uidlDocs = generateUIDL(kir);
