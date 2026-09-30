@@ -5,7 +5,14 @@
  * License: Apache-2.0
  */
 
-import { evaluate, ExprNode, addDuration, getNextCronRun, K1EvaluationError } from "@kerangka/k1";
+import {
+  evaluate,
+  compileExpression,
+  ExprNode,
+  addDuration,
+  getNextCronRun,
+  K1EvaluationError,
+} from "@kerangka/k1";
 import {
   ActorContext,
   AvailableOperation,
@@ -88,6 +95,70 @@ export class Engine {
       return value.trim().toLowerCase() === "true";
     }
     return value;
+  }
+
+  /**
+   * `then[].emit.data` values are references into the record, not literals:
+   * `{ "orderId": "id", "amount": "totalAmount" }` (PLAN.md 5.1). A call such as
+   * `now()` is evaluated; anything that does not resolve stays as written.
+   */
+  private resolveEventData(
+    data: unknown,
+    record: Record<string, unknown>,
+    extra: Record<string, unknown> = {},
+  ): unknown {
+    if (Array.isArray(data)) {
+      return data.map((item) => this.resolveEventData(item, record, extra));
+    }
+    if (data && typeof data === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
+        out[k] = this.resolveEventData(v, record, extra);
+      }
+      return out;
+    }
+    if (typeof data !== "string") {
+      return data;
+    }
+
+    let node: ExprNode | null = null;
+    try {
+      node = compileExpression(data);
+    } catch {
+      return data;
+    }
+    if (!node || (!("$bind" in node) && !("$expr" in node))) {
+      return data;
+    }
+
+    try {
+      const value = evaluate(node, this.evalContext({ record, data: record, ...extra }));
+      return value === null ? data : value;
+    } catch {
+      return data;
+    }
+  }
+
+  /**
+   * A `with` cell is a literal unless it parses to a K1 operation. `issued` and `INV-o-1`
+   * parse to a literal or nothing and stay as written; `concat(...)` and `now()` parse to a
+   * call and are evaluated. Anything that fails to parse is a literal.
+   */
+  private asExpression(value: string): ExprNode | null {
+    try {
+      const node = compileExpression(value);
+      if ("$bind" in node) {
+        // `issued` parses as the bind `issued`; only a path rooted in the evaluation
+        // context (`event.data.orderId`) is a reference rather than a literal word.
+        return /^(event|eventMetadata|record|state|data|user|actor|input)\./.test(node.$bind) ? node : null;
+      }
+      if (!("$expr" in node)) return null;
+      // `o-7` parses as the subtraction `o - 7`; only a named call such as `concat(...)`
+      // or `now()` is an operation. A cell that is a value stays a value.
+      return /^[A-Za-z_][A-Za-z0-9_.]*$/.test(node.$expr) ? node : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -666,7 +737,11 @@ export class Engine {
       if (Array.isArray(transition.then)) {
         for (const effect of transition.then) {
           if (effect.emit) {
-            const ce = this.createCloudEvent(effect.emit, effect.data, entityName, nextRecord, actor, options.now);
+            const evtData = this.resolveEventData(effect.data, nextRecord, { now: nowIso }) as Record<
+              string,
+              unknown
+            >;
+            const ce = this.createCloudEvent(effect.emit, evtData, entityName, nextRecord, actor, options.now);
             events.push(ce);
             effects.push({ type: "emit", event: ce });
           }
@@ -720,7 +795,11 @@ export class Engine {
       if (Array.isArray(action.emit)) {
         for (const emitDef of action.emit) {
           const evtName = typeof emitDef === "string" ? emitDef : emitDef.event ?? emitDef.name;
-          const evtData = typeof emitDef === "object" ? emitDef.data : {};
+          const rawData = typeof emitDef === "object" ? emitDef.data : {};
+          const evtData = this.resolveEventData(rawData, nextRecord, { now: nowIso }) as Record<
+            string,
+            unknown
+          >;
           const ce = this.createCloudEvent(evtName, evtData, entityName, nextRecord, actor, options.now);
           events.push(ce);
           effects.push({ type: "emit", event: ce });
@@ -999,6 +1078,14 @@ export class Engine {
     const eventData = event.data ?? {};
     const invocations: PolicyInvocation[] = [];
 
+    // A policy writes `event.orderId` or `event.data.orderId`; both resolve. The context
+    // carries the envelope, with the payload spread in for the shorter form.
+    const eventContext = (extra: Record<string, unknown> = {}): Record<string, unknown> =>
+      this.evalContext({
+        ...extra,
+        event: { ...eventData, ...(event as object), type: eventName, data: eventData },
+      });
+
     const policies = this.ir.policies ?? {};
 
     for (const [policyName, policyDef] of Object.entries(policies)) {
@@ -1007,16 +1094,20 @@ export class Engine {
       if (!p.on) continue;
 
       const pattern = p.on;
+      // A policy may name its event bare (`OrderPlaced`) or qualified by the owning
+      // context (`orders.OrderPlaced`). The emitted CloudEvent carries the bare type.
+      const barePattern = pattern.includes(".") ? pattern.slice(pattern.lastIndexOf(".") + 1) : pattern;
       const matches =
         pattern === "*" ||
         pattern === eventName ||
+        barePattern === eventName ||
         (pattern.endsWith("*") && eventName.startsWith(pattern.slice(0, -1)));
 
       if (!matches) continue;
 
       if (p.when && typeof p.when === "object") {
         try {
-          const passed = Boolean(evaluate(p.when as ExprNode, this.evalContext({ event: eventData, eventMetadata: event })));
+          const passed = Boolean(evaluate(p.when as ExprNode, eventContext({ eventMetadata: event })));
           if (!passed) continue;
         } catch {
           continue;
@@ -1024,32 +1115,43 @@ export class Engine {
       }
 
       let targetId: string | undefined;
-      if (p.target) {
-        if (typeof p.target === "string" && p.target.startsWith("event.")) {
-          const path = p.target.slice(6);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          targetId = String((eventData as any)[path] ?? "");
-        } else {
-          targetId = String(p.target);
-        }
+      if (p.target !== undefined && p.target !== null) {
+        const asString =
+          typeof p.target === "string"
+            ? (() => {
+                const node = this.asExpression(p.target as string);
+                if (!node) return p.target as string;
+                try {
+                  const value = evaluate(node, eventContext());
+                  return value === null || value === undefined ? "" : String(value);
+                } catch {
+                  return p.target as string;
+                }
+              })()
+            : String(p.target);
+        targetId = String(asString ?? "");
       }
 
+      // `with` is the documented, schema-checked key; `input` stays accepted for a host
+      // that builds a policy programmatically.
+      const bindings = (p.with ?? p.input) as Record<string, unknown> | undefined;
       const input: Record<string, unknown> = {};
-      if (p.input && typeof p.input === "object") {
-        for (const [k, v] of Object.entries(p.input)) {
-          if (typeof v === "string" && v.startsWith("event.")) {
-            const path = v.slice(6);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            input[k] = (eventData as any)[path];
-          } else if (v && typeof v === "object") {
+      if (bindings && typeof bindings === "object") {
+        for (const [k, v] of Object.entries(bindings)) {
+          // A cell is a literal (`issued`), a bind (`event.data.orderId`), or a K1
+          // operation (`concat(...)`, `now()`). Anything that is not one of those stays
+          // exactly as written.
+          const node = v && typeof v === "object" ? (v as ExprNode) : typeof v === "string" ? this.asExpression(v) : null;
+          if (node) {
             try {
-              input[k] = evaluate(v as ExprNode, this.evalContext({ event: eventData }));
+              input[k] = evaluate(node, eventContext());
+              continue;
             } catch {
               input[k] = v;
+              continue;
             }
-          } else {
-            input[k] = v;
           }
+          input[k] = v;
         }
       }
 
@@ -1058,6 +1160,8 @@ export class Engine {
         action: p.run,
         targetId,
         input,
+        // Idempotent policy execution keyed by event id and policy name (PLAN.md §7.7).
+        idempotencyKey: `${(event as { id?: string }).id ?? eventName}:${policyName}`,
       });
     }
 

@@ -193,6 +193,8 @@ export interface PolicyInvocation {
   action: string;
   targetId?: string;
   input?: Record<string, unknown>;
+  /** Event id plus policy name, so a redelivered event runs a policy once. */
+  idempotencyKey?: string;
 }
 
 export interface ReactionResult {
