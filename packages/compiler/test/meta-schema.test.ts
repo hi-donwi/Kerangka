@@ -22,6 +22,8 @@ import {
   WORKFLOW_KEYS,
   TRANSITION_KEYS,
   ACTION_KEYS,
+  RULE_KEYS,
+  VERSION_KEYS,
   MODEL_SCHEMA_URI
 } from "../src/meta-schema.js";
 
@@ -108,6 +110,34 @@ describe("the model meta-schema", () => {
       const honoured = new Set(interfaceKeys("ActionDefinition"));
       const extras = (ACTION_KEYS as readonly string[]).filter((k) => !honoured.has(k));
       expect(extras, `ACTION_KEYS has keys nothing reads: ${extras.join(", ")}`).toEqual([]);
+    });
+
+    it("knows every key RuleDefinition declares", () => {
+      const declared = interfaceKeys("RuleDefinition");
+      const known = RULE_KEYS as readonly string[];
+      const missing = declared.filter((key) => !known.includes(key));
+      expect(missing, `RULE_KEYS is missing: ${missing.join(", ")}`).toEqual([]);
+    });
+
+    it("knows every key RuleVersion declares", () => {
+      const declared = interfaceKeys("RuleVersion");
+      const known = VERSION_KEYS as readonly string[];
+      const missing = declared.filter((key) => !known.includes(key));
+      expect(missing, `VERSION_KEYS is missing: ${missing.join(", ")}`).toEqual([]);
+    });
+
+    it("lists no rule or version key the language does not honour", () => {
+      const ruleExtras = (RULE_KEYS as readonly string[]).filter(
+        (k) => !new Set(interfaceKeys("RuleDefinition")).has(k)
+      );
+      expect(ruleExtras, `RULE_KEYS has keys nothing reads: ${ruleExtras.join(", ")}`).toEqual([]);
+      const versionExtras = (VERSION_KEYS as readonly string[]).filter(
+        (k) => !new Set(interfaceKeys("RuleVersion")).has(k)
+      );
+      expect(
+        versionExtras,
+        `VERSION_KEYS has keys nothing reads: ${versionExtras.join(", ")}`
+      ).toEqual([]);
     });
 
     it("declares every key the compiler reads off a workflow or a transition", () => {
@@ -513,6 +543,138 @@ describe("the model meta-schema", () => {
 
     it("still compiles a sound action", () => {
       const doc = withActions({ rename: { input: { to: "string" }, do: [{ set: { name: "to" } }] } });
+      expect(() => compile(JSON.stringify(doc))).not.toThrow();
+    });
+  });
+
+  describe("an entity's rules are checked for shape", () => {
+    const withRules = (rules: unknown) => ({
+      ...minimal(),
+      entities: { Thing: { fields: { amount: "decimal(12,2)" }, rules } }
+    });
+
+    it("accepts a rule written the way the language writes one", () => {
+      const doc = withRules([
+        {
+          id: "positive",
+          field: "amount",
+          message: "Amount must be positive",
+          check: "amount > 0",
+          effectiveDate: "ctx.now",
+          versions: [
+            { validFrom: "2026-01-01", check: "amount > 0" },
+            { validFrom: "2026-06-01", validTo: "2026-12-31", check: "amount > 10", message: "Higher floor" }
+          ]
+        }
+      ]);
+      expect(codes(doc)).toEqual([]);
+    });
+
+    it("rejects a rule written as a bare expression, which compiled to an empty rule", () => {
+      // Probed, not assumed: `rules: ["amount > 0"]` compiles, and the IR comes back as
+      // `rules: [{}]` — no id, no check, no message. A rule that can never fire and can never
+      // be reported, out of a document the compiler called valid. The string form *is*
+      // supported on a trait, which is why this is easy to write by accident.
+      const doc = withRules(["amount > 0"]);
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      const reported = validateModelStructure(doc).find(
+        (d) => d.path === "/entities/Thing/rules/0"
+      );
+      expect(reported?.message).toMatch(/must be an object, not a string/);
+      expect(reported?.hint).toMatch(/id.*message.*check|"check"/s);
+    });
+
+    it("rejects rules declared as something other than a list", () => {
+      const doc = withRules({ positive: { check: "amount > 0" } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'rules' must be an array/);
+    });
+
+    it("requires a rule to say what it is, what it says, and what it checks", () => {
+      // `id` and `check` are both load-bearing: the IR keeps whatever is there, so a rule with
+      // no id is unnameable in a diagnostic and a rule with no check never fires.
+      const doc = withRules([{ field: "amount" }]);
+      const diagnostics = validateModelStructure(doc);
+      expect(diagnostics.map((d) => d.code)).toContain("MISSING_RULE_ID");
+      expect(diagnostics.map((d) => d.code)).toContain("MISSING_RULE_CHECK");
+      const reported = diagnostics.find((d) => d.code === "MISSING_RULE_ID");
+      expect(reported?.path).toBe("/entities/Thing/rules/0");
+      expect(reported?.message).toMatch(/Thing/);
+    });
+
+    it("rejects a rule with no message, which fails with nothing to tell the user", () => {
+      const doc = withRules([{ id: "positive", check: "amount > 0" }]);
+      expect(codes(doc)).toContain("MISSING_RULE_MESSAGE");
+    });
+
+    it("reports an unknown rule key", () => {
+      const doc = withRules([{ id: "r", message: "m", check: "amount > 0", when: "amount > 0" }]);
+      const diagnostic = validateModelStructure(doc).find(
+        (d) => d.code === "UNKNOWN_KEY" && d.path === "/entities/Thing/rules/0/when"
+      );
+      expect(diagnostic?.hint).toMatch(/Valid rule keys|Did you mean/);
+    });
+
+    it("rejects a non-string field on a rule", () => {
+      const doc = withRules([{ id: "r", message: "m", check: "amount > 0", field: 7 }]);
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'field' must be a string/);
+    });
+
+    it("requires each period of a versioned rule to carry a check", () => {
+      // A period with no check is a date range during which the rule does not apply, which
+      // reads in the model as coverage and behaves as a hole.
+      const doc = withRules([
+        { id: "r", message: "m", check: "amount > 0", versions: [{ validFrom: "2026-01-01" }] }
+      ]);
+      const diagnostics = validateModelStructure(doc);
+      expect(diagnostics.map((d) => d.code)).toContain("MISSING_VERSION_CHECK");
+      expect(
+        diagnostics.find((d) => d.code === "MISSING_VERSION_CHECK")?.path
+      ).toBe("/entities/Thing/rules/0/versions/0/check");
+    });
+
+    it("rejects a period that is not an object", () => {
+      const doc = withRules([
+        { id: "r", message: "m", check: "amount > 0", versions: ["2026-01-01"] }
+      ]);
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(
+        validateModelStructure(doc).find((d) => d.path?.endsWith("/versions/0"))?.message
+      ).toMatch(/must be an object, not a string/);
+    });
+
+    it("reports an unknown key on a period", () => {
+      const doc = withRules([
+        {
+          id: "r",
+          message: "m",
+          check: "amount > 0",
+          versions: [{ validFrom: "2026-01-01", check: "amount > 0", validuntil: "2026-12-31" }]
+        }
+      ]);
+      const diagnostic = validateModelStructure(doc).find(
+        (d) => d.code === "UNKNOWN_KEY" && d.path?.includes("/versions/0/validuntil")
+      );
+      // The near miss that would otherwise leave a period open-ended. `validuntil` is far
+      // enough from `validTo` that the fuzzy match declines, so the hint lists the keys — which
+      // is the part that still tells the author what to write.
+      expect(diagnostic?.hint).toMatch(/validTo/);
+    });
+
+    it("refuses to compile a document whose rules are structurally wrong", () => {
+      const doc = withRules(["amount > 0"]);
+      let thrown: unknown;
+      try {
+        compile(JSON.stringify(doc));
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(CompilerError);
+    });
+
+    it("still compiles a sound rule", () => {
+      const doc = withRules([{ id: "positive", message: "Must be positive", check: "amount > 0" }]);
       expect(() => compile(JSON.stringify(doc))).not.toThrow();
     });
   });

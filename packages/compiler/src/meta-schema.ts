@@ -143,6 +143,12 @@ export const TRANSITION_KEYS = [
 /** The keys one action may declare. `do` is the declared name for the statement list. */
 export const ACTION_KEYS = ["roles", "input", "when", "run", "emit", "do", "then"] as const;
 
+/** The keys one rule may declare. */
+export const RULE_KEYS = ["id", "field", "message", "check", "versions", "effectiveDate"] as const;
+
+/** The keys one period of a versioned rule may declare. */
+export const VERSION_KEYS = ["validFrom", "validTo", "check", "message"] as const;
+
 type Diagnostic = Omit<CompilerDiagnostic, "severity">;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -351,7 +357,124 @@ class StructuralValidator {
       this.validateFields(fields, at("fields"), name);
       this.validateWorkflow(entity.workflow, at, name);
       this.validateActions(entity.actions, at, name);
+      this.validateRules(entity.rules, at, name);
     }
+  }
+
+  /**
+   * Check an entity's `rules`: the form each rule is written in, and each period of a
+   * versioned one.
+   *
+   * A rule written as a bare expression compiled to an empty rule. Probed rather than assumed:
+   * `rules: ["amount > 0"]` compiles, and the IR comes back as `rules: [{}]` — no id, no
+   * check, no message. A rule that can never fire, out of a document the compiler called
+   * valid, with no error anywhere. The string form *is* honoured on a trait, which is what
+   * makes it easy to write here by accident.
+   */
+  private validateRules(
+    rules: unknown,
+    entityAt: (key: string) => string,
+    entityName: string
+  ): void {
+    if (rules === undefined) return;
+    const listPath = entityAt("rules");
+    if (!Array.isArray(rules)) {
+      this.error(
+        "SCHEMA_INVALID",
+        `'rules' must be an array of rule declarations, not ${describe(rules)}.`,
+        listPath,
+        `Write "rules": [ { "id": ..., "message": ..., "check": ... } ].`
+      );
+      return;
+    }
+
+    rules.forEach((rule, index) => {
+      const at = (key: string) => `${listPath}/${index}${key ? `/${key}` : ""}`;
+      if (!isPlainObject(rule)) {
+        this.error(
+          "SCHEMA_INVALID",
+          `Rule ${index} of '${entityName}' must be an object, not ${describe(rule)}.`,
+          `${listPath}/${index}`,
+          `Each rule declares "id", "message" and "check". A bare expression here compiles to an empty rule that never fires.`
+        );
+        return;
+      }
+
+      this.unknownKeys(rule, RULE_KEYS, at, "rule key");
+
+      // All three are load-bearing, and the IR keeps whatever is present. A rule with no `id`
+      // cannot be named in a diagnostic; one with no `check` never fires; one with no `message`
+      // fails with nothing to tell the user.
+      if (rule.id === undefined) {
+        this.error(
+          "MISSING_RULE_ID",
+          `Rule ${index} of '${entityName}' has no 'id'.`,
+          at(""),
+          `Every rule is named, for example "id": "amount-positive".`
+        );
+      } else if (typeof rule.id !== "string") {
+        this.error(
+          "SCHEMA_INVALID",
+          `Rule ${index} of '${entityName}' has a non-string 'id'.`,
+          at("id"),
+          `Write "id": "amount-positive".`
+        );
+      }
+
+      if (rule.message === undefined) {
+        this.error(
+          "MISSING_RULE_MESSAGE",
+          `Rule ${index} of '${entityName}' has no 'message'.`,
+          at(""),
+          `Every rule says what it means, for example "message": "Amount must be positive".`
+        );
+      }
+
+      if (rule.check === undefined) {
+        this.error(
+          "MISSING_RULE_CHECK",
+          `Rule ${index} of '${entityName}' has no 'check'.`,
+          at(""),
+          `Every rule has a check, for example "check": "amount > 0".`
+        );
+      }
+
+      this.checkString(rule, "field", at);
+      this.checkString(rule, "effectiveDate", at);
+
+      // `versions` being a list, and being non-empty, is already the compiler's business
+      // (EFFECTIVE_VERSIONS_MALFORMED, EFFECTIVE_VERSIONS_EMPTY). Reporting it twice would
+      // mean one fault with two codes, so this layer leaves the list's shape alone.
+      if (rule.versions === undefined) return;
+      if (!Array.isArray(rule.versions)) return; // the compiler already said so
+
+      rule.versions.forEach((version, v) => {
+        const vpath = `${at("versions")}/${v}`;
+        if (!isPlainObject(version)) {
+          this.error(
+            "SCHEMA_INVALID",
+            `Period ${v} of rule ${index} of '${entityName}' must be an object, not ${describe(version)}.`,
+            vpath,
+            `Each period declares "validFrom" and a "check".`
+          );
+          return;
+        }
+        this.unknownKeys(version, VERSION_KEYS, (key) => `${vpath}/${key}`, "version key");
+        this.checkString(version, "validTo", (key) => `${vpath}/${key}`);
+        // A period with no check is a date range during which the rule does not apply, which
+        // reads in the model as coverage and behaves as a hole. `validFrom` is left alone: a
+        // bad date is the verifier's business, and duplicating date parsing here would be the
+        // two-places-to-keep-in-step problem ADR-0038 warns about.
+        if (version.check === undefined) {
+          this.error(
+            "MISSING_VERSION_CHECK",
+            `Period ${v} of rule ${index} of '${entityName}' has no 'check'.`,
+            `${vpath}/check`,
+            `Each period carries the check that was valid then, for example "check": "amount > 0".`
+          );
+        }
+      });
+    });
   }
 
   /**
