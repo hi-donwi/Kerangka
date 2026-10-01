@@ -12,12 +12,42 @@ export interface AuditMetadata {
   updatedBy?: string;
 }
 
+/**
+ * A query predicate: the plan's `where` node, which is the tuple AST the engine uses.
+ *
+ * Typed as `unknown` on purpose. The node union — `["and", …]`, `["get", "name"]`, a literal —
+ * belongs to `engine-ts`, and `ports` must not grow a dependency on it to name it. Narrowing
+ * this to `readonly unknown[]` was tried and is wrong: a plan's `where` may be any node,
+ * including a literal, so the narrower type rejects a perfectly good call and buys nothing. A
+ * type that is `unknown` but says what a store must do with it is more use than one that is
+ * precise about a shape `ports` is not in a position to know.
+ *
+ * The obligation is the part that matters: see `QueryOptions.where`. Anything a store does not
+ * recognise carries no constraint, and a store must not treat an unrecognised node as a reason
+ * to return fewer rows.
+ */
+export type QueryPredicate = unknown;
+
 export interface QueryOptions {
   tenantId?: string;
   limit?: number;
   offset?: number;
   sort?: Record<string, "asc" | "desc">;
   includeSoftDeleted?: boolean;
+
+  /**
+   * The plan's full predicate, offered to the store so it can narrow the scan.
+   *
+   * **Advisory, and narrowing only.** A store may apply any part of this that it can prove is
+   * implied by the predicate, and must otherwise ignore it. It may return a superset; it may
+   * never return a subset, because a store that is stricter than the engine returns fewer rows
+   * than the model promises and nothing reports the difference. The adapter re-evaluates the
+   * full predicate over whatever comes back, which is what makes a partial pushdown correct.
+   *
+   * Equality continues to travel in `QueryFilter`, which every store honours. A store reading
+   * this does not need to handle `==` here; see ADR-0039 for why the filter is not widened.
+   */
+  where?: QueryPredicate;
 }
 
 export interface QueryFilter {
