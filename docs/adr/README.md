@@ -42,3 +42,4 @@ This directory records all significant architectural, semantic, and structural d
 | [0036](0036-two-openapi-documents.md) | Two OpenAPI Documents, Two Meanings | Accepted | 2026-09-30 |
 | [0037](0037-delivery-queue-before-dispatch.md) | The Delivery Queue Is Opened Before the Dispatch | Accepted | 2026-09-30 |
 | [0038](0038-model-document-shape.md) | A Model Document Is Checked for Shape Before It Is Compiled | Accepted | 2026-09-30 |
+| [0039](0039-store-predicates-push-down-only-as-a-weakening.md) | Store Predicates Push Down, but Only as a Weakening | Accepted | 2026-10-01 |
