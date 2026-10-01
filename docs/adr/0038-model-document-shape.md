@@ -104,5 +104,40 @@ cannot run is a validator nobody runs.
 - [x] Tests derive `ENTITY_KEYS` and `FIELD_KEYS` from `types.ts` and the field mapper, in both
       directions
 - [x] A test that the published file equals `modelSchema()`
-- [ ] Entity-level structure beyond the key list: `workflow` states, `actions` and `rules`
-      shapes are still unchecked. That is the natural next layer, and it is much larger.
+- [x] Entity-level structure beyond the key list: `workflow` states, `actions` and `rules`
+      shapes are now checked. Each of the three was an increment, and each found something
+      the layer above had been silently accepting.
+
+## Amendment: the interfaces were not complete (2026-10-01)
+
+Extending the key lists to `workflow`, `actions` and `rules` produced a false positive worse
+than the typo the layer exists to catch, because deriving a key list from `types.ts` assumes
+the interfaces are complete. They were not:
+
+| Key | Read by | Declared on |
+|---|---|---|
+| `final` | `verifyWorkflows` (`workflow.terminal \|\| workflow.final`) | nothing |
+| `after`, `timer` | the engine, for a timed transition (ADR-0015) | nothing |
+| `emit` | the event verifier, the AsyncAPI projector, the engine | nothing |
+
+All five are read off the **raw document**, so all five are legal input. A strict check built
+from the interfaces alone would have reported every timed transition, every `emit` shorthand,
+and every model using the `final` alias as having a typo. The interfaces now declare what the
+engine honours, which is the fix, and a test asserts each read-but-undeclared key is declared
+so the next one found fails there rather than in a user's model.
+
+Three of these were found only by grepping the readers rather than trusting the type — which
+is the concrete form of the "hand-maintained key lists" cost recorded above.
+
+## Amendment: silently accepted forms (2026-10-01)
+
+The same increment found three forms that were neither rejected nor honoured:
+
+| Written | What happened |
+|---|---|
+| `actions: { send: "send" }` | Compiled to an **empty action**. `actionDef.when` on a string is `undefined`, not an error, so the action existed in the API and did nothing when called. |
+| `rules: ["amount > 0"]` | Compiled to `rules: [{}]` — no id, no check, no message. A rule that can never fire. The string form *is* honoured on a trait, so it is easy to write by accident. |
+| `actions: { send: { run: "name" } }` | Dropped whole, because the compiler guards `run` with `typeof run === "object"`. |
+
+All three are diagnostics now. Still unchecked, and the obvious next candidates: `invariants`
+(`inv.assert` is read the same unchecked way `rule.check` was) and `permissions`.
