@@ -62,7 +62,9 @@ export function createProblemDetails(options: {
   instance?: string;
   errors?: unknown[];
 }): ProblemDetails {
-  const type = `https://kerangka.dev/errors/${options.code}`;
+  const type = options.code === "PERMISSION_DENIED"
+    ? `https://kerangka.dev/problem/PERMISSION_DENIED`
+    : `https://kerangka.dev/errors/${options.code}`;
   const title = options.title ?? getDefaultTitle(options.status, options.code);
 
   const problem: ProblemDetails = {

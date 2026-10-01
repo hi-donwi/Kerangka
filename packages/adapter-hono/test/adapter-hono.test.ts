@@ -260,7 +260,10 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
     // Create draft invoice
     const createRes = await app.request("/api/invoice", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Actor-Roles": "billing",
+      },
       body: JSON.stringify({
         id: "INV-999",
         number: "INV-999",

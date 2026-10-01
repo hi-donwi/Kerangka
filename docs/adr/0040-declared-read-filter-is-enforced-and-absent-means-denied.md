@@ -1,7 +1,7 @@
 # ADR-0040: A Declared Read Filter Is Enforced, and Absent Means Denied
 
 - **Date:** 2026-10-01
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** The Kerangka Authors
 - **Project:** kerangka
 

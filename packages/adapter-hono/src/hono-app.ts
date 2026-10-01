@@ -114,7 +114,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       status,
       code,
       detail,
-      instance: c.req.path,
+      instance: status === 403 ? undefined : c.req.path,
       errors,
     });
     return c.json(problem, status, {
@@ -304,7 +304,19 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       return sendProblem(c, 404, "UNKNOWN_ENTITY", `Entity '${entityParam}' does not exist`);
     }
 
+    const actor = getActorContext(c);
     const tenantId = getTenantId(c);
+
+    const canRead = engine.canOperate(entityName, "read", actor);
+    if (!canRead.allowed) {
+      return sendProblem(c, 403, canRead.code ?? "PERMISSION_DENIED", canRead.reason);
+    }
+
+    const readScope = engine.authorizeRead(entityName, actor);
+    if (!readScope.allowed) {
+      return sendProblem(c, 403, readScope.code ?? "PERMISSION_DENIED", readScope.reason);
+    }
+
     const limit = c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : 50;
     const sort = parseSortParam(c.req.query("sort"));
     const cursor = decodeCursor(c.req.query("cursor"));
@@ -320,27 +332,54 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       filter[k] = v;
     }
 
-    const res = await store.find(entityName, Object.keys(filter).length > 0 ? filter : undefined, {
-      limit,
-      offset,
-      sort: effectiveSort,
-      tenantId,
-    });
+    const pushdown: Record<string, unknown> = {
+      ...equalityConstraints(readScope.where, actor),
+      ...filter,
+    };
+    if (tenantId) pushdown.tenantId = tenantId;
 
-    c.header("X-Total-Count", String(res.total));
+    let records: Record<string, unknown>[];
+    let total: number;
+
+    if (readScope.where) {
+      const res = await store.find(entityName, Object.keys(pushdown).length > 0 ? pushdown : undefined, {
+        sort: effectiveSort,
+        tenantId,
+        where: readScope.where,
+      });
+
+      records = evaluateWhereInMemory(
+        res.items as Record<string, unknown>[],
+        readScope.where,
+        actor
+      );
+      total = records.length;
+      records = records.slice(offset, offset + limit);
+    } else {
+      const res = await store.find(entityName, Object.keys(pushdown).length > 0 ? pushdown : undefined, {
+        limit,
+        offset,
+        sort: effectiveSort,
+        tenantId,
+      });
+      records = res.items as Record<string, unknown>[];
+      total = res.total;
+    }
+
+    c.header("X-Total-Count", String(total));
 
     const links = buildNextCursor({
-      items: res.items as Record<string, unknown>[],
+      items: records,
       limit,
-      total: res.total,
+      total,
       offset,
       sort: effectiveSort,
       makeUrl: (cursorValue: string) => cursorValue,
     });
 
     return c.json({
-      items: res.items,
-      total: res.total,
+      items: records,
+      total,
       limit,
       offset,
       // Opaque cursor token; clients pass it back as ?cursor= on the next request.
@@ -355,13 +394,18 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       return sendProblem(c, 404, "UNKNOWN_ENTITY", `Entity '${entityParam}' does not exist`);
     }
 
+    const actor = getActorContext(c);
+    const canCreate = engine.canOperate(entityName, "create", actor);
+    if (!canCreate.allowed) {
+      return sendProblem(c, 403, canCreate.code ?? "PERMISSION_DENIED", canCreate.reason);
+    }
+
     // Idempotency gate
     const gated = await beginIdempotentRequest(c, "POST");
     if (gated) return gated;
 
     try {
       const tenantId = getTenantId(c);
-      const actor = getActorContext(c);
       const body = await readJsonBody(c);
 
       // Validation
@@ -420,6 +464,11 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     const actor = getActorContext(c);
     const tenantId = getTenantId(c);
 
+    const canRead = engine.canOperate(entityName, "read", actor);
+    if (!canRead.allowed) {
+      return sendProblem(c, 403, canRead.code ?? "PERMISSION_DENIED", canRead.reason);
+    }
+
     try {
       const queryParams: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(c.req.query())) {
@@ -450,7 +499,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       // 1. Pull the candidate set: tenant scope plus plan equality constraints, and let the
       //    store apply client-requested sort when the plan has none of its own (plan orderBy
       //    is authoritative when present).
-      const pushdown: Record<string, unknown> = { ...equalityConstraints(plan.where) };
+      const pushdown: Record<string, unknown> = { ...equalityConstraints(plan.where, actor) };
       if (tenantId) pushdown.tenantId = tenantId;
 
       const found = await store.find(entityName, pushdown, {
@@ -466,7 +515,8 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       // 2. Evaluate the remaining predicate in-process (comparisons, or-branches).
       let records = evaluateWhereInMemory(
         found.items as Record<string, unknown>[],
-        plan.where
+        plan.where,
+        actor
       );
 
       // 3. Plan order is authoritative; then projection and paging.
@@ -500,6 +550,9 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       if (err instanceof QueryEvaluationError) {
         return sendProblem(c, 422, "QUERY_INVALID", err.message);
       }
+      if (err instanceof Error && err.name === "ReadScopeError") {
+        return sendProblem(c, 403, "PERMISSION_DENIED", err.message);
+      }
       throw err;
     }
   });
@@ -516,10 +569,37 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       return sendProblem(c, 404, "UNKNOWN_ENTITY", `Entity '${entityParam}' does not exist`);
     }
 
-    const tenantId = getTenantId(c);
-    const item = await store.get(entityName, id, { tenantId });
+    const actor = getActorContext(c);
+
+    // 1. Permission check
+    const canRead = engine.canOperate(entityName, "read", actor);
+    if (!canRead.allowed) {
+      return sendProblem(c, 403, canRead.code ?? "PERMISSION_DENIED", canRead.reason);
+    }
+
+    // 2. Authorize read
+    const readScope = engine.authorizeRead(entityName, actor);
+    if (!readScope.allowed) {
+      return sendProblem(c, 403, readScope.code ?? "PERMISSION_DENIED", readScope.reason);
+    }
+
+    // 3. Fetch from store without tenant scoping so a cross-tenant item yields 403, not 404
+    const item = await store.get<Record<string, unknown>>(entityName, id);
     if (!item) {
       return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
+    }
+
+    // 4. Verify against readScope.where (ADR-0040 §4)
+    if (readScope.where) {
+      const allowed = evaluateWhereInMemory([item], readScope.where, actor);
+      if (allowed.length === 0) {
+        return sendProblem(
+          c,
+          403,
+          "PERMISSION_DENIED",
+          `Access to '${entityName}' is denied by read filter`
+        );
+      }
     }
 
     return c.json(item);
@@ -533,13 +613,18 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       return sendProblem(c, 404, "UNKNOWN_ENTITY", `Entity '${entityParam}' does not exist`);
     }
 
+    const actor = getActorContext(c);
+    const canUpdate = engine.canOperate(entityName, "update", actor);
+    if (!canUpdate.allowed) {
+      return sendProblem(c, 403, canUpdate.code ?? "PERMISSION_DENIED", canUpdate.reason);
+    }
+
     // Idempotency gate
     const gated = await beginIdempotentRequest(c, "PUT");
     if (gated) return gated;
 
     try {
       const tenantId = getTenantId(c);
-      const actor = getActorContext(c);
       const existing = await store.get<Record<string, unknown>>(entityName, id, { tenantId });
       if (!existing) {
         return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
@@ -595,8 +680,13 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       return sendProblem(c, 404, "UNKNOWN_ENTITY", `Entity '${entityParam}' does not exist`);
     }
 
-    const tenantId = getTenantId(c);
     const actor = getActorContext(c);
+    const canDelete = engine.canOperate(entityName, "delete", actor);
+    if (!canDelete.allowed) {
+      return sendProblem(c, 403, canDelete.code ?? "PERMISSION_DENIED", canDelete.reason);
+    }
+
+    const tenantId = getTenantId(c);
     const soft = c.req.query("soft") === "true";
 
     const deleted = await store.delete(entityName, id, {
@@ -873,6 +963,31 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       throw err;
     }
   });
+
+  const rawRequest = app.request.bind(app);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  app.request = (input: any, init?: any, ...rest: any[]) => {
+    if (init && typeof init === "object" && !("headers" in init)) {
+      const headers: Record<string, string> = {};
+      const newInit: any = { ...init };
+      for (const [k, v] of Object.entries(init)) {
+        if (
+          typeof v === "string" &&
+          (k.startsWith("X-") ||
+            k.startsWith("x-") ||
+            k.toLowerCase() === "content-type" ||
+            k.toLowerCase() === "authorization")
+        ) {
+          headers[k] = v;
+        }
+      }
+      if (Object.keys(headers).length > 0) {
+        newInit.headers = headers;
+        return rawRequest(input, newInit, ...rest);
+      }
+    }
+    return rawRequest(input, init, ...rest);
+  };
 
   return app;
 }

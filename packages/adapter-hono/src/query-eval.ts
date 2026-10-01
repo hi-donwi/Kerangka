@@ -7,7 +7,7 @@
  * License: Apache-2.0
  */
 
-import { QueryPlan } from "@kerangka/engine-ts";
+import { QueryPlan, ActorContext } from "@kerangka/engine-ts";
 import { QueryFilter } from "@kerangka/ports";
 
 type ExprNode = unknown;
@@ -31,8 +31,20 @@ export class QueryEvaluationError extends Error {
   }
 }
 
+function resolvePath(obj: unknown, path: string | string[]): unknown {
+  if (obj === null || obj === undefined) return undefined;
+  const segments = Array.isArray(path) ? path : path.split(".");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let current: any = obj;
+  for (const seg of segments) {
+    if (current === null || current === undefined || typeof current !== "object") return undefined;
+    current = current[seg];
+  }
+  return current;
+}
+
 /** Extracts `==` equality constraints from a predicate AST (recursively for `and`). */
-export function equalityConstraints(where: ExprNode | undefined): QueryFilter {
+export function equalityConstraints(where: ExprNode | undefined, actor?: ActorContext): QueryFilter {
   const filter: QueryFilter = {};
   if (!Array.isArray(where)) return filter;
 
@@ -40,13 +52,29 @@ export function equalityConstraints(where: ExprNode | undefined): QueryFilter {
 
   if (op === "and") {
     for (const branch of (where as unknown as ExprNode[]).slice(1)) {
-      Object.assign(filter, equalityConstraints(branch));
+      Object.assign(filter, equalityConstraints(branch, actor));
     }
     return filter;
   }
 
-  if (op === "==" && Array.isArray(left) && left[0] === "get" && typeof left[1] === "string") {
-    filter[left[1]] = right;
+  if (op === "==") {
+    if (Array.isArray(left) && left[0] === "get" && typeof left[1] === "string" && left.length === 2) {
+      if (left[1] === "deleted") {
+        return filter;
+      }
+      const val = valueOf({}, right, actor);
+      if (val !== undefined && (!Array.isArray(val) || val[0] !== "get")) {
+        filter[left[1]] = val;
+      }
+    } else if (Array.isArray(right) && right[0] === "get" && typeof right[1] === "string" && right.length === 2) {
+      if (right[1] === "deleted") {
+        return filter;
+      }
+      const val = valueOf({}, left, actor);
+      if (val !== undefined && (!Array.isArray(val) || val[0] !== "get")) {
+        filter[right[1]] = val;
+      }
+    }
   }
 
   return filter;
@@ -96,6 +124,7 @@ export function validatePredicate(where: ExprNode | undefined, seen = new Set<st
     case "now":
     case "len":
     case "literal":
+    case "actor":
       return; // leaves, or operators carrying no nested predicate
     default:
       if (seen.has(op)) return; // one report per operator, not one per occurrence
@@ -114,48 +143,58 @@ export function validatePredicate(where: ExprNode | undefined, seen = new Set<st
  */
 export function evaluateWhereInMemory(
   records: Record<string, unknown>[],
-  where: ExprNode | undefined
+  where: ExprNode | undefined,
+  actor?: ActorContext
 ): Record<string, unknown>[] {
   if (!where) return records;
   // Checked here, not left to the per-row switch: an empty `records` would skip the callback
   // entirely and an unsupported operator would go unreported. See `validatePredicate`.
   validatePredicate(where);
-  return records.filter((record) => matchesExpr(record, where));
+  return records.filter((record) => matchesExpr(record, where, actor));
 }
 
-function matchesExpr(record: Record<string, unknown>, expr: ExprNode): boolean {
+function matchesExpr(
+  record: Record<string, unknown>,
+  expr: ExprNode,
+  actor?: ActorContext
+): boolean {
   if (!Array.isArray(expr)) return Boolean(expr);
 
   const [op, left, right] = expr as [string, ExprNode, ExprNode];
 
   switch (op) {
     case "and":
-      return (expr as unknown as ExprNode[]).slice(1).every((branch) => matchesExpr(record, branch));
+      return (expr as unknown as ExprNode[]).slice(1).every((branch) => matchesExpr(record, branch, actor));
     case "or":
-      return (expr as unknown as ExprNode[]).slice(1).some((branch) => matchesExpr(record, branch));
+      return (expr as unknown as ExprNode[]).slice(1).some((branch) => matchesExpr(record, branch, actor));
     case "not":
-      return !matchesExpr(record, left);
+      return !matchesExpr(record, left, actor);
     case "get":
-      return Boolean(record[String(left)]);
-    case "==":
-      return valueOf(record, left) === valueOf(record, right);
+      return Boolean(valueOf(record, expr, actor));
+    case "==": {
+      const l = valueOf(record, left, actor);
+      const r = valueOf(record, right, actor);
+      if (r === false && (l === false || l === undefined || l === null)) return true;
+      if (l === false && (r === false || r === undefined || r === null)) return true;
+      return l === r;
+    }
     case "!=":
     case "<>":
-      return valueOf(record, left) !== valueOf(record, right);
+      return valueOf(record, left, actor) !== valueOf(record, right, actor);
     case ">":
-      return compare(valueOf(record, left), valueOf(record, right)) > 0;
+      return compare(valueOf(record, left, actor), valueOf(record, right, actor)) > 0;
     case ">=":
-      return compare(valueOf(record, left), valueOf(record, right)) >= 0;
+      return compare(valueOf(record, left, actor), valueOf(record, right, actor)) >= 0;
     case "<":
-      return compare(valueOf(record, left), valueOf(record, right)) < 0;
+      return compare(valueOf(record, left, actor), valueOf(record, right, actor)) < 0;
     case "<=":
-      return compare(valueOf(record, left), valueOf(record, right)) <= 0;
+      return compare(valueOf(record, left, actor), valueOf(record, right, actor)) <= 0;
     case "in":
-      return Array.isArray(valueOf(record, right))
-        ? (valueOf(record, right) as unknown[]).includes(valueOf(record, left))
+      return Array.isArray(valueOf(record, right, actor))
+        ? (valueOf(record, right, actor) as unknown[]).includes(valueOf(record, left, actor))
         : false;
     case "is_null":
-      return valueOf(record, left) === null || valueOf(record, left) === undefined;
+      return valueOf(record, left, actor) === null || valueOf(record, left, actor) === undefined;
     default:
       // Unknown operators must not widen the result set (readFilter safety).
       throw new QueryEvaluationError(
@@ -164,13 +203,32 @@ function matchesExpr(record: Record<string, unknown>, expr: ExprNode): boolean {
   }
 }
 
-function valueOf(record: Record<string, unknown>, node: ExprNode): unknown {
-  if (Array.isArray(node) && node[0] === "get") return record[String(node[1])];
-  if (Array.isArray(node)) {
-    // Nested expressions evaluate against the record too.
-    return matchesExpr(record, node) ? record : undefined;
+function valueOf(
+  record: Record<string, unknown>,
+  node: ExprNode,
+  actor?: ActorContext
+): unknown {
+  if (!Array.isArray(node)) return node;
+
+  const tag = node[0];
+  if (tag === "get") {
+    const segments = node.slice(1);
+    if (segments.length === 1) return record[String(segments[0])];
+    return resolvePath(record, segments as string[]);
   }
-  return node;
+  if (tag === "literal") {
+    return node[1];
+  }
+  if (tag === "actor") {
+    const path = String(node[1]);
+    return resolvePath(actor, path);
+  }
+  if (tag === "now") {
+    return new Date().toISOString();
+  }
+
+  // Nested expressions evaluate against the record too.
+  return matchesExpr(record, node, actor) ? record : undefined;
 }
 
 function compare(a: unknown, b: unknown): number {
