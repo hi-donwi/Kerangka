@@ -593,6 +593,9 @@ export class Compiler {
           ...(whenAst ? { when: whenAst } : {}),
           ...(Object.keys(runAssignments).length > 0 ? { run: runAssignments } : {}),
           ...(Array.isArray(statements) ? { then: statements } : {}),
+          // `emit` is read off the IR by the engine for the shorthand form. Dropped here, an
+          // action answered `ok: true` and emitted nothing at all.
+          ...(actionDef.emit ? { emit: actionDef.emit } : {}),
         };
       }
     }
@@ -657,6 +660,14 @@ export class Compiler {
         ...(trans.roles ? { roles: trans.roles } : {}),
         ...(whenAst ? { when: whenAst } : {}),
         ...(trans.then ? { then: trans.then } : {}),
+        // `emit`, `after` and `timer` are read off the IR by the engine, and dropping them here
+        // meant a timed transition armed nothing and the `emit` shorthand emitted nothing —
+        // through the compiler, which is the only way anyone gets an IR. Every engine test
+        // builds its IR by hand, so nothing caught it; `test/compiled-model-triggers.test.ts`
+        // starts from a document, which is the only shape a user's model ever takes.
+        ...(trans.emit ? { emit: trans.emit } : {}),
+        ...(trans.after ? { after: trans.after } : {}),
+        ...(trans.timer ? { timer: trans.timer } : {}),
       };
     }
 
