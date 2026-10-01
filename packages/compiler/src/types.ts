@@ -237,7 +237,18 @@ export interface KIRDocument {
     key: string;
     embedded: boolean;
     fields: Record<string, FieldDefinition>;
-    readFilter?: string;
+    /**
+     * The read predicate, already lowered to the engine's tuple AST.
+     *
+     * Was `string`. The source model still takes a string — that is the author's DSL — but the IR
+     * carries a predicate, because a string here is what `engine.ts` silently dropped: it accepted
+     * only `typeof === "object"`, so a declared read filter did nothing and said nothing. See
+     * ADR-0040.
+     *
+     * Typed `unknown` because the tuple form is structural and `compiler` must not depend on
+     * `engine-ts` to name it; `read-filter.ts` is the single place the two ASTs meet.
+     */
+    readFilter?: unknown;
     rules?: {
       id: string;
       field?: string;
@@ -281,3 +292,12 @@ export interface KIRDocument {
   navigation?: unknown[];
   examples?: unknown[];
 }
+
+/**
+ * A compiled entity, as it appears in the IR.
+ *
+ * Distinct from `EntityDefinition`, which is the author's source shape. The one field that differs
+ * in type rather than in name is `readFilter`: a string in the source, a predicate in the IR. See
+ * ADR-0040.
+ */
+export type KIREntityDefinition = KIRDocument["entities"][string];

@@ -12,6 +12,7 @@ import { offsetToPosition, pointer, SourceLocator, suggestion } from "./diagnost
 import { validateModelStructure } from "./meta-schema.js";
 import { LOCKFILE_NAME, PackageResolver, readLockfile, verifyLockfile } from "./packages/index.js";
 import { normalizeField } from "./shorthand.js";
+import { lowerReadFilter } from "./read-filter.js";
 import {
   CompilerDiagnostic,
   CompilerError,
@@ -283,13 +284,26 @@ export class Compiler {
 
     const rawUses = entity.traits ?? entity.uses;
     if (!rawUses || !Array.isArray(rawUses) || rawUses.length === 0) {
-      return { entity, origins };
+      // The entity's own readFilter is lowered here too, not only on the trait path below: an
+      // entity that uses no trait used to return early with the filter still a string, and the
+      // engine then dropped it. That is the common case, so it was the leaking one.
+      if (typeof entity.readFilter !== "string") return { entity, origins };
+      return {
+        // `EntityDefinition` types `readFilter` as a string because that is the author's source
+        // shape; the IR takes a predicate. `KIRDocument`'s own entity type is stricter than what
+        // this merge actually produces in several places (`rules[].check`, `invariants[].assert`),
+        // and narrowing that gap is a separate piece of work. So the lowered predicate leaves here
+        // as the one cast on this path, rather than widening an IR type nobody has audited.
+        entity: { ...entity, readFilter: lowerReadFilter(entity.readFilter) } as EntityDefinition,
+        origins,
+      };
     }
 
     const mergedFields: Record<string, any> = { ...entity.fields };
     const mergedRules = [...(entity.rules ?? [])];
     const mergedInvariants = [...(entity.invariants ?? [])];
-    let mergedReadFilter = entity.readFilter;
+    let mergedReadFilter: unknown =
+      typeof entity.readFilter === "string" ? lowerReadFilter(entity.readFilter) : undefined;
 
     const globalExclude = new Set(entity.exclude ?? []);
 
@@ -401,13 +415,13 @@ export class Compiler {
         origins.invariants.push(pointer("traits", traitName, "invariants", j));
       });
 
-      // Trait readFilter
+      // Trait readFilter. Merged as predicates, not as text: the old `(${a}) && (${b})` produced a
+      // longer string, which the engine then dropped whole, so combining two filters used to
+      // discard both. ANDing the tuples also means a trait filter can no longer be defeated by a
+      // parenthesis mismatch in the author's source.
       if (trait.readFilter && typeof trait.readFilter === "string") {
-        if (!mergedReadFilter) {
-          mergedReadFilter = trait.readFilter;
-        } else {
-          mergedReadFilter = `(${mergedReadFilter}) && (${trait.readFilter})`;
-        }
+        const lowered = lowerReadFilter(trait.readFilter);
+        mergedReadFilter = mergedReadFilter ? (["and", mergedReadFilter, lowered] as unknown) : lowered;
       }
     });
 
@@ -417,8 +431,9 @@ export class Compiler {
         fields: mergedFields,
         rules: mergedRules,
         invariants: mergedInvariants,
+        // Same single cast as the no-traits path above, and for the same reason.
         ...(mergedReadFilter ? { readFilter: mergedReadFilter } : {}),
-      },
+      } as EntityDefinition,
       origins,
     };
   }

@@ -110,7 +110,13 @@ describe("Trait Expansion in Compiler", () => {
     expect(doc.fields.createdAt?.default).toBe("now()");
     expect(doc.fields.createdBy?.default).toBe("actor.id");
     expect(doc.fields.tenantId?.default).toBe("actor.tenantId");
-    expect(doc.readFilter).toBe("tenantId == actor.tenantId");
+    // A predicate in the IR, not the author's string: `engine.ts` only ever accepted the object
+    // form, so a string here meant a declared read filter did nothing. See ADR-0040.
+    expect(doc.readFilter).toEqual([
+      "==",
+      ["get", "tenantId"],
+      ["actor", "tenantId"]
+    ]);
   });
 
   it("combines multiple trait readFilters", () => {
@@ -131,7 +137,13 @@ describe("Trait Expansion in Compiler", () => {
     expect(invoice.fields.deletedAt).toBeDefined();
     expect(invoice.fields.deletedBy).toBeDefined();
     expect(invoice.fields.tenantId).toBeDefined();
-    expect(invoice.readFilter).toBe("(deletedAt == null) && (tenantId == actor.tenantId)");
+    // Two trait filters, ANDed as predicates. Previously concatenated as text — and a longer
+    // string was dropped by the engine just as completely as a short one.
+    expect(invoice.readFilter).toEqual([
+      "and",
+      ["==", ["get", "deletedAt"], ["literal", null]],
+      ["==", ["get", "tenantId"], ["actor", "tenantId"]]
+    ]);
   });
 
   it("detects silent field collision with trait as compile error", () => {
