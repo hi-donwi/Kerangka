@@ -21,6 +21,7 @@ import {
   FIELD_KEYS,
   WORKFLOW_KEYS,
   TRANSITION_KEYS,
+  ACTION_KEYS,
   MODEL_SCHEMA_URI
 } from "../src/meta-schema.js";
 
@@ -94,6 +95,19 @@ describe("the model meta-schema", () => {
       const known = TRANSITION_KEYS as readonly string[];
       const missing = declared.filter((key) => !known.includes(key));
       expect(missing, `TRANSITION_KEYS is missing: ${missing.join(", ")}`).toEqual([]);
+    });
+
+    it("knows every key ActionDefinition declares", () => {
+      const declared = interfaceKeys("ActionDefinition");
+      const known = ACTION_KEYS as readonly string[];
+      const missing = declared.filter((key) => !known.includes(key));
+      expect(missing, `ACTION_KEYS is missing: ${missing.join(", ")}`).toEqual([]);
+    });
+
+    it("lists no action key the language does not honour", () => {
+      const honoured = new Set(interfaceKeys("ActionDefinition"));
+      const extras = (ACTION_KEYS as readonly string[]).filter((k) => !honoured.has(k));
+      expect(extras, `ACTION_KEYS has keys nothing reads: ${extras.join(", ")}`).toEqual([]);
     });
 
     it("declares every key the compiler reads off a workflow or a transition", () => {
@@ -388,6 +402,118 @@ describe("the model meta-schema", () => {
       expect(thrown).toBeInstanceOf(CompilerError);
       const diagnostics = (thrown as CompilerError).diagnostics ?? [];
       expect(diagnostics.map((d) => d.code)).toContain("UNKNOWN_KEY");
+    });
+  });
+
+  describe("an entity's actions are checked for shape, not only for their key list", () => {
+    const withActions = (actions: unknown) => ({
+      ...minimal(),
+      entities: { Thing: { fields: { name: "string" }, actions } }
+    });
+
+    it("accepts actions written the way the language writes them", () => {
+      const doc = withActions({
+        rename: {
+          roles: ["admin"],
+          input: { to: "string", count: { type: "int" } },
+          when: "name != ''",
+          run: { name: "to" },
+          emit: ["ThingRenamed"],
+          do: [{ set: { name: "to" } }]
+        },
+        // `then` is the accepted spelling of the same statement list.
+        touch: { then: [{ set: { name: "name" } }] }
+      });
+      expect(codes(doc)).toEqual([]);
+    });
+
+    it("rejects an action written as a string, which compiled to an empty action", () => {
+      // `actionDef.when` on the string "send" is `undefined` rather than an error, so the
+      // action compiled to an object with nothing in it: present in the API, inert at run
+      // time, and no error anywhere. The same silent loss as an entity written as a string.
+      const doc = withActions({ send: "send" });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      const reported = validateModelStructure(doc).find(
+        (d) => d.path === "/entities/Thing/actions/send"
+      );
+      expect(reported?.message).toMatch(/must be an object, not a string/);
+    });
+
+    it("rejects actions declared as a list", () => {
+      const doc = withActions(["send"]);
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'actions' must be an object/);
+    });
+
+    it("reports an unknown action key", () => {
+      const doc = withActions({ send: { role: ["admin"] } });
+      const diagnostic = validateModelStructure(doc).find(
+        (d) => d.code === "UNKNOWN_KEY" && d.path === "/entities/Thing/actions/send/role"
+      );
+      expect(diagnostic?.hint).toBe("Did you mean 'roles'?");
+    });
+
+    it("knows both `do` and `then` as the statement list", () => {
+      // `do` is the declared name from PLAN.md 5.6 and `then` is accepted, so a model using
+      // either must compile. Reporting the other as a typo would break half the examples.
+      expect(codes(withActions({ a: { do: [] } }))).toEqual([]);
+      expect(codes(withActions({ a: { then: [] } }))).toEqual([]);
+    });
+
+    it("rejects a run block that is not a map of assignments", () => {
+      // `typeof run === "object"` is the compiler's guard, so a string `run` is dropped whole.
+      const doc = withActions({ send: { run: "name" } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'run' must be an object/);
+    });
+
+    it("rejects a statement list that is not a list", () => {
+      const doc = withActions({ send: { do: { set: { name: "x" } } } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'do' must be an array/);
+    });
+
+    it("rejects roles declared as a single string rather than a list", () => {
+      const doc = withActions({ send: { roles: "admin" } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'roles' must be an array/);
+    });
+
+    it("rejects input declared as something other than a map of parameters", () => {
+      const doc = withActions({ send: { input: ["to"] } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'input' must be an object/);
+    });
+
+    it("rejects an input parameter with no type, naming the action as well as the entity", () => {
+      const doc = withActions({ send: { input: { to: { required: true } } } });
+      const diagnostics = validateModelStructure(doc);
+      expect(diagnostics.map((d) => d.code)).toContain("MISSING_FIELD_TYPE");
+      const reported = diagnostics.find((d) => d.code === "MISSING_FIELD_TYPE");
+      expect(reported?.path).toBe("/entities/Thing/actions/send/input/to");
+      expect(reported?.message).toMatch(/Thing\.send\.to/);
+    });
+
+    it("rejects a `when` that is neither an expression string nor an expression object", () => {
+      const doc = withActions({ send: { when: 7 } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'when' must be an expression/);
+    });
+
+    it("refuses to compile a document whose actions are structurally wrong", () => {
+      const doc = withActions({ send: "send" });
+      let thrown: unknown;
+      try {
+        compile(JSON.stringify(doc));
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(CompilerError);
+    });
+
+    it("still compiles a sound action", () => {
+      const doc = withActions({ rename: { input: { to: "string" }, do: [{ set: { name: "to" } }] } });
+      expect(() => compile(JSON.stringify(doc))).not.toThrow();
     });
   });
 

@@ -140,6 +140,9 @@ export const TRANSITION_KEYS = [
   "timer"
 ] as const;
 
+/** The keys one action may declare. `do` is the declared name for the statement list. */
+export const ACTION_KEYS = ["roles", "input", "when", "run", "emit", "do", "then"] as const;
+
 type Diagnostic = Omit<CompilerDiagnostic, "severity">;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -347,6 +350,89 @@ class StructuralValidator {
       }
       this.validateFields(fields, at("fields"), name);
       this.validateWorkflow(entity.workflow, at, name);
+      this.validateActions(entity.actions, at, name);
+    }
+  }
+
+  /**
+   * Check an entity's `actions`: the form each action is written in, and each one's keys.
+   *
+   * An action written as a string compiled to an empty action. `actionDef.when` on the string
+   * `"send"` is `undefined` rather than an error, so the result was an action that existed in
+   * the API and did nothing when called — the same silent loss as an entity written as a
+   * string, one level down.
+   */
+  private validateActions(
+    actions: unknown,
+    entityAt: (key: string) => string,
+    entityName: string
+  ): void {
+    if (actions === undefined) return;
+    const at = (key: string) => `${entityAt("actions")}/${key}`;
+    this.checkMap({ actions }, "actions", false, entityAt("actions"));
+
+    if (!isPlainObject(actions)) return; // already reported by checkMap
+
+    for (const [name, action] of Object.entries(actions)) {
+      if (!isPlainObject(action)) continue; // already reported by checkMap
+      const aat = (key: string) => `${at(name)}${key ? `/${key}` : ""}`;
+      this.unknownKeys(action, ACTION_KEYS, aat, "action key");
+      this.checkStringList(action.roles, "roles", aat("roles"), "role names");
+      this.checkEmitList(action, aat);
+
+      // `input` is a map of parameters in exactly the shape a field map is, so it gets the
+      // same treatment — including the missing-`type` diagnostic, which is what stops an input
+      // parameter reaching `normalizeField` with nothing to parse.
+      if (action.input !== undefined) {
+        if (!isPlainObject(action.input)) {
+          this.error(
+            "SCHEMA_INVALID",
+            `'input' must be an object of parameters, not ${describe(action.input)}.`,
+            aat("input"),
+            `Write "input": { "name": "string" }.`
+          );
+        } else {
+          this.validateFields(action.input, aat("input"), `${entityName}.${name}`);
+        }
+      }
+
+      if (
+        action.when !== undefined &&
+        typeof action.when !== "string" &&
+        !isPlainObject(action.when)
+      ) {
+        this.error(
+          "SCHEMA_INVALID",
+          `'when' must be an expression, not ${describe(action.when)}.`,
+          aat("when"),
+          `Write "when": "total > 0", or a parsed expression object.`
+        );
+      }
+
+      // The compiler guards `run` with `typeof run === "object"`, so a string `run` is dropped
+      // whole and the action quietly stops assigning anything.
+      if (action.run !== undefined && !isPlainObject(action.run)) {
+        this.error(
+          "SCHEMA_INVALID",
+          `'run' must be an object of assignments, not ${describe(action.run)}.`,
+          aat("run"),
+          `Write "run": { "field": "expression" }.`
+        );
+      }
+
+      // `do` and `then` are the same list under two names, and both are read.
+      for (const key of ["do", "then"] as const) {
+        const statements = action[key];
+        if (statements === undefined) continue;
+        if (!Array.isArray(statements)) {
+          this.error(
+            "SCHEMA_INVALID",
+            `'${key}' must be an array of statements, not ${describe(statements)}.`,
+            aat(key),
+            `Write "${key}": [ ... ], or omit it.`
+          );
+        }
+      }
     }
   }
 
