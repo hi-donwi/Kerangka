@@ -447,15 +447,20 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
         : plan.offset ?? 0;
       const effectiveSort = cursor?.sort ?? parseSortParam(c.req.query("sort")) ?? toQueryOptionsSort(plan.orderBy);
 
-      // 1. Pull the candidate set: tenant scope plus plan equality constraints,
-      //    and let the store apply client-requested sort when the plan has none
-      //    of its own (plan orderBy is authoritative when present).
+      // 1. Pull the candidate set: tenant scope plus plan equality constraints, and let the
+      //    store apply client-requested sort when the plan has none of its own (plan orderBy
+      //    is authoritative when present).
       const pushdown: Record<string, unknown> = { ...equalityConstraints(plan.where) };
       if (tenantId) pushdown.tenantId = tenantId;
 
       const found = await store.find(entityName, pushdown, {
         sort: plan.orderBy?.length ? undefined : effectiveSort,
         tenantId,
+        // The whole predicate, offered so a store can narrow the scan. Advisory only: step 2
+        // evaluates it again over whatever comes back, so a store that pushes nothing is
+        // correct, and a store that pushes too much is caught by nothing — which is why
+        // ADR-0039 makes narrowing an obligation rather than an optimisation.
+        ...(plan.where ? { where: plan.where } : {}),
       });
 
       // 2. Evaluate the remaining predicate in-process (comparisons, or-branches).
