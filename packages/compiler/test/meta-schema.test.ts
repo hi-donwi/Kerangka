@@ -19,6 +19,8 @@ import {
   ROOT_KEYS,
   ENTITY_KEYS,
   FIELD_KEYS,
+  WORKFLOW_KEYS,
+  TRANSITION_KEYS,
   MODEL_SCHEMA_URI
 } from "../src/meta-schema.js";
 
@@ -76,6 +78,44 @@ describe("the model meta-schema", () => {
       expect(missing, `FIELD_KEYS is missing: ${missing.join(", ")}`).toEqual([]);
     });
 
+    it("knows every key WorkflowDefinition declares", () => {
+      // This list was first written by reading the interface, and the interface was wrong:
+      // `after` and `timer` on a transition and `final` on the workflow are all read by the
+      // engine and the verifier, and none of them was declared. So the interface declared
+      // them, and this test is what keeps the two in step from now on.
+      const declared = interfaceKeys("WorkflowDefinition");
+      const known = WORKFLOW_KEYS as readonly string[];
+      const missing = declared.filter((key) => !known.includes(key));
+      expect(missing, `WORKFLOW_KEYS is missing: ${missing.join(", ")}`).toEqual([]);
+    });
+
+    it("knows every key WorkflowTransition declares", () => {
+      const declared = interfaceKeys("WorkflowTransition");
+      const known = TRANSITION_KEYS as readonly string[];
+      const missing = declared.filter((key) => !known.includes(key));
+      expect(missing, `TRANSITION_KEYS is missing: ${missing.join(", ")}`).toEqual([]);
+    });
+
+    it("lists no workflow or transition key the language does not honour", () => {
+      // The direction that changes behaviour. A padded transition list accepts `"condition"` and
+      // drops it, so a transition that never fires looks identical to one that does.
+      const honoured = (interfaceName: string) => new Set(interfaceKeys(interfaceName));
+      const workflowExtras = (WORKFLOW_KEYS as readonly string[]).filter(
+        (k) => !honoured("WorkflowDefinition").has(k)
+      );
+      expect(
+        workflowExtras,
+        `WORKFLOW_KEYS has keys nothing reads: ${workflowExtras.join(", ")}`
+      ).toEqual([]);
+      const transitionExtras = (TRANSITION_KEYS as readonly string[]).filter(
+        (k) => !honoured("WorkflowTransition").has(k)
+      );
+      expect(
+        transitionExtras,
+        `TRANSITION_KEYS has keys nothing reads: ${transitionExtras.join(", ")}`
+      ).toEqual([]);
+    });
+
     it("lists no key the compiler does not honour", () => {
       // The other direction, and it is the one that changes behaviour. The vocabulary is
       // closed — `toJsonSchemaField` reads one key at a time — so a key that is neither
@@ -113,6 +153,191 @@ describe("the model meta-schema", () => {
       expect(diagnostics.map((d) => d.code)).toContain("UNKNOWN_KEY");
       const reported = diagnostics.find((d) => d.path?.endsWith("/indexed"));
       expect(reported?.message).toMatch(/'indexed'/);
+    });
+  });
+
+  describe("an entity's workflow is checked for shape, not only for its key list", () => {
+    const withWorkflow = (workflow: unknown) => ({
+      ...minimal(),
+      entities: { Thing: { fields: { state: "string" }, workflow } }
+    });
+
+    it("accepts a workflow written the way the language writes one", () => {
+      const doc = withWorkflow({
+        field: "state",
+        states: ["draft", "sent", "paid"],
+        initial: "draft",
+        terminal: ["paid"],
+        transitions: {
+          send: { from: "draft", to: "sent", roles: ["admin"], when: "total > 0", then: [] },
+          settle: { from: ["sent", "draft"], to: "paid" }
+        },
+        tasks: { chase: { assignTo: "admin" } }
+      });
+      expect(codes(doc)).toEqual([]);
+    });
+
+    it("accepts a timed transition, which the engine honours", () => {
+      // The regression this guards is not hypothetical. `after` and `timer` are read by the
+      // engine (ADR-0015) and were missing from `WorkflowTransition`, so a strict check built
+      // from the interface alone reported every timed transition as a typo — refusing a legal
+      // model to catch an illegal one. The engine is the authority; the interface now says so.
+      const doc = withWorkflow({
+        states: ["draft", "sent"],
+        transitions: {
+          lapse: { from: "draft", to: "sent", after: "P7D" },
+          remind: { from: "draft", to: "sent", timer: { after: "P1D" } },
+          fire: { from: "draft", to: "sent", timer: { at: "sendAt" } },
+          plain: { from: "draft", to: "sent", timer: "PT1H" }
+        }
+      });
+      expect(codes(doc)).toEqual([]);
+    });
+
+    it("accepts `final` as the alias the workflow verifier reads", () => {
+      // `verifyWorkflows` reads `workflow.terminal || workflow.final` off the raw document, so
+      // `final` is honoured input. Rejecting it would break every model that used the alias.
+      const doc = withWorkflow({ states: ["draft", "paid"], final: ["paid"], transitions: {} });
+      expect(codes(doc)).toEqual([]);
+    });
+
+    it("rejects a timer that is neither a duration nor a trigger object", () => {
+      const doc = withWorkflow({ transitions: { lapse: { from: "draft", to: "sent", timer: 7 } } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'timer' must be a duration/);
+    });
+
+    it("rejects tasks declared as something other than a map", () => {
+      const doc = withWorkflow({ transitions: {}, tasks: [] });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'tasks' must be an object/);
+    });
+
+    it("rejects a `when` that is neither an expression string nor an expression object", () => {
+      const doc = withWorkflow({ transitions: { send: { from: "draft", to: "sent", when: 7 } } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'when' must be an expression/);
+    });
+
+    it("rejects a workflow that is not an object, instead of dropping it", () => {
+      const doc = withWorkflow("draft");
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      const reported = validateModelStructure(doc).find(
+        (d) => d.path === "/entities/Thing/workflow"
+      );
+      expect(reported?.message).toMatch(/must be an object/);
+    });
+
+    it("reports an unknown workflow key, and says what it might have been", () => {
+      // The same defect as a typo'd `fieds`, one level down: the transition map the author
+      // wrote under a misspelled key was read by nothing, and compilation succeeded.
+      const doc = withWorkflow({ transisions: { send: { from: "draft", to: "sent" } } });
+      const diagnostic = validateModelStructure(doc).find(
+        (d) => d.code === "UNKNOWN_KEY" && d.path === "/entities/Thing/workflow/transisions"
+      );
+      expect(diagnostic?.message).toMatch(/'transisions'/);
+      expect(diagnostic?.hint).toBe("Did you mean 'transitions'?");
+    });
+
+    it("rejects transitions that are not a map of declarations", () => {
+      const doc = withWorkflow({ states: ["draft"], transitions: [] });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'transitions' must be an object/);
+    });
+
+    it("rejects a transition that is not an object, instead of dropping it", () => {
+      const doc = withWorkflow({ transitions: { send: "send" } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      const reported = validateModelStructure(doc).find(
+        (d) => d.path === "/entities/Thing/workflow/transitions/send"
+      );
+      expect(reported?.message).toMatch(/must be an object, not a string/);
+    });
+
+    it("reports an unknown transition key", () => {
+      const doc = withWorkflow({ transitions: { send: { from: "draft", too: "sent" } } });
+      const diagnostic = validateModelStructure(doc).find(
+        (d) => d.code === "UNKNOWN_KEY" && d.path === "/entities/Thing/workflow/transitions/send/too"
+      );
+      // `too` for `to` is the near miss that would otherwise drop the transition's target.
+      expect(diagnostic?.hint).toBe("Did you mean 'to'?");
+    });
+
+    it("requires a transition to say where it goes and where it comes from", () => {
+      // Both are required by `WorkflowTransition`, and a transition missing `to` has no
+      // meaning: the engine reads `to` to decide the next state and finds nothing there.
+      const doc = withWorkflow({ transitions: { send: { roles: ["admin"] } } });
+      const diagnostics = validateModelStructure(doc);
+      expect(diagnostics.map((d) => d.code)).toContain("MISSING_TRANSITION_FROM");
+      expect(diagnostics.map((d) => d.code)).toContain("MISSING_TRANSITION_TO");
+      const reported = diagnostics.find((d) => d.code === "MISSING_TRANSITION_FROM");
+      expect(reported?.path).toBe("/entities/Thing/workflow/transitions/send");
+      expect(reported?.message).toMatch(/Thing\.send/);
+    });
+
+    it("rejects a non-string target, which would reach the engine as undefined", () => {
+      const doc = withWorkflow({ transitions: { send: { from: "draft", to: 42 } } });
+      const diagnostics = validateModelStructure(doc);
+      expect(diagnostics.map((d) => d.code)).toContain("SCHEMA_INVALID");
+      expect(
+        diagnostics.find((d) => d.path === "/entities/Thing/workflow/transitions/send/to")?.message
+      ).toMatch(/non-string/);
+    });
+
+    it("rejects a source that is neither a state nor a list of states", () => {
+      const doc = withWorkflow({ transitions: { send: { from: { state: "draft" }, to: "sent" } } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'from'/);
+    });
+
+    it("accepts a source written as a list of states", () => {
+      const doc = withWorkflow({ transitions: { settle: { from: ["draft", "sent"], to: "paid" } } });
+      expect(codes(doc)).toEqual([]);
+    });
+
+    it("rejects states declared as something other than a list", () => {
+      const doc = withWorkflow({ states: "draft", transitions: {} });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'states' must be an array of state names/);
+    });
+
+    it("rejects a state list holding something that is not a state name", () => {
+      const doc = withWorkflow({ states: ["draft", 7], transitions: {} });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/states\[1\]/);
+    });
+
+    it("rejects roles declared as a single string rather than a list", () => {
+      const doc = withWorkflow({ transitions: { send: { from: "draft", to: "sent", roles: "admin" } } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'roles' must be an array/);
+    });
+
+    it("rejects then declared as something other than a list of statements", () => {
+      const doc = withWorkflow({ transitions: { send: { from: "draft", to: "sent", then: {} } } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'then' must be an array/);
+    });
+
+    it("rejects a non-string field, which is the field the state lives in", () => {
+      const doc = withWorkflow({ field: 7, transitions: {} });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'field' must be a string/);
+    });
+
+    it("refuses to compile a document whose workflow is structurally wrong", () => {
+      // The layer is only worth anything if the compiler honours it: the check has to run
+      // before the workflow is read, the same way a parse error is treated.
+      const doc = withWorkflow({ transisions: {} });
+      let thrown: unknown;
+      try {
+        compile(JSON.stringify(doc));
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(CompilerError);
+      const diagnostics = (thrown as CompilerError).diagnostics ?? [];
+      expect(diagnostics.map((d) => d.code)).toContain("UNKNOWN_KEY");
     });
   });
 

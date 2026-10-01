@@ -117,6 +117,20 @@ export const FIELD_KEYS = [
   "values"
 ] as const;
 
+/** The keys an entity's `workflow` may declare. */
+export const WORKFLOW_KEYS = [
+  "field",
+  "states",
+  "initial",
+  "terminal",
+  "final",
+  "transitions",
+  "tasks"
+] as const;
+
+/** The keys one transition may declare. */
+export const TRANSITION_KEYS = ["from", "to", "roles", "when", "then", "after", "timer"] as const;
+
 type Diagnostic = Omit<CompilerDiagnostic, "severity">;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -172,14 +186,19 @@ class StructuralValidator {
    * entity itself. Getting that wrong in the other direction let `{"Thing": "Thing"}` pass,
    * and the entity then vanished from the model without a word.
    */
-  private checkMap(doc: Record<string, unknown>, key: string, allowShorthand = false): void {
+  private checkMap(
+    doc: Record<string, unknown>,
+    key: string,
+    allowShorthand = false,
+    path: string = pointer(key)
+  ): void {
     const value = doc[key];
     if (value === undefined) return;
     if (!isPlainObject(value)) {
       this.error(
         "SCHEMA_INVALID",
         `'${key}' must be an object of declarations, not ${describe(value)}.`,
-        pointer(key),
+        path,
         `Write "${key}": { "name": ... }, not "${key}": ${JSON.stringify(value)?.slice(0, 40)}.`
       );
       return;
@@ -193,7 +212,7 @@ class StructuralValidator {
         this.error(
           "SCHEMA_INVALID",
           `'${key}.${name}' must be an object, not ${describe(declaration)}.`,
-          pointer(key, name),
+          `${path}/${name}`,
           `Each entry under '${key}' declares something. A ${describe(declaration)} declares nothing.`
         );
       }
@@ -318,6 +337,7 @@ class StructuralValidator {
         return;
       }
       this.validateFields(fields, at("fields"), name);
+      this.validateWorkflow(entity.workflow, at, name);
     }
   }
 
@@ -365,6 +385,186 @@ class StructuralValidator {
       }
     }
   }
+
+  /** Check a value that must be a string, such as `workflow.field`. */
+  private checkString(holder: Record<string, unknown>, key: string, at: (key: string) => string): void {
+    const value = holder[key];
+    if (value === undefined) return;
+    if (typeof value !== "string") {
+      this.error(
+        "SCHEMA_INVALID",
+        `'${key}' must be a string, not ${describe(value)}.`,
+        at(key),
+        `Write "${key}": "name", not "${key}": ${JSON.stringify(value)?.slice(0, 40)}.`
+      );
+    }
+  }
+
+  /**
+   * Check a value that must be a list of names: `states`, `terminal`, or a transition's `roles`.
+   *
+   * A non-string entry is the silent half again. The engine compares these entries against a
+   * state or a role name one at a time, so `["draft", 7]` compiles clean and the transition
+   * that names the second entry matches nothing anywhere.
+   */
+  private checkStringList(
+    value: unknown,
+    key: string,
+    path: string,
+    noun: string
+  ): void {
+    if (value === undefined) return;
+    if (!Array.isArray(value)) {
+      this.error(
+        "SCHEMA_INVALID",
+        `'${key}' must be an array of ${noun}, not ${describe(value)}.`,
+        path,
+        `Write "${key}": [ "name" ], not "${key}": ${JSON.stringify(value)?.slice(0, 40)}.`
+      );
+      return;
+    }
+    value.forEach((entry, index) => {
+      if (typeof entry === "string") return;
+      this.error(
+        "SCHEMA_INVALID",
+        `'${key}[${index}]' must be a string, not ${describe(entry)}.`,
+        `${path}/${index}`,
+        `Each entry in '${key}' is one ${noun.replace(/s$/, "")}.`
+      );
+    });
+  }
+
+  /**
+   * Check an entity's `workflow`: its own keys, the form of its states, and its transitions.
+   *
+   * `workflow` was the largest thing below an entity that nothing checked. A misspelled
+   * `transisions` meant the transition map the author wrote was read by nobody: no state ever
+   * changed, the model compiled clean, and there was no error to say so.
+   */
+  private validateWorkflow(
+    workflow: unknown,
+    entityAt: (key: string) => string,
+    entityName: string
+  ): void {
+    if (workflow === undefined) return;
+    if (!isPlainObject(workflow)) {
+      this.error(
+        "SCHEMA_INVALID",
+        `'workflow' must be an object, not ${describe(workflow)}.`,
+        entityAt("workflow"),
+        `Write "workflow": { "transitions": { ... } }, not "workflow": ${JSON.stringify(workflow)?.slice(0, 40)}.`
+      );
+      return;
+    }
+
+    const at = (key: string) => `${entityAt("workflow")}/${key}`;
+    this.unknownKeys(workflow, WORKFLOW_KEYS, at, "workflow key");
+    this.checkString(workflow, "field", at);
+    this.checkString(workflow, "initial", at);
+    this.checkStringList(workflow.states, "states", at("states"), "state names");
+    this.checkStringList(workflow.terminal, "terminal", at("terminal"), "state names");
+    this.checkStringList(workflow.final, "final", at("final"), "state names");
+    if (workflow.tasks !== undefined && !isPlainObject(workflow.tasks)) {
+      this.error(
+        "SCHEMA_INVALID",
+        `'tasks' must be an object of task declarations, not ${describe(workflow.tasks)}.`,
+        at("tasks"),
+        `Write "tasks": { "name": { ... } }.`
+      );
+    }
+    this.checkMap(workflow, "transitions", false, at("transitions"));
+    this.validateTransitions(workflow.transitions, (name, key) => `${at("transitions")}/${name}${key ? `/${key}` : ""}`, entityName);
+  }
+
+  /** Check each transition's keys and the two it cannot do without. */
+  private validateTransitions(
+    transitions: unknown,
+    at: (name: string, key?: string) => string,
+    entityName: string
+  ): void {
+    if (!isPlainObject(transitions)) return; // already reported by checkMap
+
+    for (const [name, transition] of Object.entries(transitions)) {
+      if (!isPlainObject(transition)) continue; // already reported by checkMap
+      this.unknownKeys(transition, TRANSITION_KEYS, (key) => at(name, key), "transition key");
+
+      // Both are required, and neither has a sensible default: a transition that says where it
+      // comes from but not where it goes has no next state, and the engine reads `to` to move.
+      if (transition.from === undefined) {
+        this.error(
+          "MISSING_TRANSITION_FROM",
+          `Transition '${entityName}.${name}' has no 'from'.`,
+          at(name),
+          `Every transition says which state it leaves, for example "from": "draft".`
+        );
+      } else if (!isStateOrStateList(transition.from)) {
+        this.error(
+          "SCHEMA_INVALID",
+          `'from' must be a state name or an array of state names, not ${describe(transition.from)}.`,
+          at(name, "from"),
+          `Write "from": "draft", or "from": [ "draft", "sent" ].`
+        );
+      }
+
+      if (transition.to === undefined) {
+        this.error(
+          "MISSING_TRANSITION_TO",
+          `Transition '${entityName}.${name}' has no 'to'.`,
+          at(name),
+          `Every transition says which state it reaches, for example "to": "sent".`
+        );
+      } else if (typeof transition.to !== "string") {
+        this.error(
+          "SCHEMA_INVALID",
+          `Transition '${entityName}.${name}' has a non-string 'to'.`,
+          at(name, "to"),
+          `Write "to": "sent", not ${JSON.stringify(transition.to)?.slice(0, 40)}.`
+        );
+      }
+
+      this.checkStringList(transition.roles, "roles", at(name, "roles"), "role names");
+
+      // A timed transition: `after` is a duration, and `timer` is a duration or an object
+      // naming one. These are honoured by the engine (ADR-0015) and were missing from
+      // `WorkflowTransition` for a while, which is how a legal timed transition ended up
+      // looking like a typo to this layer. Declaring them is the fix that stops it recurring.
+      if (transition.after !== undefined) this.checkString(transition, "after", (key) => at(name, key));
+      if (transition.timer !== undefined && typeof transition.timer !== "string" && !isPlainObject(transition.timer)) {
+        this.error(
+          "SCHEMA_INVALID",
+          `'timer' must be a duration or an object, not ${describe(transition.timer)}.`,
+          at(name, "timer"),
+          `Write "timer": "PT1H", or "timer": { "after": "PT1H" } / { "at": "sendAt" }.`
+        );
+      }
+
+      // `when` is an expression, so it is either the string form or a parsed expression object.
+      // What it *means* is the semantic layer's business; this only knows the two legal forms.
+      if (transition.when !== undefined && typeof transition.when !== "string" && !isPlainObject(transition.when)) {
+        this.error(
+          "SCHEMA_INVALID",
+          `'when' must be an expression, not ${describe(transition.when)}.`,
+          at(name, "when"),
+          `Write "when": "total > 0", or a parsed expression object.`
+        );
+      }
+
+      if (transition.then !== undefined && !Array.isArray(transition.then)) {
+        this.error(
+          "SCHEMA_INVALID",
+          `'then' must be an array of statements, not ${describe(transition.then)}.`,
+          at(name, "then"),
+          `Write "then": [ ... ], or omit it.`
+        );
+      }
+    }
+  }
+}
+
+/** Whether a transition's `from` is written in one of the two forms the language accepts. */
+function isStateOrStateList(value: unknown): boolean {
+  if (typeof value === "string") return true;
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
 function describe(value: unknown): string {

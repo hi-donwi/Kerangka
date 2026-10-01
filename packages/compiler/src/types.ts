@@ -109,6 +109,15 @@ export interface WorkflowTransition {
   roles?: string[];
   when?: ExprNode | string;
   then?: unknown[];
+  /** A delay before the transition may fire, as an ISO-8601 duration such as `"PT1H"`. */
+  after?: string;
+  /**
+   * A trigger for a timed transition: a duration, or an object naming either the delay
+   * (`after`) or the record field holding the moment (`at`). The engine reads all three
+   * forms, so the interface has to say so — a key the engine honours and the type does not
+   * declare is one a structural check would report as a typo.
+   */
+  timer?: string | { after?: string; at?: string };
 }
 
 export interface WorkflowDefinition {
@@ -116,6 +125,8 @@ export interface WorkflowDefinition {
   states?: string[];
   initial?: string;
   terminal?: string[];
+  /** Read as an alias for `terminal` by the workflow verifier. */
+  final?: string[];
   transitions: Record<string, WorkflowTransition>;
   tasks?: Record<string, unknown>;
 }

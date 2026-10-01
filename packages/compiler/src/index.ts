@@ -130,5 +130,7 @@ export {
   MODEL_SCHEMA_URI,
   ROOT_KEYS,
   ENTITY_KEYS,
-  FIELD_KEYS
+  FIELD_KEYS,
+  WORKFLOW_KEYS,
+  TRANSITION_KEYS
 } from "./meta-schema.js";
