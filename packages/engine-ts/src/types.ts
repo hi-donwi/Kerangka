@@ -74,6 +74,17 @@ export interface ExecutionTrace {
   steps: TraceStep[];
 }
 
+/**
+ * The outcome of asking whether a read may proceed, and under what predicate.
+ *
+ * A discriminated union rather than a predicate or null, because the two answers have to travel
+ * together. Returning null for "refused" is what let a tenant-scoped read with no caller proceed
+ * unconstrained; see ADR-0040.
+ */
+export type ReadScope =
+  | { allowed: true; where: ExprNode | null }
+  | { allowed: false; code: string; reason: string };
+
 export interface CanResult {
   allowed: boolean;
   reason?: string;

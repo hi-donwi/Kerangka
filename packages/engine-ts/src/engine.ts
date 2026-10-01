@@ -15,6 +15,7 @@ import {
 } from "@kerangka/k1";
 import {
   ActorContext,
+  ReadScope,
   AvailableOperation,
   CanResult,
   CloudEvent,
@@ -1422,23 +1423,63 @@ export class Engine {
   // Data Scoping & Query Compilation: readFilter and queryPlan
   // ---------------------------------------------------------------------------
 
-  readFilter(entityName: string, actor?: ActorContext): ExprNode | null {
+  /**
+   * Is this entity tenant-scoped? (ADR-0031)
+   *
+   * A `tenantId` field is taken as the declaration, which is what the rule has always been, and
+   * which is why `Scoped` in the access-control tests needs no trait to be scoped.
+   */
+  isTenantScoped(entityName: string): boolean {
     const entity = this.ir.entities?.[entityName];
-    if (!entity) return null;
+    if (!entity) return false;
+    return Boolean(
+      entity.traits?.includes("std:tenantScoped") ||
+        entity.fields?.tenantId !== undefined ||
+        this.ir.multitenancy !== undefined
+    );
+  }
+
+  /**
+   * The read predicate for an entity, or a refusal.
+   *
+   * One call, one decision. Splitting this into "is it allowed" and "what is the predicate" is
+   * how the two drifted apart: `readFilter` returned a predicate and nothing ever asked whether
+   * the caller was entitled to one, so a tenant-scoped read with no actor produced *no* constraint
+   * and every tenant's rows came back with a 200. An absent caller is now a refusal, which is
+   * ADR-0008 applied to scoping rather than to expressions.
+   *
+   * The distinction this preserves: an entity that declares neither tenant scope nor a read filter
+   * is public, and is allowed. That is not a fallback, it is what "unrestricted" means, and
+   * failing it closed would make the framework unusable for the models that do not need a filter.
+   */
+  authorizeRead(entityName: string, actor?: ActorContext): ReadScope {
+    const entity = this.ir.entities?.[entityName];
+    if (!entity) {
+      return {
+        allowed: false,
+        code: "UNKNOWN_ENTITY",
+        reason: `Entity '${entityName}' is not in the model, so nothing is known about who may read it`,
+      };
+    }
 
     const conditions: ExprNode[] = [];
 
-    // 1. Multi-tenancy check (ADR-0031)
-    const isTenantScoped =
-      entity.traits?.includes("std:tenantScoped") ||
-      entity.fields?.tenantId !== undefined ||
-      this.ir.multitenancy !== undefined;
-
-    if (isTenantScoped && actor?.tenantId !== undefined) {
+    // 1. Tenant scope. The engine's own tenant, which the adapter also narrows by, AND the
+    //    declared filter below, which the author wrote in terms of the caller.
+    if (this.isTenantScoped(entityName)) {
+      if (actor?.tenantId === undefined) {
+        return {
+          allowed: false,
+          code: "PERMISSION_DENIED",
+          reason:
+            `'${entityName}' is tenant-scoped and the request established no tenant. ` +
+            `A tenant-scoped read with no caller is refused, not answered with every tenant's rows.`,
+        };
+      }
       conditions.push(["==", ["get", "tenantId"], actor.tenantId] as unknown as ExprNode);
     }
 
-    // 2. Soft-delete check
+    // 2. Soft delete. A deleted row is not readable, whoever is asking.
     const isSoftDelete =
       entity.traits?.includes("std:softDelete") ||
       entity.fields?.deleted !== undefined ||
@@ -1452,16 +1493,95 @@ export class Engine {
       }
     }
 
-    // 3. Entity-level readFilter
-    if (entity.readFilter) {
-      if (typeof entity.readFilter === "object") {
-        conditions.push(entity.readFilter as ExprNode);
-      }
+    // 3. The entity's declared readFilter.
+    //
+    //    A predicate in the IR, since 4c7bd0c. It used to arrive as the author's string, so this
+    //    `typeof === "object"` guard never passed and a declared filter did nothing at all — see
+    //    ADR-0040. A *string* reaching here now means something bypassed the compiler, and is
+    //    refused rather than skipped: silently ignoring a security predicate is the failure mode
+    //    this whole path exists to remove.
+    const declared = entity.readFilter;
+    if (typeof declared === "string") {
+      return {
+        allowed: false,
+        code: "READ_FILTER_NOT_COMPILED",
+        reason:
+          `The readFilter on '${entityName}' is still a string, so it was never lowered and would ` +
+          `be ignored. This is a compiler bypass, not a model error.`,
+      };
+    }
+    if (Array.isArray(declared)) {
+      conditions.push(declared as unknown as ExprNode);
     }
 
-    if (conditions.length === 0) return null;
-    if (conditions.length === 1) return conditions[0]!;
-    return ["and", ...conditions] as unknown as ExprNode;
+    if (conditions.length === 0) return { allowed: true, where: null };
+    if (conditions.length === 1) return { allowed: true, where: conditions[0]! };
+    return { allowed: true, where: ["and", ...conditions] as unknown as ExprNode };
+  }
+
+  /**
+   * The read predicate for an entity, or null when the entity is unrestricted.
+   *
+   * Retained for callers that already gate separately. A **refusal is reported as null**, so a
+   * caller using this instead of `authorizeRead` reopens exactly the hole ADR-0040 closes. New
+   * code should use `authorizeRead`.
+   */
+  readFilter(entityName: string, actor?: ActorContext): ExprNode | null {
+    const scope = this.authorizeRead(entityName, actor);
+    return scope.allowed ? scope.where : null;
+  }
+
+  /**
+   * May this actor perform this operation on this entity? (ADR-0008)
+   *
+   * `permissions` on the entity, checked against the actor's roles, failing closed: an unknown
+   * entity, a denied role, and an absent actor are all refusals. An operation the entity does not
+   * list is *not* refused, because an author who names `delete` and omits `update` has said that
+   * update is unrestricted, and treating silence as denial would make every partial
+   * `permissions` map unusable.
+   *
+   * Distinct from `can`, which decides an action or a workflow transition from the *current state
+   * of a record*. This decides the entity-level gate in front of it. Both exist because they answer
+   * different questions, and an endpoint that calls one has not called the other.
+   */
+  canOperate(entityName: string, operation: string, actor?: ActorContext): CanResult {
+    const entity = this.ir.entities?.[entityName];
+    if (!entity) {
+      return {
+        allowed: false,
+        code: "UNKNOWN_ENTITY",
+        reason: `Entity '${entityName}' is not in the model`,
+      };
+    }
+
+    const permissions = entity.permissions as Record<string, string[]> | undefined;
+    const required = permissions?.[operation];
+
+    if (!Array.isArray(required) || required.length === 0) {
+      return { allowed: true };
+    }
+
+    // No actor, or an actor with no roles, satisfies nothing. `?.` here would make a missing actor
+    // an empty array, and `[].some(...)` is false anyway — but written out, because the whole point
+    // of ADR-0008 is that this branch is never accidentally permissive.
+    if (!actor || !Array.isArray(actor.roles) || actor.roles.length === 0) {
+      return {
+        allowed: false,
+        code: "PERMISSION_DENIED",
+        reason: `'${operation}' on '${entityName}' requires one of [${required.join(", ")}] and the request carried no roles`,
+      };
+    }
+
+    const granted = required.some((role) => actor.roles!.includes(role));
+    if (!granted) {
+      return {
+        allowed: false,
+        code: "PERMISSION_DENIED",
+        reason: `'${operation}' on '${entityName}' requires one of [${required.join(", ")}]`,
+      };
+    }
+
+    return { allowed: true };
   }
 
   queryPlan(
@@ -1495,7 +1615,18 @@ export class Engine {
 
     targetEntity = targetEntity ?? queryDef.from ?? Object.keys(this.ir.entities ?? {})[0] ?? "";
 
-    const rf = this.readFilter(targetEntity, actor);
+    // A plan is a security decision as much as a query, so a refused read throws here rather than
+    // producing a plan with no constraint in it. Returning `readFilter()`'s null on refusal is
+    // precisely the hole ADR-0040 closes: a plan built with no predicate is a plan that returns
+    // every row, and the named-query path is where that would have been hardest to notice.
+    const scope = this.authorizeRead(targetEntity, actor);
+    if (!scope.allowed) {
+      const error = new Error(`${scope.reason} (${scope.code})`);
+      error.name = "ReadScopeError";
+      throw error;
+    }
+
+    const rf = scope.where;
     let combinedWhere: ExprNode | undefined;
 
     if (queryDef.where && rf) {
