@@ -31,6 +31,7 @@ import {
   applySelect,
   equalityConstraints,
   evaluateWhereInMemory,
+  QueryEvaluationError,
 } from "./query-eval.js";
 import {
   CachedResponse,
@@ -53,6 +54,19 @@ export interface KerangkaHonoOptions {
 
 export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOptions = {}): Hono {
   const app = new Hono();
+
+  // An unhandled fault answers with the same Problem Details shape as every other error here,
+  // and says nothing about what went wrong. Both halves matter: this adapter promises RFC 9457
+  // on every response, and the message of an internal throw is a connection string, a path, or a
+  // fragment of SQL. `QueryEvaluationError` exists so a bad *query* can still be named as one —
+  // without it, the query handler's own `catch` had to answer 422 for everything, which is how a
+  // dangling import ended up described to the client as a malformed request.
+  app.onError((err, c) => {
+    const detail =
+      err instanceof QueryEvaluationError ? err.message : "The request could not be completed.";
+    return sendProblem(c, 500, "INTERNAL_ERROR", detail);
+  });
+
   const store = options.store ?? new MemoryStore();
   const engine = options.engine ?? new Engine(kir);
   const bus = options.bus;
@@ -474,8 +488,14 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
         ...(links.next ? { nextCursor: links.next } : {}),
       });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return sendProblem(c, 422, "QUERY_INVALID", message);
+      // Only a predicate the evaluator refused is the caller's fault. Everything else reaching
+      // this catch is an internal fault, and answering 422 sent it to the client along with
+      // `err.message` — a connection string, a path, a fragment of SQL. A dangling import in
+      // this file was reported as a bad query until `QueryEvaluationError` gave the two apart.
+      if (err instanceof QueryEvaluationError) {
+        return sendProblem(c, 422, "QUERY_INVALID", err.message);
+      }
+      throw err;
     }
   });
 
