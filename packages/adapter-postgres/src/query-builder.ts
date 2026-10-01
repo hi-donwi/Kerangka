@@ -6,13 +6,55 @@
  */
 
 import { KIRDocument, toSnakeCase } from "@kerangka/compiler";
-import { OutboxMessage, QueryFilter, QueryOptions, TimerEntry } from "@kerangka/ports";
+import {
+  OutboxMessage,
+  QueryFilter,
+  QueryOptions,
+  QueryPredicate,
+  TimerEntry
+} from "@kerangka/ports";
 
 export interface ParameterizedQuery {
   sql: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   values: any[];
 }
+
+/**
+ * The comparisons that may be pushed into SQL, and the field types they are safe on.
+ *
+ * An allowlist, and a short one on purpose. The rule from ADR-0039 is that a pushed predicate
+ * must be *implied by* the engine's evaluation of it, because a store that is stricter than the
+ * engine returns fewer rows than the model promises and nothing reports the difference. Every
+ * type here was checked against what each side actually hands the comparison:
+ *
+ * - `int`/`integer` -> `INTEGER`. `pg` returns `int4` as a JS number, and the engine's `compare`
+ *   takes its `typeof a === "number"` branch, so both sides subtract. The two agree.
+ *
+ * Everything else is excluded, each for its own reason, and each of them would fail the rule:
+ *
+ * - `decimal` -> `NUMERIC`, which `pg` returns as a **string**. `compare` then falls through to
+ *   `String(a) < String(b)`, so `"100.00" < "20.00"` is true as strings and false as decimals.
+ * - `float` is the same class of hazard as `decimal` in general, and is excluded with it rather
+ *   than argued about: the coercion depends on the driver's type parser, not on the model.
+ * - `string`/`text`/`enum`/`ref` -> `VARCHAR`. The engine compares lexicographically by code unit;
+ *   PostgreSQL compares by the column collation, which is not required to agree.
+ * - `date`/`datetime` -> `DATE`/`TIMESTAMPTZ`. `pg` returns a JS `Date`, and `compare` stringifies
+ *   it, so the engine would compare `"Thu Jan 01 2026 ..."` against a stored ISO string.
+ * - `bool`/`boolean` -> `BOOLEAN`. PostgreSQL orders `false < true`; the engine happens to agree
+ *   via `"false" < "true"`, which is a coincidence of spelling and not a reason to rely on it.
+ *
+ * A type that is neither listed nor excluded defaults to not-pushed, which is the safe direction.
+ */
+const PUSHABLE_ORDER_TYPES: ReadonlySet<string> = new Set(["int", "integer"]);
+
+/** The ordering comparisons, mapped to their SQL spelling. `!=` is deliberately absent. */
+const ORDER_OPERATORS: Readonly<Record<string, string>> = {
+  "<": "<",
+  "<=": "<=",
+  ">": ">",
+  ">=": ">="
+};
 
 export class PostgresQueryBuilder {
   private readonly kir?: KIRDocument;
@@ -76,6 +118,12 @@ export class PostgresQueryBuilder {
         whereClauses.push(`${toSnakeCase(k)} = $${paramIndex++}`);
         values.push(v);
       }
+    }
+
+    // The orderings from `options.where`, which `filter` cannot carry. See ADR-0039.
+    for (const clause of this.pushableOrderings(entityName, options?.where)) {
+      whereClauses.push(`${clause.column} ${clause.operator} $${paramIndex++}`);
+      values.push(clause.value);
     }
 
     const whereSql = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : "";
@@ -305,6 +353,56 @@ export class PostgresQueryBuilder {
   // ---------------------------------------------------------------------------
   // Internal Helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * The conjuncts of `where` that may become SQL comparisons, and nothing else.
+   *
+   * `or` is a disjunction, so neither of its operands is a necessary condition and neither may
+   * be pushed. `in` is a disjunction too. `==` is skipped because `QueryFilter` already carries
+   * it and pushing it again would bind the same value twice. Anything whose right side is
+   * itself an expression is skipped, because the value is not known here.
+   *
+   * Returns a superset-only contribution by construction: a conjunct is either provably implied
+   * by the predicate or it is not emitted at all. There is no case where this returns a clause
+   * that narrows more than the engine would.
+   */
+  private pushableOrderings(
+    entityName: string,
+    where: QueryPredicate
+  ): Array<{ column: string; operator: string; value: unknown }> {
+    const clauses: Array<{ column: string; operator: string; value: unknown }> = [];
+    // A literal, a function call, anything unrecognised: no constraint, so nothing is emitted.
+    if (!Array.isArray(where)) return clauses;
+
+    const [op, left, right] = where as [string, ...unknown[]];
+
+    if (op === "and") {
+      for (const branch of where.slice(1)) {
+        clauses.push(...this.pushableOrderings(entityName, branch));
+      }
+      return clauses;
+    }
+
+    const operator = ORDER_OPERATORS[op];
+    if (!operator) return clauses;
+
+    // Left must be a plain field read: `["get", field]`, nothing nested behind it.
+    if (!Array.isArray(left) || left[0] !== "get" || typeof left[1] !== "string") return clauses;
+    // A right side that is an AST is an expression, not a value this builder can bind.
+    if (Array.isArray(right)) return clauses;
+
+    const field = left[1];
+    const definition = this.kir?.entities[entityName]?.fields?.[field];
+
+    // `required` is the nullability signal, and it is not an assumption: `ddl/generator.ts`
+    // emits NOT NULL for it. Without it, `compare` treats an absent value as "" and keeps the
+    // row, while `WHERE col > $1` drops it — the store would be the stricter of the two.
+    if (!definition?.required) return clauses;
+    if (!PUSHABLE_ORDER_TYPES.has(definition.type)) return clauses;
+
+    clauses.push({ column: toSnakeCase(field), operator, value: right });
+    return clauses;
+  }
 
   private getPkColumn(entityName: string): string {
     const prop = this.kir?.entities[entityName]?.key ?? "id";
