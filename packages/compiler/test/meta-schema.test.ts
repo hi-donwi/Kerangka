@@ -96,6 +96,29 @@ describe("the model meta-schema", () => {
       expect(missing, `TRANSITION_KEYS is missing: ${missing.join(", ")}`).toEqual([]);
     });
 
+    it("declares every key the compiler reads off a workflow or a transition", () => {
+      // The direction that caught `emit`. Deriving a key list from `types.ts` assumes the
+      // interface is complete, and it was not: `final`, `after`, `timer` and `emit` were all
+      // read by the compiler, the engine or the verifier while declared nowhere. Every one of
+      // them would have been reported as a typo in a legal model. The list below is where such
+      // a key gets added — if one turns up, add it to the interface first, then to the list.
+      const readButUndeclared: Array<{ key: string; where: string; interfaces: string[] }> = [
+        { key: "final", where: "verify/verifier.ts", interfaces: ["WorkflowDefinition"] },
+        { key: "after", where: "engine-ts/engine.ts", interfaces: ["WorkflowTransition"] },
+        { key: "timer", where: "engine-ts/engine.ts", interfaces: ["WorkflowTransition"] },
+        { key: "emit", where: "verify/verifier.ts, projections/asyncapi.ts", interfaces: ["WorkflowTransition"] }
+      ];
+
+      for (const { key, where, interfaces } of readButUndeclared) {
+        for (const interfaceName of interfaces) {
+          expect(
+            interfaceKeys(interfaceName),
+            `'${key}' is read in ${where} but not declared on ${interfaceName}`
+          ).toContain(key);
+        }
+      }
+    });
+
     it("lists no workflow or transition key the language does not honour", () => {
       // The direction that changes behaviour. A padded transition list accepts `"condition"` and
       // drops it, so a transition that never fires looks identical to one that does.
@@ -199,6 +222,33 @@ describe("the model meta-schema", () => {
       // `final` is honoured input. Rejecting it would break every model that used the alias.
       const doc = withWorkflow({ states: ["draft", "paid"], final: ["paid"], transitions: {} });
       expect(codes(doc)).toEqual([]);
+    });
+
+    it("accepts an `emit` list, which the verifier and AsyncAPI projector read", () => {
+      // Same class of trap as `after` and `timer`, and worse: `emit` was read off the *raw*
+      // document by three separate consumers — the event verifier, the AsyncAPI projector and
+      // the engine — while appearing in no interface at all. A structural check built from the
+      // interfaces alone therefore reported every event shorthand as a typo. The test below
+      // records the rule so the next key that is read but undeclared fails here instead.
+      const doc = withWorkflow({
+        transitions: {
+          send: { from: "draft", to: "sent", emit: ["InvoiceSent"] },
+          settle: { from: "sent", to: "paid", emit: [{ event: "InvoicePaid", data: { total: "total" } }] }
+        }
+      });
+      expect(codes(doc)).toEqual([]);
+    });
+
+    it("rejects an emit list holding something that is not an event", () => {
+      const doc = withWorkflow({ transitions: { send: { from: "d", to: "s", emit: [7] } } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/emit\[0\]/);
+    });
+
+    it("rejects an emit list that is not a list", () => {
+      const doc = withWorkflow({ transitions: { send: { from: "d", to: "s", emit: "InvoiceSent" } } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'emit' must be an array/);
     });
 
     it("rejects a timer that is neither a duration nor a trigger object", () => {

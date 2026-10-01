@@ -129,7 +129,16 @@ export const WORKFLOW_KEYS = [
 ] as const;
 
 /** The keys one transition may declare. */
-export const TRANSITION_KEYS = ["from", "to", "roles", "when", "then", "after", "timer"] as const;
+export const TRANSITION_KEYS = [
+  "from",
+  "to",
+  "roles",
+  "when",
+  "then",
+  "emit",
+  "after",
+  "timer"
+] as const;
 
 type Diagnostic = Omit<CompilerDiagnostic, "severity">;
 
@@ -435,6 +444,37 @@ class StructuralValidator {
   }
 
   /**
+   * Check an `emit` list: a list of event names, or of declarations naming one.
+   *
+   * The verifier and the AsyncAPI projector both read this off the raw document, so it is
+   * legal input and this layer must not report it as an unknown key. It was missing from
+   * `ActionDefinition` and `WorkflowTransition` entirely, which made every model using the
+   * shorthand look like it had a typo.
+   */
+  private checkEmitList(holder: Record<string, unknown>, at: (key: string) => string): void {
+    const emit = holder.emit;
+    if (emit === undefined) return;
+    if (!Array.isArray(emit)) {
+      this.error(
+        "SCHEMA_INVALID",
+        `'emit' must be an array of event names or declarations, not ${describe(emit)}.`,
+        at("emit"),
+        `Write "emit": [ "InvoiceSent" ], or "emit": [ { "event": "InvoiceSent" } ].`
+      );
+      return;
+    }
+    emit.forEach((entry, index) => {
+      if (typeof entry === "string" || isPlainObject(entry)) return;
+      this.error(
+        "SCHEMA_INVALID",
+        `'emit[${index}]' must be an event name or a declaration object, not ${describe(entry)}.`,
+        `${at("emit")}/${index}`,
+        `Each entry in 'emit' names one event.`
+      );
+    });
+  }
+
+  /**
    * Check an entity's `workflow`: its own keys, the form of its states, and its transitions.
    *
    * `workflow` was the largest thing below an entity that nothing checked. A misspelled
@@ -548,6 +588,8 @@ class StructuralValidator {
           `Write "when": "total > 0", or a parsed expression object.`
         );
       }
+
+      this.checkEmitList(transition, (key) => at(name, key));
 
       if (transition.then !== undefined && !Array.isArray(transition.then)) {
         this.error(

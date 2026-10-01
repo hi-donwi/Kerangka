@@ -103,12 +103,25 @@ export interface InvariantDefinition {
   assert: ExprNode | string;
 }
 
+/**
+ * One entry of an `emit` list: an event name, or a declaration naming the event and the data
+ * to put in it. Both the string and the object form are read off the raw document by the
+ * verifier and the AsyncAPI projector, so both are legal input.
+ */
+export interface EmitDeclaration {
+  event?: string;
+  name?: string;
+  data?: unknown;
+}
+
 export interface WorkflowTransition {
   from: string | string[];
   to: string;
   roles?: string[];
   when?: ExprNode | string;
   then?: unknown[];
+  /** Events this transition emits, as names or declarations. */
+  emit?: Array<string | EmitDeclaration>;
   /** A delay before the transition may fire, as an ISO-8601 duration such as `"PT1H"`. */
   after?: string;
   /**
@@ -136,6 +149,8 @@ export interface ActionDefinition {
   input?: Record<string, FieldDefinition | string>;
   when?: ExprNode | string;
   run?: Record<string, ExprNode | string | unknown>;
+  /** Events this action emits, as names or declarations. */
+  emit?: Array<string | EmitDeclaration>;
   /** The statement vocabulary of PLAN.md 5.6. `do` is the declared name; `then` is accepted. */
   do?: unknown[];
   then?: unknown[];
