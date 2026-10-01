@@ -24,6 +24,7 @@ import {
   ACTION_KEYS,
   RULE_KEYS,
   VERSION_KEYS,
+  INVARIANT_KEYS,
   MODEL_SCHEMA_URI
 } from "../src/meta-schema.js";
 
@@ -547,6 +548,25 @@ describe("the model meta-schema", () => {
     });
   });
 
+  describe("a new key list stays derived from the interface", () => {
+    // Added alongside `INVARIANT_KEYS`, because the lesson from the earlier lists is that a
+    // hand-typed list is a list that drifts: `ENTITY_KEYS` said `computed` where the language
+    // says `compute`, and `WORKFLOW_KEYS` was missing `after`, `timer` and `final` — all three
+    // read by the engine. A new list now arrives with this test attached.
+    it("knows every key InvariantDefinition declares", () => {
+      const declared = interfaceKeys("InvariantDefinition");
+      const known = INVARIANT_KEYS as readonly string[];
+      const missing = declared.filter((key) => !known.includes(key));
+      expect(missing, `INVARIANT_KEYS is missing: ${missing.join(", ")}`).toEqual([]);
+    });
+
+    it("lists no invariant key the language does not honour", () => {
+      const honoured = new Set(interfaceKeys("InvariantDefinition"));
+      const extras = (INVARIANT_KEYS as readonly string[]).filter((k) => !honoured.has(k));
+      expect(extras, `INVARIANT_KEYS has keys nothing reads: ${extras.join(", ")}`).toEqual([]);
+    });
+  });
+
   describe("an entity's rules are checked for shape", () => {
     const withRules = (rules: unknown) => ({
       ...minimal(),
@@ -675,6 +695,144 @@ describe("the model meta-schema", () => {
 
     it("still compiles a sound rule", () => {
       const doc = withRules([{ id: "positive", message: "Must be positive", check: "amount > 0" }]);
+      expect(() => compile(JSON.stringify(doc))).not.toThrow();
+    });
+  });
+
+  describe("an entity's invariants are checked for shape", () => {
+    const withInvariants = (invariants: unknown) => ({
+      ...minimal(),
+      entities: { Thing: { fields: { amount: "decimal(12,2)" }, invariants } }
+    });
+
+    it("accepts an invariant written the way the language writes one", () => {
+      const doc = withInvariants([
+        { id: "positive", message: "Amount must be positive", assert: "amount > 0" },
+        { id: "bounded", message: "Too large", assert: { literal: true } }
+      ]);
+      expect(codes(doc)).toEqual([]);
+    });
+
+    it("rejects an invariant written as a bare expression, which compiled to an empty one", () => {
+      // Probed, not assumed: `invariants: ["amount > 0"]` compiles, and the IR comes back as
+      // `invariants: [{}]` — no id, no message, no assert. An invariant that can never fail
+      // and can never be reported. The compiler reads `inv.assert`, which on a string is
+      // `undefined`, so it copies `undefined` through three fields instead of failing.
+      //
+      // The string form *is* honoured on a trait (compiler.ts gives it an id and a message),
+      // which is exactly why this is easy to write on an entity by accident — and the two
+      // disagreeing is the reason the form has to be stated rather than inferred.
+      const doc = withInvariants(["amount > 0"]);
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      const reported = validateModelStructure(doc).find(
+        (d) => d.path === "/entities/Thing/invariants/0"
+      );
+      expect(reported?.message).toMatch(/must be an object, not a string/);
+      expect(reported?.hint).toMatch(/id.*message.*assert|"assert"/s);
+    });
+
+    it("rejects an invariant entry that is neither a declaration nor an expression", () => {
+      const doc = withInvariants([7]);
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/Invariants? 0 of 'Thing' must be an object/);
+    });
+
+    it("rejects invariants declared as something other than a list", () => {
+      const doc = withInvariants({ positive: { assert: "amount > 0" } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'invariants' must be an array/);
+    });
+
+    it("requires an invariant to say what it is, what it says, and what it asserts", () => {
+      // All three are load-bearing for the same reason a rule's are: the compiler copies
+      // whatever is present, so an invariant with no `assert` never fails and one with no
+      // `message` fails with nothing to tell the user.
+      const doc = withInvariants([{}]);
+      const diagnostics = validateModelStructure(doc);
+      expect(diagnostics.map((d) => d.code)).toContain("MISSING_INVARIANT_ID");
+      expect(diagnostics.map((d) => d.code)).toContain("MISSING_INVARIANT_ASSERT");
+    });
+
+    it("accepts an `assert` written as an expression string or a parsed object", () => {
+      // `assert` is an expression, exactly like a rule's `check`, so both forms are legal and
+      // this layer only knows that much. What it means is the expression compiler's business.
+      expect(codes(withInvariants([{ id: "a", message: "m", assert: "amount > 0" }]))).toEqual([]);
+      expect(codes(withInvariants([{ id: "a", message: "m", assert: { literal: true } }]))).toEqual([]);
+    });
+
+    it("rejects an `assert` that is neither a string nor an expression object", () => {
+      const doc = withInvariants([{ id: "a", message: "m", assert: 7 }]);
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'assert' must be an expression/);
+    });
+
+    it("rejects an unknown invariant key", () => {
+      const doc = withInvariants([{ id: "a", message: "m", assert: "amount > 0", chek: "typo" }]);
+      expect(codes(doc)).toContain("UNKNOWN_KEY");
+    });
+
+    it("still compiles a sound invariant", () => {
+      const doc = withInvariants([{ id: "positive", message: "Must be positive", assert: "amount > 0" }]);
+      expect(() => compile(JSON.stringify(doc))).not.toThrow();
+    });
+  });
+
+  describe("an entity's permissions are checked for shape", () => {
+    const withPermissions = (permissions: unknown) => ({
+      ...minimal(),
+      roles: ["admin", "billing"],
+      entities: { Thing: { fields: { amount: "decimal(12,2)" }, permissions } }
+    });
+
+    it("accepts a permission map in both forms the verifier reads", () => {
+      // The verifier (verifier.ts) walks an operation's value two ways: an array of role
+      // names, or an object of role to condition. `examples/invoicing.kerangka.json` writes
+      // both in the same map — `read` is a list, `update` is an object of role to condition.
+      const doc = withPermissions({
+        read: ["admin", "billing"],
+        create: ["admin"],
+        update: { admin: true, billing: "status == 'draft'" }
+      });
+      expect(codes(doc)).toEqual([]);
+    });
+
+    it("rejects permissions written as something other than an operation map", () => {
+      // `permissions: "admin"` compiled and reached the IR unchanged. The verifier's
+      // `typeof perms === "object"` test then skipped the whole block, so the roles in it
+      // were treated as having no permissions at all — the opposite of what the document
+      // said, with nothing to say so.
+      for (const bad of ["admin", ["admin"], 7]) {
+        expect(codes(withPermissions(bad)), `permissions: ${JSON.stringify(bad)}`).toContain(
+          "SCHEMA_INVALID"
+        );
+      }
+      expect(messages(withPermissions("admin")).join()).toMatch(/'permissions' must be an object/);
+    });
+
+    it("rejects an operation whose value is neither a role list nor a role map", () => {
+      // `read: "admin"` is a string where the language wants a list or a map. The verifier
+      // reads neither branch for it, so the operation silently granted nothing.
+      const doc = withPermissions({ read: "admin" });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'read'/);
+      expect(messages(doc).join()).toMatch(/array of role names|object of roles/);
+    });
+
+    it("rejects a role list holding something that is not a role name", () => {
+      const doc = withPermissions({ read: ["admin", 7] });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'read\[1\]' must be a string/);
+    });
+
+    it("rejects a role map whose condition is not a boolean or an expression", () => {
+      // `update: { admin: 7 }` is a permission that reads as present and grants nothing.
+      const doc = withPermissions({ update: { admin: 7 } });
+      expect(codes(doc)).toContain("SCHEMA_INVALID");
+      expect(messages(doc).join()).toMatch(/'update\/admin'/);
+    });
+
+    it("still compiles a sound permission map", () => {
+      const doc = withPermissions({ read: ["admin"], update: { admin: true } });
       expect(() => compile(JSON.stringify(doc))).not.toThrow();
     });
   });

@@ -146,6 +146,15 @@ export const ACTION_KEYS = ["roles", "input", "when", "run", "emit", "do", "then
 /** The keys one rule may declare. */
 export const RULE_KEYS = ["id", "field", "message", "check", "versions", "effectiveDate"] as const;
 
+/**
+ * The keys one invariant may declare.
+ *
+ * `InvariantDefinition` is three fields, all of them load-bearing: the compiler copies
+ * whatever is present, so an invariant with no `assert` never fails and one with no `message`
+ * fails with nothing to tell the user.
+ */
+export const INVARIANT_KEYS = ["id", "message", "assert"] as const;
+
 /** The keys one period of a versioned rule may declare. */
 export const VERSION_KEYS = ["validFrom", "validTo", "check", "message"] as const;
 
@@ -358,6 +367,8 @@ class StructuralValidator {
       this.validateWorkflow(entity.workflow, at, name);
       this.validateActions(entity.actions, at, name);
       this.validateRules(entity.rules, at, name);
+      this.validateInvariants(entity.invariants, at, name);
+      this.validatePermissions(entity.permissions, at);
     }
   }
 
@@ -475,6 +486,166 @@ class StructuralValidator {
         }
       });
     });
+  }
+
+  /**
+   * Check an entity's `invariants`: the form each one is written in, and the two it cannot do
+   * without.
+   *
+   * This is `validateRules` a second time, and it exists because the same silent loss was
+   * waiting here. Probed rather than assumed: `invariants: ["amount > 0"]` compiles, and the
+   * IR comes back as `invariants: [{}]` — no id, no message, no assert. The compiler reads
+   * `inv.assert`, which on a string is `undefined`, so it copied `undefined` into all three
+   * fields. An invariant that can never fail and can never be reported, out of a document the
+   * compiler called valid.
+   *
+   * The string form *is* honoured on a trait, where the compiler gives it an id and a
+   * message. That the two disagree is precisely why the form has to be stated on an entity
+   * rather than inferred from the trait's behaviour.
+   */
+  private validateInvariants(
+    invariants: unknown,
+    entityAt: (key: string) => string,
+    entityName: string
+  ): void {
+    if (invariants === undefined) return;
+    const listPath = entityAt("invariants");
+    if (!Array.isArray(invariants)) {
+      this.error(
+        "SCHEMA_INVALID",
+        `'invariants' must be an array of invariant declarations, not ${describe(invariants)}.`,
+        listPath,
+        `Write "invariants": [ { "id": ..., "message": ..., "assert": ... } ].`
+      );
+      return;
+    }
+
+    invariants.forEach((invariant, index) => {
+      const at = (key: string) => `${listPath}/${index}${key ? `/${key}` : ""}`;
+      if (!isPlainObject(invariant)) {
+        this.error(
+          "SCHEMA_INVALID",
+          `Invariant ${index} of '${entityName}' must be an object, not ${describe(invariant)}.`,
+          `${listPath}/${index}`,
+          `Each invariant declares "id", "message" and "assert". A bare expression here compiles to an empty invariant that never fails.`
+        );
+        return;
+      }
+
+      this.unknownKeys(invariant, INVARIANT_KEYS, at, "invariant key");
+
+      if (invariant.id === undefined) {
+        this.error(
+          "MISSING_INVARIANT_ID",
+          `Invariant ${index} of '${entityName}' has no 'id'.`,
+          at(""),
+          `Every invariant is named, for example "id": "amount-positive".`
+        );
+      } else if (typeof invariant.id !== "string") {
+        this.error(
+          "SCHEMA_INVALID",
+          `Invariant ${index} of '${entityName}' has a non-string 'id'.`,
+          at("id"),
+          `Write "id": "amount-positive".`
+        );
+      }
+
+      if (invariant.message === undefined) {
+        this.error(
+          "MISSING_INVARIANT_MESSAGE",
+          `Invariant ${index} of '${entityName}' has no 'message'.`,
+          at(""),
+          `Every invariant says what it means, for example "message": "Amount must be positive".`
+        );
+      }
+
+      if (invariant.assert === undefined) {
+        this.error(
+          "MISSING_INVARIANT_ASSERT",
+          `Invariant ${index} of '${entityName}' has no 'assert'.`,
+          at(""),
+          `Every invariant has an assertion, for example "assert": "amount > 0".`
+        );
+      } else if (typeof invariant.assert !== "string" && !isPlainObject(invariant.assert)) {
+        // An expression, so the two legal forms are the string and an already-parsed object.
+        // What it *means* is the expression compiler's business; this only knows the forms.
+        this.error(
+          "SCHEMA_INVALID",
+          `'assert' must be an expression, not ${describe(invariant.assert)}.`,
+          at("assert"),
+          `Write "assert": "amount > 0", or a parsed expression object.`
+        );
+      }
+    });
+  }
+
+  /**
+   * Check an entity's `permissions`: an operation map, and the two forms one operation's value
+   * may be written in.
+   *
+   * The verifier walks a value two ways — an array of role names, or an object of role to
+   * condition — and `examples/invoicing.kerangka.json` uses both in the same map: `read` is a
+   * list, `update` is `{ admin: true, billing: "status == 'draft'" }`. Anything else matched
+   * neither branch and was skipped, so the operation read as declared while granting nothing.
+   * And `permissions: "admin"` was not an object at all, which skipped the whole block: the
+   * roles in it then counted as having no permissions, the opposite of what the document said.
+   *
+   * A permission that grants nothing is a security-shaped hole, so this closes both.
+   */
+  private validatePermissions(
+    permissions: unknown,
+    entityAt: (key: string) => string
+  ): void {
+    if (permissions === undefined) return;
+    const base = entityAt("permissions");
+    if (!isPlainObject(permissions)) {
+      this.error(
+        "SCHEMA_INVALID",
+        `'permissions' must be an object of operations, not ${describe(permissions)}.`,
+        base,
+        `Write "permissions": { "read": [ "admin" ] }, not "permissions": ${JSON.stringify(permissions)?.slice(0, 40)}.`
+      );
+      return;
+    }
+
+    for (const [operation, value] of Object.entries(permissions)) {
+      const path = `${base}/${operation}`;
+
+      if (Array.isArray(value)) {
+        value.forEach((role, index) => {
+          if (typeof role === "string") return;
+          this.error(
+            "SCHEMA_INVALID",
+            `'${operation}[${index}]' must be a string, not ${describe(role)}.`,
+            `${path}/${index}`,
+            `Each entry in '${operation}' is one role name.`
+          );
+        });
+        continue;
+      }
+
+      if (isPlainObject(value)) {
+        for (const [role, condition] of Object.entries(value)) {
+          // `true` grants unconditionally; a string is an expression the verifier evaluates.
+          // A number is a permission that reads as present and grants nothing.
+          if (condition === true || typeof condition === "string") continue;
+          this.error(
+            "SCHEMA_INVALID",
+            `'${operation}/${role}' must be true, false, or an expression, not ${describe(condition)}.`,
+            `${path}/${role}`,
+            `Write "${operation}": { "${role}": true }, or "${operation}": { "${role}": "status == 'draft'" }.`
+          );
+        }
+        continue;
+      }
+
+      this.error(
+        "SCHEMA_INVALID",
+        `'${operation}' must be an array of role names or an object of roles, not ${describe(value)}.`,
+        path,
+        `Write "${operation}": [ "admin" ], or "${operation}": { "admin": true }.`
+      );
+    }
   }
 
   /**
