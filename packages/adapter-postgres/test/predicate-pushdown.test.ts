@@ -12,7 +12,8 @@ import { PostgresQueryBuilder } from "../src/index.js";
  * precisely as the accepted ones, and each exclusion is checked for the reason it exists rather
  * than for its operator.
  *
- * See ADR-0039 for the invariant and for why the type allowlist is as short as it is.
+ * See ADR-0039 for the invariant and for why the type allowlist is as short as it is, and
+ * ADR-0041 for the decisions that unlocked `!=` and a literal-list `in`.
  */
 const kir = compile(
   JSON.stringify({
@@ -111,10 +112,14 @@ describe("a comparison it cannot prove is not pushed", () => {
     expect(clauses([">", get("dueOn"), "2026-01-01T00:00:00Z"])).toEqual([]);
   });
 
-  it("leaves `!=` alone, pending a decision on NULL", () => {
-    // Three implementations disagree about a NULL column: kept by `item[k] !== v`, dropped by
-    // `<>`, dropped by `!=`. Two agree, not for the same reason.
-    expect(clauses(["!=", get("qty"), 1])).toEqual([]);
+  it("leaves a comparison against null alone, for every operator", () => {
+    // The engine answers through `compare`'s string fall-through and keeps the row: String(5)
+    // against String(null ?? "") is "5" > "". SQL answers `col > NULL` with NULL and drops
+    // every row. Pushed, the store would be the stricter of the two for the least defensible
+    // reason there is: the value is not a value. ADR-0041 closes this for `!=` and, while
+    // there, for the orderings that were already pushed.
+    expect(clauses([">", get("qty"), null])).toEqual([]);
+    expect(clauses(["!=", get("qty"), null])).toEqual([]);
   });
 
   it("leaves a disjunction alone, because neither operand is necessary", () => {
@@ -126,8 +131,8 @@ describe("a comparison it cannot prove is not pushed", () => {
     expect(query.dataQuery.values).toEqual([]);
   });
 
-  it("leaves `in` alone, because it is a disjunction", () => {
-    expect(clauses(["in", get("qty"), [1, 2, 3]])).toEqual([]);
+  it("leaves `in` alone when the right side is not a literal array", () => {
+    expect(clauses(["in", get("qty"), get("weight")])).toEqual([]);
   });
 
   it("leaves a comparison between two fields alone, because the right side is not a value", () => {
@@ -147,5 +152,80 @@ describe("a comparison it cannot prove is not pushed", () => {
 
   it("leaves a nested field path alone", () => {
     expect(clauses([">", ["get", "nested", "deep"], 1])).toEqual([]);
+  });
+});
+
+describe("a denied equality and a literal list push down (ADR-0041)", () => {
+  it("pushes `!=` on a required integer column, because NOT NULL removes the NULL disagreement", () => {
+    // Three implementations disagreed about a NULL column: kept by `item[k] !== v`, dropped by
+    // `<>`, dropped by `!=`. On a required field the column is NOT NULL, so no such row can
+    // exist, and the two remaining answers agree on every row the store can hold.
+    expect(clauses(["!=", get("qty"), 1])).toEqual(["qty <> $1"]);
+  });
+
+  it("pushes the `<>` spelling the same way", () => {
+    expect(clauses(["<>", get("qty"), 1])).toEqual(["qty <> $1"]);
+  });
+
+  it("leaves `!=` on a nullable column alone, where the disagreement still exists", () => {
+    expect(clauses(["!=", get("weight"), 1])).toEqual([]);
+  });
+
+  it("leaves `!=` alone unless the value is a number, because the engine compares strictly", () => {
+    // `5 !== "5"` keeps every row; `qty <> '5'` casts and drops the fives. The store would be
+    // the stricter of the two. The orderings get away with a string literal because their
+    // engine answer falls through to the same lexicographic compare; `!=` has no such
+    // agreement, so its gate is tighter from birth.
+    expect(clauses(["!=", get("qty"), "5"])).toEqual([]);
+    expect(clauses(["!=", get("qty"), true])).toEqual([]);
+  });
+
+  it("pushes a literal `in` list as an expanded membership test", () => {
+    // ADR-0039 refused `in` as "a disjunction". The disjunction it worried about is an `or`
+    // whose operands need not hold; a membership test over one NOT NULL column of an
+    // allowlisted type is one predicate that SQL and `list.includes` evaluate the same way,
+    // so the pushed clause is implied, not stricter. Expanded parameters, not `= ANY($1)`,
+    // because array binding is a driver courtesy and the executor is an interface.
+    const query = builder().buildFind("Item", undefined, { where: ["in", get("qty"), [1, 2, 3]] as never });
+
+    expect(query.dataQuery.sql).toContain("qty IN ($1, $2, $3)");
+    expect(query.dataQuery.values).toEqual([1, 2, 3]);
+  });
+
+  it("pushes an empty `in` list as FALSE, which is the engine's answer for every row", () => {
+    // `[].includes(v)` is false for every v, so the store may narrow to nothing. `IN ()` is
+    // not SQL, so the empty membership is spelled FALSE rather than left to a syntax error.
+    expect(clauses(["in", get("qty"), []])).toEqual(["FALSE"]);
+  });
+
+  it("leaves an `in` list with a non-number element alone, because the cast is the store's opinion", () => {
+    expect(clauses(["in", get("qty"), [1, "a"]])).toEqual([]);
+  });
+
+  it("leaves an `in` list with a null element alone, whose membership the two sides disagree on", () => {
+    expect(clauses(["in", get("qty"), [1, null]])).toEqual([]);
+  });
+
+  it("leaves an `in` list on a nullable column alone", () => {
+    expect(clauses(["in", get("weight"), [1, 2]])).toEqual([]);
+  });
+
+  it("leaves an `in` list on a non-integer column alone", () => {
+    expect(clauses(["in", get("price"), [1, 2]])).toEqual([]);
+  });
+
+  it("leaves an oversized `in` list alone rather than binding a thousand parameters", () => {
+    // The bound is the driver's parameter limit, not a semantic one. Unpushed is a superset,
+    // which is the only direction the store is allowed to err in.
+    expect(clauses(["in", get("qty"), Array.from({ length: 1001 }, (_, i) => i)])).toEqual([]);
+  });
+
+  it("combines the new pushdowns inside an and chain, numbering the parameters in order", () => {
+    const query = builder().buildFind("Item", undefined, {
+      where: ["and", ["!=", get("qty"), 0], ["in", get("qty"), [1, 2]], [">", get("qty"), 0]] as never
+    });
+
+    expect(query.dataQuery.sql).toContain("qty <> $1 AND qty IN ($2, $3) AND qty > $4");
+    expect(query.dataQuery.values).toEqual([0, 1, 2, 0]);
   });
 });

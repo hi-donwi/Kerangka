@@ -134,7 +134,8 @@ than silently returning different rows than the model promises.
       throw in the named-query handler, so a dangling import inside it reports as a client error.
       It cost real time here. A test pinning that boundary is small and does not depend on this ADR.
 - [ ] Answer the `numeric`-as-string coercion question, then reconsider `decimal` pushdown.
-- [ ] Decide NULL semantics for `!=` before it becomes pushable.
+- [x] Decide NULL semantics for `!=` before it becomes pushable. Decided by ADR-0041: it
+      pushes under the same two conditions as the orderings, plus a value gate.
 - [ ] `readFilter` itself is not yet pushed anywhere. `PLAN.md` §1156 and §1949 describe it as
       row-level security, and today it is evaluated in process like any other predicate. That is
       a security question, not a performance one, and it deserves its own ADR.

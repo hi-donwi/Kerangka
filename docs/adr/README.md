@@ -44,3 +44,4 @@ This directory records all significant architectural, semantic, and structural d
 | [0038](0038-model-document-shape.md) | A Model Document Is Checked for Shape Before It Is Compiled | Accepted | 2026-09-30 |
 | [0039](0039-store-predicates-push-down-only-as-a-weakening.md) | Store Predicates Push Down, but Only as a Weakening | Accepted | 2026-10-01 |
 | [0040](0040-declared-read-filter-is-enforced-and-absent-means-denied.md) | A Declared Read Filter Is Enforced, and Absent Means Denied | Accepted | 2026-10-01 |
+| [0041](0041-a-denied-equality-and-a-literal-list-push-down.md) | A Denied Equality and a Literal List Push Down Under the Same Two Conditions | Accepted | 2026-10-04 |

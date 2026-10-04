@@ -45,15 +45,27 @@ export interface ParameterizedQuery {
  *   via `"false" < "true"`, which is a coincidence of spelling and not a reason to rely on it.
  *
  * A type that is neither listed nor excluded defaults to not-pushed, which is the safe direction.
+ *
+ * ADR-0041 admits two more operators onto this allowlist, each under its own gate implemented in
+ * `pushableComparisons`: `!=`/`<>`, whose NULL disagreement disappears on a NOT NULL column and
+ * whose value must be a number, and a literal-list `in`, whose membership both sides evaluate
+ * the same way once the column cannot be NULL.
  */
-const PUSHABLE_ORDER_TYPES: ReadonlySet<string> = new Set(["int", "integer"]);
+const PUSHABLE_COMPARISON_TYPES: ReadonlySet<string> = new Set(["int", "integer"]);
 
-/** The ordering comparisons, mapped to their SQL spelling. `!=` is deliberately absent. */
-const ORDER_OPERATORS: Readonly<Record<string, string>> = {
+/** The bound past which a literal `in` list is not expanded. A driver parameter limit, not a
+ *  semantic one: past it the clause is not pushed, and unpushed is a superset. */
+const MAX_EXPANDED_MEMBERS = 1000;
+
+/** The comparisons mapped to their SQL spelling. `!=` and `<>` both spell `<>` in SQL. `in` is
+ *  a list rather than a value and is handled separately (ADR-0041). */
+const COMPARISON_OPERATORS: Readonly<Record<string, string>> = {
   "<": "<",
   "<=": "<=",
   ">": ">",
-  ">=": ">="
+  ">=": ">=",
+  "!=": "<>",
+  "<>": "<>"
 };
 
 export class PostgresQueryBuilder {
@@ -120,10 +132,11 @@ export class PostgresQueryBuilder {
       }
     }
 
-    // The orderings from `options.where`, which `filter` cannot carry. See ADR-0039.
-    for (const clause of this.pushableOrderings(entityName, options?.where)) {
-      whereClauses.push(`${clause.column} ${clause.operator} $${paramIndex++}`);
-      values.push(clause.value);
+    // The comparisons from `options.where`, which `filter` cannot carry. See ADR-0039 and
+    // ADR-0041 for what may push, and why everything else must not.
+    for (const clause of this.pushableComparisons(entityName, options?.where, () => `$${paramIndex++}`)) {
+      whereClauses.push(clause.text);
+      values.push(...clause.values);
     }
 
     const whereSql = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : "";
@@ -358,19 +371,23 @@ export class PostgresQueryBuilder {
    * The conjuncts of `where` that may become SQL comparisons, and nothing else.
    *
    * `or` is a disjunction, so neither of its operands is a necessary condition and neither may
-   * be pushed. `in` is a disjunction too. `==` is skipped because `QueryFilter` already carries
-   * it and pushing it again would bind the same value twice. Anything whose right side is
-   * itself an expression is skipped, because the value is not known here.
+   * be pushed. `==` is skipped because `QueryFilter` already carries it and pushing it again
+   * would bind the same value twice. Anything whose right side is itself an expression is
+   * skipped, because the value is not known here — and so is a NULL or missing right side,
+   * which is a value that is not a value: the engine answers through `compare`'s string
+   * fall-through and keeps the row, while `col > NULL` and `col <> NULL` answer NULL and drop
+   * every row (ADR-0041).
    *
    * Returns a superset-only contribution by construction: a conjunct is either provably implied
-   * by the predicate or it is not emitted at all. There is no case where this returns a clause
-   * that narrows more than the engine would.
+   * by the predicate or it is not emitted at all. `nextParam` allocates `$n` placeholders so
+   * the numbering stays in order alongside the equality filter.
    */
-  private pushableOrderings(
+  private pushableComparisons(
     entityName: string,
-    where: QueryPredicate
-  ): Array<{ column: string; operator: string; value: unknown }> {
-    const clauses: Array<{ column: string; operator: string; value: unknown }> = [];
+    where: QueryPredicate,
+    nextParam: () => string
+  ): Array<{ text: string; values: unknown[] }> {
+    const clauses: Array<{ text: string; values: unknown[] }> = [];
     // A literal, a function call, anything unrecognised: no constraint, so nothing is emitted.
     if (!Array.isArray(where)) return clauses;
 
@@ -378,29 +395,86 @@ export class PostgresQueryBuilder {
 
     if (op === "and") {
       for (const branch of where.slice(1)) {
-        clauses.push(...this.pushableOrderings(entityName, branch));
+        clauses.push(...this.pushableComparisons(entityName, branch, nextParam));
       }
       return clauses;
     }
 
-    const operator = ORDER_OPERATORS[op];
-    if (!operator) return clauses;
+    const operator = COMPARISON_OPERATORS[op];
+    if (operator) {
+      // Left must be a plain field read: `["get", field]`, nothing nested behind it.
+      if (!Array.isArray(left) || left[0] !== "get" || typeof left[1] !== "string") return clauses;
+      // A right side that is an AST is an expression, not a value this builder can bind.
+      if (Array.isArray(right) || right === null || right === undefined) return clauses;
 
-    // Left must be a plain field read: `["get", field]`, nothing nested behind it.
+      const field = left[1];
+      const definition = this.kir?.entities[entityName]?.fields?.[field];
+
+      // `required` is the nullability signal, and it is not an assumption: `ddl/generator.ts`
+      // emits NOT NULL for it. Without it, `compare` treats an absent value as "" and keeps the
+      // row, while `WHERE col > $1` drops it — the store would be the stricter of the two.
+      if (!definition?.required) return clauses;
+      if (!PUSHABLE_COMPARISON_TYPES.has(definition.type)) return clauses;
+
+      // `!=` compares strictly in the engine — `5 !== "5"` keeps every row — while SQL casts
+      // and drops the fives. A non-number value would make the store the stricter of the two,
+      // so only a number may bind (ADR-0041). The orderings keep their looser gate: their
+      // engine answer falls through to the same lexicographic compare, which is the agreement
+      // ADR-0039 recorded.
+      if (op === "!=" && typeof right !== "number") return clauses;
+
+      clauses.push({ text: `${toSnakeCase(field)} ${operator} ${nextParam()}`, values: [right] });
+      return clauses;
+    }
+
+    if (op === "in") {
+      clauses.push(...this.pushableMembership(entityName, left, right, nextParam));
+    }
+
+    return clauses;
+  }
+
+  /**
+   * A literal-list `in` becomes `col IN ($n, ...)`; everything else about `in` stays in memory.
+   *
+   * ADR-0041: membership over one NOT NULL column of an allowlisted type is one predicate that
+   * `list.includes` and SQL `IN` evaluate the same way, so the pushed clause is implied, not
+   * stricter — the disjunction ADR-0039 refused was an `or` whose operands need not hold, not a
+   * membership test whose whole predicate must. The gates:
+   *
+   * - a literal array of numbers only: `pg` casts elements to the column type, and a cast the
+   *   engine does not perform turns a row-level false into a query-level error; a NULL element
+   *   is never true in SQL while `includes` would match an undefined field;
+   * - an empty list becomes `FALSE`: `[].includes(v)` is false for every v, and `IN ()` is not
+   *   SQL;
+   * - past MAX_EXPANDED_MEMBERS the clause is not pushed — a driver parameter limit, not a
+   *   semantic one, and unpushed is a superset.
+   */
+  private pushableMembership(
+    entityName: string,
+    left: unknown,
+    right: unknown,
+    nextParam: () => string
+  ): Array<{ text: string; values: unknown[] }> {
+    const clauses: Array<{ text: string; values: unknown[] }> = [];
     if (!Array.isArray(left) || left[0] !== "get" || typeof left[1] !== "string") return clauses;
-    // A right side that is an AST is an expression, not a value this builder can bind.
-    if (Array.isArray(right)) return clauses;
+    if (!Array.isArray(right)) return clauses;
+
+    if (right.length > MAX_EXPANDED_MEMBERS) return clauses;
+    if (!right.every((element) => typeof element === "number")) return clauses;
 
     const field = left[1];
     const definition = this.kir?.entities[entityName]?.fields?.[field];
-
-    // `required` is the nullability signal, and it is not an assumption: `ddl/generator.ts`
-    // emits NOT NULL for it. Without it, `compare` treats an absent value as "" and keeps the
-    // row, while `WHERE col > $1` drops it — the store would be the stricter of the two.
     if (!definition?.required) return clauses;
-    if (!PUSHABLE_ORDER_TYPES.has(definition.type)) return clauses;
+    if (!PUSHABLE_COMPARISON_TYPES.has(definition.type)) return clauses;
 
-    clauses.push({ column: toSnakeCase(field), operator, value: right });
+    if (right.length === 0) {
+      clauses.push({ text: "FALSE", values: [] });
+      return clauses;
+    }
+
+    const placeholders = right.map(() => nextParam()).join(", ");
+    clauses.push({ text: `${toSnakeCase(field)} IN (${placeholders})`, values: [...right] });
     return clauses;
   }
 
