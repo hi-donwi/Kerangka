@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run --workspaces --if-present build",
+    "build": "node scripts/build.mjs",
     "test": "vitest run",
     "test:conformance": "vitest run conformance",
     "test:watch": "vitest",
