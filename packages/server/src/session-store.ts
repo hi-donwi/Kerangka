@@ -139,6 +139,24 @@ export interface SessionStoreLike {
   put(entity: string, record: Record<string, unknown>): { entity: string; id: string; record: Record<string, unknown> };
 }
 
+/**
+ * The same protocol, promise-aware, for a store that cannot answer synchronously — a
+ * Postgres session over a socket, whose query has not come back yet. `PostgresSessionStore`
+ * implements this one; memory and the SQLite file keep implementing the sync form.
+ *
+ * The two are deliberately separate types rather than one union. Widening every method to
+ * `T | Promise<T>` would make every existing call site — `store.pending().filter(...)`,
+ * `for (const entity of store.entities())` — a type error at once, and the JSON-RPC
+ * dispatcher's contract is a synchronous `(line: string) => string | null`. A host that
+ * awaits can take either form today; unifying them so the sidecar can is its own decision.
+ * Derived from `SessionStoreLike`, so the two cannot drift apart method by method.
+ */
+export type AsyncSessionStoreLike = {
+  [Method in keyof SessionStoreLike]: (
+    ...args: Parameters<SessionStoreLike[Method]>
+  ) => Promise<Awaited<ReturnType<SessionStoreLike[Method]>>>;
+};
+
 export class SessionStore implements SessionStoreLike {
   private readonly rows = new Map<string, Map<string, StoredRecord>>();
   private readonly outbox = new Map<string, OutboxEntry>();

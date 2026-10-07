@@ -106,3 +106,39 @@ survives. The id namespaces are unchanged from the SQLite store: a commit mints
       their own `pool.transaction`.
 - [ ] The JSON-RPC sidecar accepts `--session postgres:...` once a shipped executor exists;
       today a host wires the store in code.
+
+## Amendment: the interface is synchronous, so this store cannot implement it (2026-10-07)
+
+Two claims above were wrong, and the store did not typecheck until they were corrected.
+`SessionStoreLike` is **synchronous**: `SessionStore` answers from memory and
+`SqliteSessionStore` from `node:sqlite`'s `DatabaseSync`, both of which hold the answer when
+the call returns. A query that travels over a socket never does, so
+`PostgresSessionStore implements SessionStoreLike` was 31 type errors, and "without changing
+a line of the interface" cannot describe a backend the interface was not written for.
+
+What shipped instead is `AsyncSessionStoreLike`, derived from `SessionStoreLike` by a mapped
+type over its keys, so the two forms cannot drift apart method by method. The sync interface
+is untouched, every existing call site of it still compiles unchanged, and
+`PostgresSessionStore` implements the async form.
+
+Widening the sync interface to `T | Promise<T>` was the alternative and was not taken here,
+for two reasons that are properties of this codebase rather than of the idea:
+
+- Every existing call site reads its result inline — `store.pending().filter(...)`,
+  `for (const entity of store.entities())`, `store.put(entity, computed).record` — so a
+  union makes each one a type error to be fixed, not an optional `await`.
+- The JSON-RPC dispatcher's contract is a synchronous `(line: string) => string | null`.
+  Making the store reachable from it changes the dispatcher, `serveStdio`'s flush loop
+  (two `data` chunks must not interleave their responses), and every test that calls
+  `dispatch(...)` directly.
+
+The cost is stated plainly: the sidecar and `KerangkaServer.session` do not accept this
+store yet. A host that awaits wires it in code today; the framework does not. "Proven on
+three backends" is therefore true of the protocol and its methods, not yet of the sidecar.
+
+Follow-up:
+
+- [ ] `SessionStoreLike` becomes promise-aware and the two forms collapse into one, so the
+      sidecar and the server accept a Postgres session (`--session postgres:...`). The
+      work is the dispatcher's async contract, a serialized `serveStdio` flush, and the
+      call sites that read a result inline.

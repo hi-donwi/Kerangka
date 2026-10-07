@@ -3,8 +3,10 @@
  *
  * The SQLite store proved the protocol survives a restart; this one proves it can share
  * a database with everything else a deployment already runs. It implements the whole
- * `SessionStoreLike` surface over a caller-supplied executor and imports no driver —
- * like `adapter-postgres`, the SQL is the contract and the connection is the caller's.
+ * protocol in its promise-aware form (`AsyncSessionStoreLike`) over a caller-supplied
+ * executor and imports no driver — like `adapter-postgres`, the SQL is the contract and
+ * the connection is the caller's. The sync `SessionStoreLike` stays sync: a socket cannot
+ * answer before it is asked, and every call site of that form reads its result inline.
  *
  * Where SQLite took a write lock on the whole file, this store locks one row: the
  * revision counter is read `SELECT ... FOR UPDATE` as the first statement inside the
@@ -19,11 +21,11 @@
 
 import type { CloudEvent, Effect } from "@kerangka/engine-ts";
 import {
+  AsyncSessionStoreLike,
   CommitReport,
   EffectApplicationError,
   HostEffectEntry,
-  OutboxEntry,
-  SessionStoreLike
+  OutboxEntry
 } from "./session-store.js";
 
 /**
@@ -97,7 +99,7 @@ const SCHEMA = [
   )`
 ];
 
-export class PostgresSessionStore implements SessionStoreLike {
+export class PostgresSessionStore implements AsyncSessionStoreLike {
   private readonly executor: PostgresSessionExecutor;
   private schema?: Promise<void>;
 
@@ -126,23 +128,26 @@ export class PostgresSessionStore implements SessionStoreLike {
   }
 
   /**
-   * Refuse a write the executor cannot make atomic. The error says what is missing and
-   * why, because the alternative is an aggregate in the database with no event in the
-   * outbox, discovered by nobody until a host asks where its invoice email went.
+   * Run one atomic write. The refusal comes first and before a single statement — the
+   * schema DDL included, because creating five tables on an executor that is about to
+   * refuse you is still a statement you had no reason to send. The error says what is
+   * missing and why, because the alternative is an aggregate in the database with no
+   * event in the outbox, discovered by nobody until a host asks where its invoice email
+   * went.
    */
-  private inTransaction<R>(op: string, fn: (tx: PostgresSessionExecutor) => Promise<R>): Promise<R> {
-    const { transaction } = this.executor;
-    if (!transaction) {
-      return Promise.reject(
-        new Error(
-          `PostgresSessionStore cannot run ${op}: the executor offers no transaction(). ` +
-            "A commit split across pool connections can write half a run; see ADR-0042."
-        )
+  private async write<R>(op: string, fn: (tx: PostgresSessionExecutor) => Promise<R>): Promise<R> {
+    const { executor } = this;
+    if (!executor.transaction) {
+      throw new Error(
+        `PostgresSessionStore cannot run ${op}: the executor offers no transaction(). ` +
+          "A commit split across pool connections can write half a run; see ADR-0042."
       );
     }
-    // Called off the executor on purpose, so the method keeps its receiver: executors are
-    // often object literals, and an unbound call would hand the callback a broken this.
-    return transaction.call(this.executor, fn);
+    await this.ensureSchema();
+    // Called as a method rather than destructured, so the executor keeps its receiver:
+    // executors are often object literals, and an unbound call would hand the callback a
+    // broken `this`.
+    return executor.transaction(fn);
   }
 
   /**
@@ -199,8 +204,7 @@ export class PostgresSessionStore implements SessionStoreLike {
       return { persisted: 0, enqueued: 0, queuedEffects: 0, ids: [] };
     }
 
-    await this.ensureSchema();
-    const report = await this.inTransaction("applyEffects", async (tx) => {
+    const report = await this.write("applyEffects", async (tx) => {
       const revision = await this.nextRevision(tx);
 
       for (const row of staged) {
@@ -286,8 +290,7 @@ export class PostgresSessionStore implements SessionStoreLike {
     record: Record<string, unknown>
   ): Promise<{ entity: string; id: string; record: Record<string, unknown> }> {
     const id = String(record.id ?? record._id ?? "");
-    await this.ensureSchema();
-    await this.inTransaction("put", async (tx) => {
+    await this.write("put", async (tx) => {
       const revision = await this.nextRevision(tx);
       await tx.query(
         `INSERT INTO _session_records (entity, id, revision, data) VALUES ($1, $2, $3, $4)
@@ -318,7 +321,7 @@ export class PostgresSessionStore implements SessionStoreLike {
    */
   async pending(): Promise<OutboxEntry[]> {
     await this.ensureSchema();
-    const res = await this.executor.query<Omit<Row, "data" | "effect" | "value" | "n" | "key" | "present">>(
+    const res = await this.executor.query<Row>(
       `SELECT id, event, entity, attempts, state, last_error, revision
        FROM _session_outbox WHERE state = 'pending'
        ORDER BY revision ASC
@@ -357,7 +360,7 @@ export class PostgresSessionStore implements SessionStoreLike {
 
   async outboxEntry(id: string): Promise<OutboxEntry | null> {
     await this.ensureSchema();
-    const res = await this.executor.query<Omit<Row, "data" | "effect" | "value" | "n" | "key" | "present">>(
+    const res = await this.executor.query<Row>(
       "SELECT id, event, entity, attempts, state, last_error, revision FROM _session_outbox WHERE id = $1",
       [id]
     );
@@ -368,7 +371,7 @@ export class PostgresSessionStore implements SessionStoreLike {
   /** Every event this session emitted, delivered or not, oldest first. */
   async events(type?: string): Promise<CloudEvent[]> {
     await this.ensureSchema();
-    const res = await this.executor.query<Omit<Row, "data" | "effect" | "value" | "n" | "key" | "present">>(
+    const res = await this.executor.query<Row>(
       "SELECT id, event, entity, attempts, state, last_error, revision FROM _session_outbox ORDER BY revision ASC"
     );
     const events = res.rows.map(toOutboxEntry).map((entry) => entry.event);
@@ -383,8 +386,7 @@ export class PostgresSessionStore implements SessionStoreLike {
    * joining a write — the point is that the failure survives the record it belongs to.
    */
   async enqueueEffect(effect: Effect): Promise<HostEffectEntry> {
-    await this.ensureSchema();
-    return this.inTransaction("enqueueEffect", async (tx) => {
+    return this.write("enqueueEffect", async (tx) => {
       const revision = await this.nextRevision(tx);
       const count = await tx.query<Pick<Row, "n">>("SELECT COUNT(*) AS n FROM _session_effects");
       const id = `failed-effect-${revision}-${count.rows[0]?.n ?? 0}`;
@@ -409,8 +411,7 @@ export class PostgresSessionStore implements SessionStoreLike {
     effects: Effect[] | undefined,
     entity?: string
   ): Promise<{ events: OutboxEntry[]; effects: HostEffectEntry[] }> {
-    await this.ensureSchema();
-    return this.inTransaction("enqueueDelivery", async (tx) => {
+    return this.write("enqueueDelivery", async (tx) => {
       const revision = await this.nextRevision(tx);
       const queued: OutboxEntry[] = [];
       const undelivered: HostEffectEntry[] = [];
@@ -447,7 +448,7 @@ export class PostgresSessionStore implements SessionStoreLike {
 
   async pendingEffects(type?: string): Promise<HostEffectEntry[]> {
     await this.ensureSchema();
-    const res = await this.executor.query<Omit<Row, "data" | "event" | "value" | "n" | "key" | "present">>(
+    const res = await this.executor.query<Row>(
       `SELECT id, effect, attempts, state, last_error, revision
        FROM _session_effects WHERE state = 'pending'
        ORDER BY revision ASC`
@@ -482,7 +483,7 @@ export class PostgresSessionStore implements SessionStoreLike {
 
   async hostEffect(id: string): Promise<HostEffectEntry | null> {
     await this.ensureSchema();
-    const res = await this.executor.query<Omit<Row, "data" | "event" | "value" | "n" | "key" | "present">>(
+    const res = await this.executor.query<Row>(
       "SELECT id, effect, attempts, state, last_error, revision FROM _session_effects WHERE id = $1",
       [id]
     );
@@ -513,8 +514,7 @@ export class PostgresSessionStore implements SessionStoreLike {
   }
 
   async clear(): Promise<void> {
-    await this.ensureSchema();
-    await this.inTransaction("clear", async (tx) => {
+    await this.write("clear", async (tx) => {
       await tx.query("DELETE FROM _session_records");
       await tx.query("DELETE FROM _session_outbox");
       await tx.query("DELETE FROM _session_effects");

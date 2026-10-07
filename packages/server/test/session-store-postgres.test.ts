@@ -58,7 +58,12 @@ class FakeExecutor implements PostgresSessionExecutor {
     return [...this.records.values()];
   }
 
-  async query(rawSql: string, values: unknown[] = []): Promise<{ rows: Row[] }> {
+  async query<T = Row>(rawSql: string, values: unknown[] = []): Promise<{ rows: T[] }> {
+    const { rows } = await this.answer(rawSql, values);
+    return { rows: rows as T[] };
+  }
+
+  private async answer(rawSql: string, values: unknown[]): Promise<{ rows: Row[] }> {
     this.log.push({ sql: rawSql, values, inTx: this.inTx });
     // The needles below are matched against a whitespace-normalised form, so the store's
     // multi-line SQL and a one-line needle mean the same statement.
@@ -338,13 +343,19 @@ describe("the commit path", () => {
   });
 
   it("refuses a write that cannot be atomic rather than writing half a run", async () => {
-    const executor = { query: async () => ({ rows: [] as Row[] }) };
+    const statements: string[] = [];
+    const executor: PostgresSessionExecutor = {
+      query: async <T>(sql: string): Promise<{ rows: T[] }> => {
+        statements.push(sql);
+        return { rows: [] };
+      }
+    };
     const store = new PostgresSessionStore({ executor });
 
     await expect(
       store.applyEffects("Invoice", [persist("Invoice", "inv-1")], [event("e-1")])
     ).rejects.toThrow(/transaction/);
-    expect(executor.log ?? []).toHaveLength(0);
+    expect(statements).toHaveLength(0);
   });
 });
 
