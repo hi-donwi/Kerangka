@@ -36,7 +36,14 @@ describe("Hono HTTP Adapter Timers and Schedules Integration", () => {
     expect(createRes.status).toBe(201);
 
     // 2. Submit the leave request (transitions draft -> submitted)
-    // Entering 'submitted' state should trigger SLA timer for LeaveRequest.escalate at +3 days
+    // Entering 'submitted' state triggers the SLA timer for LeaveRequest.escalate: the
+    // `reviewLeave` task carries `due: "P3D"`, so it lands three days after this submit.
+    // Derived from the clock, never written down — a fixed date here passes only until
+    // the real date rolls past it.
+    const submittedAt = Date.now();
+    const slaDueAt = submittedAt + 3 * 24 * 60 * 60 * 1000;
+    const afterSla = new Date(slaDueAt + 60_000);
+
     const submitRes = await app.request("/api/leaverequest/leave-77/transitions/submit", {
       method: "POST",
       headers: {
@@ -47,10 +54,16 @@ describe("Hono HTTP Adapter Timers and Schedules Integration", () => {
     });
     expect(submitRes.status).toBe(200);
 
-    const dueJobsAfter3Days = await scheduler.getDueJobs("2026-10-05T00:00:00.000Z");
+    const notDueYet = await scheduler.getDueJobs(new Date(submittedAt));
+    expect(notDueYet.find((j) => j.target === "leave-77")).toBeUndefined();
+
+    const dueJobsAfter3Days = await scheduler.getDueJobs(afterSla);
     const escalationTimer = dueJobsAfter3Days.find((j) => j.target === "leave-77");
     expect(escalationTimer).toBeDefined();
     expect(escalationTimer?.action).toBe("LeaveRequest.escalate");
+    expect(Math.abs(new Date(escalationTimer?.runAt ?? 0).getTime() - slaDueAt)).toBeLessThan(
+      60_000
+    );
 
     // 3. Approve the leave request before due date (transitions submitted -> approved)
     // Leaving 'submitted' state must cancel the escalation timer
@@ -65,7 +78,7 @@ describe("Hono HTTP Adapter Timers and Schedules Integration", () => {
     expect(approveRes.status).toBe(200);
 
     // After approval, the timer should be cancelled
-    const dueJobsAfterApproval = await scheduler.getDueJobs("2026-10-05T00:00:00.000Z");
+    const dueJobsAfterApproval = await scheduler.getDueJobs(afterSla);
     const cancelledTimer = dueJobsAfterApproval.find((j) => j.target === "leave-77");
     expect(cancelledTimer).toBeUndefined();
   });
