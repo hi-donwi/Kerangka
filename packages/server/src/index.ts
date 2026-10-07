@@ -10,5 +10,6 @@ export * from "./server.js";
 export * from "./jsonrpc.js";
 export * from "./session-store.js";
 export * from "./session-store-sqlite.js";
+export * from "./session-store-postgres.js";
 export * from "./operational-openapi.js";
 export * from "./scheduler-runner.js";
