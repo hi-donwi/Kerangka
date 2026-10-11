@@ -561,6 +561,46 @@ export class Engine {
   // Computation & Validation
   // ---------------------------------------------------------------------------
 
+  /**
+   * Materializes declared field defaults without overwriting caller-provided values.
+   * Literal defaults remain literals; expression defaults such as `today()` and `actor.id`
+   * are evaluated in the same context used by the rest of the engine.
+   */
+  applyDefaults(
+    entityName: string,
+    record: Record<string, unknown>,
+    actor?: ActorContext,
+    now?: string | Date,
+  ): Record<string, unknown> {
+    const entity = this.ir.entities?.[entityName];
+    if (!entity) return { ...record };
+
+    const result = { ...record };
+    for (const [fieldName, fieldDef] of Object.entries(entity.fields ?? {})) {
+      if (result[fieldName] !== undefined) continue;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const defaultValue = (fieldDef as any).default;
+      if (defaultValue === undefined) continue;
+
+      if (typeof defaultValue === "string") {
+        const expression = this.asExpression(defaultValue);
+        if (expression) {
+          try {
+            result[fieldName] = evaluate(
+              expression,
+              this.evalContext({ record: result, data: result, actor, now }),
+            );
+            continue;
+          } catch {
+            // Fall through to the declared string when an expression cannot be evaluated.
+          }
+        }
+      }
+      result[fieldName] = defaultValue;
+    }
+    return result;
+  }
+
   compute(entityName: string, record: Record<string, unknown>): Record<string, unknown> {
     const entity = this.ir.entities?.[entityName];
     if (!entity) return { ...record };

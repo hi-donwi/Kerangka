@@ -15,14 +15,75 @@ import {
   VersionConflictError,
 } from "../store.js";
 
+function readPath(record: Record<string, unknown>, path: string): unknown {
+  return path.split(".").reduce<unknown>((value, key) => {
+    if (value === null || typeof value !== "object") return undefined;
+    return (value as Record<string, unknown>)[key];
+  }, record);
+}
+
+function compareValues(left: unknown, right: unknown): number {
+  if (left === right) return 0;
+  if (left === undefined || left === null) return -1;
+  if (right === undefined || right === null) return 1;
+  return left > right ? 1 : -1;
+}
+
+function predicateValue(node: unknown, record: Record<string, unknown>): unknown {
+  if (Array.isArray(node)) {
+    if (node[0] === "get" && typeof node[1] === "string") return readPath(record, node[1]);
+    if (node[0] === "literal") return node[1];
+  }
+  return node;
+}
+
+function matchesPredicate(node: unknown, record: Record<string, unknown>): boolean {
+  if (!Array.isArray(node) || node.length === 0) return true;
+  const [operator, ...args] = node;
+  if (operator === "and") return args.every((branch) => matchesPredicate(branch, record));
+  if (operator === "or") return args.some((branch) => matchesPredicate(branch, record));
+  if (operator === "not") return !matchesPredicate(args[0], record);
+
+  const left = predicateValue(args[0], record);
+  const right = predicateValue(args[1], record);
+  switch (operator) {
+    case "==": return left === right || (left !== undefined && right !== undefined && String(left) === String(right));
+    case "!=": return left !== right && String(left) !== String(right);
+    case "<": return compareValues(left, right) < 0;
+    case "<=": return compareValues(left, right) <= 0;
+    case ">": return compareValues(left, right) > 0;
+    case ">=": return compareValues(left, right) >= 0;
+    case "in": return Array.isArray(right) && right.some((value) => String(value) === String(left));
+    case "between": return Array.isArray(right) && right.length === 2 && compareValues(left, right[0]) >= 0 && compareValues(left, right[1]) <= 0;
+    case "like": return String(left ?? "").toLowerCase().includes(String(right ?? "").toLowerCase());
+    default: return true;
+  }
+}
+
+function indexKey(value: unknown): string {
+  return `${typeof value}:${JSON.stringify(value)}`;
+}
+
+function equalityPredicates(node: unknown): Array<[string, unknown]> {
+  if (!Array.isArray(node) || node.length === 0) return [];
+  const [operator, ...args] = node;
+  if (operator === "and") return args.flatMap(equalityPredicates);
+  if (operator !== "==" || !Array.isArray(args[0]) || args[0][0] !== "get" || typeof args[0][1] !== "string") return [];
+  const value = args[1];
+  if (Array.isArray(value) || value === undefined) return [];
+  return [[args[0][1], value]];
+}
+
 export class MemoryStore implements StorePort {
   // entityName -> id -> record
   private data: Map<string, Map<string | number, Record<string, unknown>>>;
+  private indexes = new Map<string, Map<string, Map<string, Set<string | number>>>>();
   private outbox: OutboxMessage[] = [];
   private timers: TimerEntry[] = [];
 
   constructor(initialData?: Map<string, Map<string | number, Record<string, unknown>>>) {
     this.data = initialData ?? new Map();
+    for (const entityName of this.data.keys()) this.rebuildIndexes(entityName);
   }
 
   async get<T = Record<string, unknown>>(
@@ -52,7 +113,26 @@ export class MemoryStore implements StorePort {
       return { items: [], total: 0, limit: options?.limit, offset: options?.offset };
     }
 
-    let items = Array.from(table.values());
+    const constraints: Array<[string, unknown]> = [];
+    if (options?.tenantId) constraints.push(["tenantId", options.tenantId]);
+    if (filter) constraints.push(...Object.entries(filter));
+    constraints.push(...equalityPredicates(options?.where));
+
+    let candidateIds: Set<string | number> | undefined;
+    for (const [field, value] of constraints) {
+      const fieldIndex = this.indexes.get(entityName)?.get(field);
+      const ids = fieldIndex?.get(indexKey(value));
+      if (!ids) {
+        candidateIds = new Set();
+        break;
+      }
+      if (!candidateIds) candidateIds = new Set(ids);
+      else candidateIds = new Set([...candidateIds].filter((id) => ids.has(id)));
+    }
+
+    let items = candidateIds
+      ? [...candidateIds].map((id) => table.get(id)).filter((item): item is Record<string, unknown> => Boolean(item))
+      : Array.from(table.values());
 
     // Soft delete filtering
     if (!options?.includeSoftDeleted) {
@@ -72,19 +152,31 @@ export class MemoryStore implements StorePort {
       });
     }
 
+    if (options?.where !== undefined) {
+      items = items.filter((item) => matchesPredicate(options.where, item));
+    }
+
+    const search = options?.search?.trim().toLowerCase();
+    if (search) {
+      items = items.filter((item) => Object.values(item).some((value) =>
+        value !== null && value !== undefined && String(value).toLowerCase().includes(search),
+      ));
+    }
+
     const total = items.length;
 
     if (options?.sort) {
-      const [sortField, sortDir] = Object.entries(options.sort)[0] ?? [];
-      if (sortField) {
-        items.sort((a, b) => {
-          const valA = a[sortField];
-          const valB = b[sortField];
-          if (valA === valB) return 0;
-          const cmp = valA! > valB! ? 1 : -1;
+      const clauses = Object.entries(options.sort);
+      items.sort((a, b) => {
+        for (const [sortField, sortDir] of clauses) {
+          const valA = readPath(a, sortField);
+          const valB = readPath(b, sortField);
+          if (valA === valB) continue;
+          const cmp = compareValues(valA, valB);
           return sortDir === "desc" ? -cmp : cmp;
-        });
-      }
+        }
+        return 0;
+      });
     }
 
     const offset = options?.offset ?? 0;
@@ -127,6 +219,7 @@ export class MemoryStore implements StorePort {
     }
 
     table.set(id, data);
+    this.rebuildIndexes(entityName);
     return structuredClone(data) as T;
   }
 
@@ -162,6 +255,7 @@ export class MemoryStore implements StorePort {
     }
 
     this.data.get(entityName)!.set(String(id), updated);
+    this.rebuildIndexes(entityName);
     return structuredClone(updated) as T;
   }
 
@@ -181,10 +275,12 @@ export class MemoryStore implements StorePort {
         ...(options?.actor?.id ? { updatedBy: options.actor.id } : {}),
       };
       this.data.get(entityName)!.set(String(id), updated);
+      this.rebuildIndexes(entityName);
       return true;
     }
 
     this.data.get(entityName)!.delete(String(id));
+    this.rebuildIndexes(entityName);
     return true;
   }
 
@@ -200,10 +296,37 @@ export class MemoryStore implements StorePort {
       return await fn(this);
     } catch (err) {
       this.data = dataClone;
+      for (const entityName of this.data.keys()) this.rebuildIndexes(entityName);
       this.outbox = outboxClone;
       this.timers = timersClone;
       throw err;
     }
+  }
+
+  private rebuildIndexes(entityName: string): void {
+    const table = this.data.get(entityName);
+    if (!table) {
+      this.indexes.delete(entityName);
+      return;
+    }
+    const fields = new Map<string, Map<string, Set<string | number>>>();
+    for (const [id, record] of table.entries()) {
+      for (const [field, value] of Object.entries(record)) {
+        if (value === undefined || value === null || typeof value === "object") continue;
+        let values = fields.get(field);
+        if (!values) {
+          values = new Map();
+          fields.set(field, values);
+        }
+        let ids = values.get(indexKey(value));
+        if (!ids) {
+          ids = new Set();
+          values.set(indexKey(value), ids);
+        }
+        ids.add(id);
+      }
+    }
+    this.indexes.set(entityName, fields);
   }
 
   // ---------------------------------------------------------------------------

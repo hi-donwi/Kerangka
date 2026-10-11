@@ -114,7 +114,9 @@ export class OpenAPIGenerator {
             parameters: [
               { name: "limit", in: "query", schema: { type: "integer", default: 50 }, description: "Max records to return" },
               { name: "offset", in: "query", schema: { type: "integer", default: 0 }, description: "Number of records to skip" },
-              { name: "sort", in: "query", schema: { type: "string" }, description: "Sort field and direction (e.g. createdAt:desc)" }
+              { name: "sort", in: "query", schema: { type: "string" }, description: "Comma-separated sort keys (e.g. createdAt:desc,status:asc)" },
+              { name: "where", in: "query", schema: { type: "string" }, description: "URL-encoded JSON predicate AST, e.g. [\"==\",[\"get\",\"status\"],\"sent\"]" },
+              { name: "search", in: "query", schema: { type: "string" }, description: "Free-text search; applied by the bridge when the store cannot push it down" }
             ],
             responses: {
               "200": {
@@ -157,6 +159,39 @@ export class OpenAPIGenerator {
               "400": { $ref: "#/components/responses/ProblemResponse" },
               "401": { $ref: "#/components/responses/ProblemResponse" },
               "403": { $ref: "#/components/responses/ProblemResponse" }
+            }
+          }
+        };
+
+        // Change stream. The runtime route is selected by `Accept: text/event-stream` because
+        // `/api/{entity}/events` otherwise has the same shape as an item whose id is `events`.
+        paths[`${pathKey}/events`] = {
+          get: {
+            summary: `Stream ${entityName} changes`,
+            operationId: `stream${entityName}Changes`,
+            tags: [entityName],
+            parameters: [
+              {
+                name: "Accept",
+                in: "header",
+                required: true,
+                schema: { type: "string", enum: ["text/event-stream"] },
+                description: "Must request the Server-Sent Events representation."
+              },
+              {
+                name: "tenantId",
+                in: "query",
+                required: false,
+                schema: { type: "string" },
+                description: "Restrict change notifications to one tenant."
+              }
+            ],
+            responses: {
+              "200": {
+                description: "Server-Sent Events change stream",
+                content: { "text/event-stream": { schema: { type: "string" } } }
+              },
+              "404": { $ref: "#/components/responses/ProblemResponse" }
             }
           }
         };

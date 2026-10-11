@@ -134,6 +134,22 @@ export class SqliteStore implements StorePort {
       }
     }
 
+    const predicateSql = this.buildPredicate(entityName, options?.where, tableName, params);
+    if (predicateSql) whereClauses.push(predicateSql);
+
+    const search = options?.search?.trim();
+    if (search) {
+      const entity = this.kir?.entities?.[entityName];
+      const searchableFields = Object.entries(entity?.fields ?? {})
+        .filter(([, field]) => ["string", "text", "enum", "ref"].includes(String((field as { type?: unknown }).type)))
+        .map(([field]) => field);
+      if (entity?.key && !searchableFields.includes(entity.key)) searchableFields.push(entity.key);
+      if (searchableFields.length > 0) {
+        params.push(`%${search}%`);
+        whereClauses.push(`(${searchableFields.map((field) => `LOWER(CAST("${toSnakeCase(field)}" AS TEXT)) LIKE LOWER(?)`).join(" OR ")})`);
+      }
+    }
+
     const whereSql = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : "";
 
     // Count total
@@ -169,6 +185,70 @@ export class SqliteStore implements StorePort {
       limit: options?.limit,
       offset: options?.offset,
     };
+  }
+
+  private buildPredicate(
+    entityName: string,
+    node: unknown,
+    tableName: string,
+    params: unknown[],
+  ): string | undefined {
+    if (!Array.isArray(node) || node.length === 0) return undefined;
+    const [operator, ...args] = node;
+    if (operator === "and") {
+      const clauses: string[] = [];
+      for (const branch of args) {
+        const branchParams = [...params];
+        const clause = this.buildPredicate(entityName, branch, tableName, branchParams);
+        if (clause) {
+          params.splice(0, params.length, ...branchParams);
+          clauses.push(clause);
+        }
+      }
+      return clauses.length > 0 ? `(${clauses.join(" AND ")})` : undefined;
+    }
+    if (operator === "or") {
+      const candidateParams = [...params];
+      const clauses = args.map((branch) => this.buildPredicate(entityName, branch, tableName, candidateParams));
+      if (clauses.some((clause) => !clause)) return undefined;
+      params.splice(0, params.length, ...candidateParams);
+      return clauses.length > 0 ? `(${clauses.join(" OR ")})` : undefined;
+    }
+    if (operator === "not") {
+      const candidateParams = [...params];
+      const clause = this.buildPredicate(entityName, args[0], tableName, candidateParams);
+      if (clause) params.splice(0, params.length, ...candidateParams);
+      return clause ? `(NOT ${clause})` : undefined;
+    }
+
+    const left = args[0];
+    if (!Array.isArray(left) || left[0] !== "get" || typeof left[1] !== "string") return undefined;
+    const field = left[1];
+    const entity = this.kir?.entities?.[entityName];
+    if (!entity || (field !== entity.key && !(field in entity.fields)) || !this.hasColumn(tableName, toSnakeCase(field))) {
+      return undefined;
+    }
+    const column = `"${toSnakeCase(field)}"`;
+    const value = args[1];
+    if (Array.isArray(value) && operator === "in") {
+      if (value.length === 0) return "1 = 0";
+      params.push(...value);
+      return `${column} IN (${value.map(() => "?").join(", ")})`;
+    }
+    if (operator === "between" && Array.isArray(value) && value.length === 2) {
+      params.push(value[0], value[1]);
+      return `${column} BETWEEN ? AND ?`;
+    }
+    if (value === null || value === undefined || Array.isArray(value)) return undefined;
+    if (operator === "like") {
+      params.push(`%${String(value)}%`);
+      return `LOWER(CAST(${column} AS TEXT)) LIKE LOWER(?)`;
+    }
+    const sqlOperator: Record<string, string> = { "==": "=", "!=": "<>", "<": "<", "<=": "<=", ">": ">", ">=": ">=" };
+    const comparison = sqlOperator[String(operator)];
+    if (!comparison) return undefined;
+    params.push(value);
+    return `${column} ${comparison} ?`;
   }
 
   async create<T = Record<string, unknown>>(

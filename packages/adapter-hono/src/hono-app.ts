@@ -41,6 +41,15 @@ import {
 } from "./idempotency.js";
 import { buildNextCursor, decodeCursor, parseSortParam } from "./cursor.js";
 
+function parseWhereParam(value: string | undefined): unknown {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
 export interface KerangkaHonoOptions {
   store?: StorePort;
   engine?: Engine;
@@ -319,6 +328,11 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
     const limit = c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : 50;
     const sort = parseSortParam(c.req.query("sort"));
+    const search = c.req.query("search")?.trim() || undefined;
+    const requestedWhere = parseWhereParam(c.req.query("where"));
+    const combinedWhere = readScope.where && requestedWhere
+      ? ["and", readScope.where, requestedWhere]
+      : requestedWhere ?? readScope.where;
     const cursor = decodeCursor(c.req.query("cursor"));
 
     // A cursor carries the offset and echoes the sort contract it was minted under.
@@ -328,7 +342,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     const queryParams = c.req.query();
     const filter: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(queryParams)) {
-      if (["limit", "offset", "sort", "cursor", "tenantId"].includes(k)) continue;
+      if (["limit", "offset", "sort", "cursor", "tenantId", "where", "search"].includes(k)) continue;
       filter[k] = v;
     }
 
@@ -345,12 +359,15 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       const res = await store.find(entityName, Object.keys(pushdown).length > 0 ? pushdown : undefined, {
         sort: effectiveSort,
         tenantId,
-        where: readScope.where,
+        // The read scope may reference actor context and is evaluated below; only the client
+        // predicate is safe to pass to a storage adapter without that context.
+        where: requestedWhere,
+        search,
       });
 
       records = evaluateWhereInMemory(
         res.items as Record<string, unknown>[],
-        readScope.where,
+        combinedWhere,
         actor
       );
       total = records.length;
@@ -361,6 +378,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
         offset,
         sort: effectiveSort,
         tenantId,
+        search,
       });
       records = res.items as Record<string, unknown>[];
       total = res.total;
@@ -409,7 +427,8 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       const body = await readJsonBody(c);
 
       // Validation
-      const validation = engine.validate(entityName, body);
+      const bodyWithDefaults = engine.applyDefaults(entityName, body, actor, new Date());
+      const validation = engine.validate(entityName, bodyWithDefaults);
       if (!validation.valid) {
         return sendProblem(
           c,
@@ -421,7 +440,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       }
 
       // Compute defaults & computed fields
-      const recordWithComputed = engine.compute(entityName, body);
+      const recordWithComputed = engine.compute(entityName, bodyWithDefaults);
       const created = await store.create(entityName, recordWithComputed, {
         tenantId,
         actor: actor?.id ? { id: actor.id } : undefined,

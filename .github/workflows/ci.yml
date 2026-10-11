@@ -17,6 +17,22 @@ jobs:
   verify:
     name: Typecheck, tests, conformance, examples
     runs-on: ubuntu-latest
+    env:
+      KERANGKA_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/kerangka_test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: kerangka_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kerangka_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 

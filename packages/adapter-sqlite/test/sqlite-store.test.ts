@@ -103,6 +103,34 @@ describe("SQLite Store Adapter (KIR-based)", () => {
     expect(betaList.items[0]?.name).toBe("Widget B");
   });
 
+  it("pushes compound predicates and multi-key sort into SQLite", async () => {
+    const raw = readFileSync(resolve(examplesDir, "inventory.kerangka.json"), "utf8");
+    const kir = compile(raw);
+    const store = new SqliteStore({ kir });
+    store.initSchema();
+
+    for (let i = 0; i < 30; i += 1) {
+      await store.create("StockItem", {
+        sku: `SKU-${i}`,
+        name: `Widget ${i}`,
+        quantity: i,
+        reserved: i % 3,
+        unitCost: 10,
+      }, { tenantId: "tenant-a" });
+    }
+
+    const result = await store.find("StockItem", undefined, {
+      tenantId: "tenant-a",
+      where: ["and", [">=", ["get", "quantity"], 20], ["like", ["get", "name"], "Widget"]],
+      sort: { quantity: "desc", sku: "asc" },
+      limit: 5,
+      offset: 0,
+    });
+
+    expect(result.total).toBe(10);
+    expect(result.items.map((item) => item.quantity)).toEqual([29, 28, 27, 26, 25]);
+  });
+
   it("rolls back failed operations in a transaction", async () => {
     const raw = readFileSync(resolve(examplesDir, "todo.kerangka.json"), "utf8");
     const kir = compile(raw);

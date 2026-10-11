@@ -139,6 +139,19 @@ export class PostgresQueryBuilder {
       values.push(...clause.values);
     }
 
+    const search = options?.search?.trim();
+    if (search) {
+      const searchableFields = Object.entries(entity?.fields ?? {})
+        .filter(([, field]) => ["string", "text", "enum", "ref"].includes(String((field as { type?: unknown }).type)))
+        .map(([field]) => toSnakeCase(field));
+      if (entity?.key && !searchableFields.includes(toSnakeCase(entity.key))) searchableFields.push(toSnakeCase(entity.key));
+      if (searchableFields.length > 0) {
+        whereClauses.push(`(${searchableFields.map((field) => `${field} ILIKE $${paramIndex}`).join(" OR ")})`);
+        values.push(`%${search}%`);
+        paramIndex += 1;
+      }
+    }
+
     const whereSql = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(" AND ")}` : "";
     const countSql = `SELECT COUNT(*) as count FROM ${tableName}${whereSql}`;
     const countValues = [...values];

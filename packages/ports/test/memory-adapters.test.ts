@@ -48,6 +48,30 @@ describe("In-Memory Test Adapters", () => {
     expect(received).toHaveLength(1);
   });
 
+  it("pushes compound predicates and multi-key sort without crossing tenants", async () => {
+    const store = new MemoryStore();
+    for (let i = 0; i < 1200; i += 1) {
+      await store.create(
+        "Invoice",
+        { id: `inv-${i}`, status: i % 2 === 0 ? "sent" : "draft", priority: i % 3 },
+        { tenantId: i % 2 === 0 ? "tenant-a" : "tenant-b" },
+      );
+    }
+
+    const result = await store.find("Invoice", undefined, {
+      tenantId: "tenant-a",
+      where: ["and", ["==", ["get", "status"], "sent"], [">", ["get", "priority"], 0]],
+      sort: { priority: "desc", id: "asc" },
+      limit: 20,
+      offset: 0,
+    });
+
+    expect(result.total).toBe(400);
+    expect(result.items).toHaveLength(20);
+    expect(result.items.every((item) => item.tenantId === "tenant-a")).toBe(true);
+    expect(result.items.every((item) => item.status === "sent" && Number(item.priority) > 0)).toBe(true);
+  });
+
   it("MemoryCache sets, gets, deletes, and invalidates patterns", async () => {
     const cache = new MemoryCache();
 

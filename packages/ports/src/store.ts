@@ -30,6 +30,8 @@ export type QueryPredicate = unknown;
 
 export interface QueryOptions {
   tenantId?: string;
+  /** Free-text search across searchable string fields declared by the entity. */
+  search?: string;
   limit?: number;
   offset?: number;
   sort?: Record<string, "asc" | "desc">;
