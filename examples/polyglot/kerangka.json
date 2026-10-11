@@ -1,0 +1,55 @@
+{
+  "kerangka": "0.1",
+  "app": "polyglot-tasks",
+  "meta": {
+    "title": "Polyglot Task Hub",
+    "timezone": "UTC"
+  },
+  "entities": {
+    "Task": {
+      "fields": {
+        "title": "string! >= 3 <= 100",
+        "description": "string",
+        "priority": { "type": "enum", "values": ["low", "medium", "high"], "default": "medium" },
+        "completed": { "type": "bool", "default": false },
+        "dueAt": "datetime",
+        "tags": { "type": "list", "element": { "type": "string" } }
+      },
+      "actions": {
+        "complete": {
+          "when": "!completed",
+          "run": {
+            "completed": true
+          }
+        },
+        "reopen": {
+          "when": "completed",
+          "run": {
+            "completed": false
+          }
+        }
+      }
+    }
+  },
+  "views": {
+    "home": {
+      "type": "list",
+      "entity": "Task",
+      "columns": ["title", "priority", "completed", "dueAt"]
+    }
+  },
+  "examples": [
+    {
+      "name": "complete an active task",
+      "run": "Task.complete",
+      "record": { "title": "Implement polyglot demo", "completed": false, "priority": "high" },
+      "expect": { "ok": true, "record": { "completed": true } }
+    },
+    {
+      "name": "reopen a completed task",
+      "run": "Task.reopen",
+      "record": { "title": "Test Rust codegen", "completed": true, "priority": "medium" },
+      "expect": { "ok": true, "record": { "completed": false } }
+    }
+  ]
+}

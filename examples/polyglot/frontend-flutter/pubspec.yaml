@@ -1,0 +1,15 @@
+name: polyglot_frontend_flutter
+description: Polyglot Task Hub Flutter client
+version: 0.1.0
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  uidl_flutter: ^0.3.0
+
+flutter:
+  assets:
+    - ../frontend-screens/

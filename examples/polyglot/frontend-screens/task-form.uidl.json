@@ -1,0 +1,240 @@
+{
+  "$schema": "https://uidl.dev/schema/v1/document.schema.json",
+  "version": "1.0.0",
+  "id": "task-form",
+  "name": "Task Details",
+  "route": "/task-form/:id",
+  "state": {
+    "params": {},
+    "form": {},
+    "mutation": {}
+  },
+  "dataSources": {
+    "record": {
+      "$query": {
+        "collection": "Task",
+        "fields": [
+          "title",
+          "description",
+          "priority",
+          "completed",
+          "dueAt",
+          "tags"
+        ],
+        "filters": [
+          {
+            "field": "id",
+            "op": "eq",
+            "value": {
+              "$bind": "state.params.id"
+            }
+          }
+        ],
+        "page": {
+          "number": 1,
+          "size": 1
+        }
+      }
+    }
+  },
+  "root": {
+    "id": "root-task-form",
+    "type": "Container",
+    "children": [
+      {
+        "id": "task-form-body",
+        "type": "Column",
+        "style": {
+          "display": "flex",
+          "flexDirection": "column",
+          "gap": "gap-2",
+          "padding": "p-4"
+        },
+        "children": [
+          {
+            "id": "task-form-header",
+            "type": "Row",
+            "style": {
+              "display": "flex",
+              "flexDirection": "row",
+              "gap": "gap-2",
+              "justifyContent": "space-between",
+              "alignItems": "center"
+            },
+            "children": [
+              {
+                "id": "task-form-title",
+                "type": "Text",
+                "props": {
+                  "value": "Task Details",
+                  "heading": 1
+                }
+              },
+              {
+                "id": "task-form-actions",
+                "type": "Row",
+                "style": {
+                  "display": "flex",
+                  "flexDirection": "row",
+                  "gap": "gap-2"
+                },
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": "task-form-fields",
+            "type": "Form",
+            "children": [
+              {
+                "id": "task-form-section-0",
+                "type": "Text",
+                "props": {
+                  "value": "Section 1",
+                  "heading": 2
+                }
+              },
+              {
+                "id": "field-title",
+                "type": "TextField",
+                "props": {
+                  "label": "Title",
+                  "readOnly": false,
+                  "value": {
+                    "$bind": "state.form.title"
+                  }
+                },
+                "events": {
+                  "onChange": [
+                    {
+                      "setState": {
+                        "path": "state.form.title",
+                        "value": null
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "field-description",
+                "type": "TextField",
+                "props": {
+                  "label": "Description",
+                  "readOnly": false,
+                  "value": {
+                    "$bind": "state.form.description"
+                  }
+                },
+                "events": {
+                  "onChange": [
+                    {
+                      "setState": {
+                        "path": "state.form.description",
+                        "value": null
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "field-priority",
+                "type": "Select",
+                "props": {
+                  "label": "Priority",
+                  "readOnly": false,
+                  "value": {
+                    "$bind": "state.form.priority"
+                  },
+                  "options": [
+                    {
+                      "value": "low",
+                      "label": "Low"
+                    },
+                    {
+                      "value": "medium",
+                      "label": "Medium"
+                    },
+                    {
+                      "value": "high",
+                      "label": "High"
+                    }
+                  ]
+                },
+                "events": {
+                  "onChange": [
+                    {
+                      "setState": {
+                        "path": "state.form.priority",
+                        "value": null
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "field-completed",
+                "type": "Checkbox",
+                "props": {
+                  "label": "Completed",
+                  "readOnly": false,
+                  "checked": {
+                    "$bind": "state.form.completed"
+                  }
+                },
+                "events": {
+                  "onChange": [
+                    {
+                      "setState": {
+                        "path": "state.form.completed",
+                        "value": null
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "field-dueAt",
+                "type": "TextField",
+                "props": {
+                  "label": "Due At",
+                  "readOnly": false,
+                  "value": {
+                    "$bind": "state.form.dueAt"
+                  }
+                },
+                "events": {
+                  "onChange": [
+                    {
+                      "setState": {
+                        "path": "state.form.dueAt",
+                        "value": null
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "field-tags",
+                "type": "DataTable",
+                "props": {
+                  "title": "Tags",
+                  "rows": {
+                    "$bind": "state.form.tags"
+                  },
+                  "columns": [
+                    {
+                      "key": "tags",
+                      "label": "Tags"
+                    }
+                  ],
+                  "paginate": false,
+                  "emptyMessage": "No entries"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

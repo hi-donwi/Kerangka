@@ -1,0 +1,190 @@
+{
+  "$schema": "https://uidl.dev/schema/v1/document.schema.json",
+  "version": "1.0.0",
+  "id": "task-list",
+  "name": "Task-list",
+  "route": "/task-list",
+  "state": {
+    "page": 1,
+    "pageSize": 20,
+    "search": ""
+  },
+  "dataSources": {
+    "items": {
+      "$query": {
+        "collection": "Task",
+        "fields": [
+          "title",
+          "description",
+          "priority",
+          "completed",
+          "dueAt"
+        ],
+        "page": {
+          "number": {
+            "$bind": "state.page"
+          },
+          "size": {
+            "$bind": "state.pageSize"
+          }
+        },
+        "search": {
+          "$bind": "state.search"
+        }
+      }
+    }
+  },
+  "root": {
+    "id": "root-task-list",
+    "type": "Container",
+    "children": [
+      {
+        "id": "task-list-content",
+        "type": "Column",
+        "style": {
+          "display": "flex",
+          "flexDirection": "column",
+          "gap": "gap-2",
+          "padding": "p-4"
+        },
+        "children": [
+          {
+            "id": "task-list-header",
+            "type": "Row",
+            "style": {
+              "display": "flex",
+              "flexDirection": "row",
+              "gap": "gap-2",
+              "justifyContent": "space-between",
+              "alignItems": "center"
+            },
+            "children": [
+              {
+                "id": "task-list-title",
+                "type": "Text",
+                "props": {
+                  "value": "Task-list",
+                  "heading": 1
+                }
+              },
+              {
+                "id": "task-list-create",
+                "type": "Button",
+                "props": {
+                  "label": "New Task",
+                  "variant": "primary"
+                },
+                "events": {
+                  "onClick": [
+                    {
+                      "navigate": {
+                        "route": "/task-form/new"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "task-list-search",
+            "type": "TextField",
+            "props": {
+              "label": "Search",
+              "placeholder": "Search records"
+            },
+            "events": {
+              "onChange": [
+                {
+                  "setState": {
+                    "path": "state.search",
+                    "value": null
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": "task-list-table",
+            "type": "DataTable",
+            "props": {
+              "title": "Task",
+              "dataSource": "items",
+              "columns": [
+                {
+                  "key": "title",
+                  "label": "Title"
+                },
+                {
+                  "key": "description",
+                  "label": "Description"
+                },
+                {
+                  "key": "priority",
+                  "label": "Priority",
+                  "format": "status"
+                },
+                {
+                  "key": "completed",
+                  "label": "Completed",
+                  "format": "check"
+                },
+                {
+                  "key": "dueAt",
+                  "label": "Due At",
+                  "format": "date"
+                }
+              ],
+              "paginate": false,
+              "emptyMessage": "No records match"
+            },
+            "events": {
+              "onOpen": [
+                {
+                  "navigate": {
+                    "route": {
+                      "$bind": "event.route"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": "task-list-pagebar",
+            "type": "PageBar",
+            "props": {
+              "total": {
+                "$bind": "state.$data.items.total"
+              },
+              "page": {
+                "$bind": "state.page"
+              },
+              "pageSize": {
+                "$bind": "state.pageSize"
+              }
+            },
+            "events": {
+              "onPageChange": [
+                {
+                  "setState": {
+                    "path": "state.page",
+                    "value": null
+                  }
+                }
+              ],
+              "onPageSizeChange": [
+                {
+                  "setState": {
+                    "path": "state.pageSize",
+                    "value": null
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
