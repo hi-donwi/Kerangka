@@ -71,3 +71,9 @@ jobs:
 
       - name: Sidecar from a non-JavaScript client (Python over stdio JSON-RPC)
         run: python3 scripts/sidecar-smoke.py
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test Rust SDK
+        run: cargo test --manifest-path sdk/rust/Cargo.toml
