@@ -228,12 +228,16 @@ export class PostgresStore implements StorePort {
 
   private deserializeRow(entityName: string, row: Record<string, unknown>): Record<string, unknown> {
     const entity = this.kir?.entities[entityName];
+    const tenantField = this.kir?.multitenancy?.field ?? "tenantId";
     const result: Record<string, unknown> = {};
 
     for (const [colName, val] of Object.entries(row)) {
       const fieldProp = entity?.fields
-        ? Object.keys(entity.fields).find((p) => toSnakeCase(p) === colName) ?? colName
-        : colName;
+        ? Object.keys(entity.fields).find((p) => toSnakeCase(p) === colName) ??
+          (toSnakeCase(tenantField) === colName ? tenantField : colName)
+        : toSnakeCase(tenantField) === colName
+          ? tenantField
+          : colName;
 
       result[fieldProp] = val;
     }

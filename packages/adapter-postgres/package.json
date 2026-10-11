@@ -19,5 +19,9 @@
     "@kerangka/ports": "*",
     "@kerangka/compiler": "*"
   },
+  "devDependencies": {
+    "@types/pg": "^8.11.11",
+    "pg": "^8.13.1"
+  },
   "license": "Apache-2.0"
 }
