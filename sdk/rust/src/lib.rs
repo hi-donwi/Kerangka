@@ -8,9 +8,12 @@
 //! domain entities.
 
 pub mod error;
+pub mod http;
 pub mod models;
 pub mod sidecar;
 
 pub use error::KerangkaError;
+pub use http::HttpClient;
 pub use models::{ActionResult, Actor};
 pub use sidecar::SidecarClient;
+
