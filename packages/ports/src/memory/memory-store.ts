@@ -60,14 +60,30 @@ function matchesPredicate(node: unknown, record: Record<string, unknown>): boole
   }
 }
 
+function indexKey(value: unknown): string {
+  return `${typeof value}:${JSON.stringify(value)}`;
+}
+
+function equalityPredicates(node: unknown): Array<[string, unknown]> {
+  if (!Array.isArray(node) || node.length === 0) return [];
+  const [operator, ...args] = node;
+  if (operator === "and") return args.flatMap(equalityPredicates);
+  if (operator !== "==" || !Array.isArray(args[0]) || args[0][0] !== "get" || typeof args[0][1] !== "string") return [];
+  const value = args[1];
+  if (Array.isArray(value) || value === undefined) return [];
+  return [[args[0][1], value]];
+}
+
 export class MemoryStore implements StorePort {
   // entityName -> id -> record
   private data: Map<string, Map<string | number, Record<string, unknown>>>;
+  private indexes = new Map<string, Map<string, Map<string, Set<string | number>>>>();
   private outbox: OutboxMessage[] = [];
   private timers: TimerEntry[] = [];
 
   constructor(initialData?: Map<string, Map<string | number, Record<string, unknown>>>) {
     this.data = initialData ?? new Map();
+    for (const entityName of this.data.keys()) this.rebuildIndexes(entityName);
   }
 
   async get<T = Record<string, unknown>>(
@@ -97,7 +113,26 @@ export class MemoryStore implements StorePort {
       return { items: [], total: 0, limit: options?.limit, offset: options?.offset };
     }
 
-    let items = Array.from(table.values());
+    const constraints: Array<[string, unknown]> = [];
+    if (options?.tenantId) constraints.push(["tenantId", options.tenantId]);
+    if (filter) constraints.push(...Object.entries(filter));
+    constraints.push(...equalityPredicates(options?.where));
+
+    let candidateIds: Set<string | number> | undefined;
+    for (const [field, value] of constraints) {
+      const fieldIndex = this.indexes.get(entityName)?.get(field);
+      const ids = fieldIndex?.get(indexKey(value));
+      if (!ids) {
+        candidateIds = new Set();
+        break;
+      }
+      if (!candidateIds) candidateIds = new Set(ids);
+      else candidateIds = new Set([...candidateIds].filter((id) => ids.has(id)));
+    }
+
+    let items = candidateIds
+      ? [...candidateIds].map((id) => table.get(id)).filter((item): item is Record<string, unknown> => Boolean(item))
+      : Array.from(table.values());
 
     // Soft delete filtering
     if (!options?.includeSoftDeleted) {
@@ -184,6 +219,7 @@ export class MemoryStore implements StorePort {
     }
 
     table.set(id, data);
+    this.rebuildIndexes(entityName);
     return structuredClone(data) as T;
   }
 
@@ -219,6 +255,7 @@ export class MemoryStore implements StorePort {
     }
 
     this.data.get(entityName)!.set(String(id), updated);
+    this.rebuildIndexes(entityName);
     return structuredClone(updated) as T;
   }
 
@@ -238,10 +275,12 @@ export class MemoryStore implements StorePort {
         ...(options?.actor?.id ? { updatedBy: options.actor.id } : {}),
       };
       this.data.get(entityName)!.set(String(id), updated);
+      this.rebuildIndexes(entityName);
       return true;
     }
 
     this.data.get(entityName)!.delete(String(id));
+    this.rebuildIndexes(entityName);
     return true;
   }
 
@@ -257,10 +296,37 @@ export class MemoryStore implements StorePort {
       return await fn(this);
     } catch (err) {
       this.data = dataClone;
+      for (const entityName of this.data.keys()) this.rebuildIndexes(entityName);
       this.outbox = outboxClone;
       this.timers = timersClone;
       throw err;
     }
+  }
+
+  private rebuildIndexes(entityName: string): void {
+    const table = this.data.get(entityName);
+    if (!table) {
+      this.indexes.delete(entityName);
+      return;
+    }
+    const fields = new Map<string, Map<string, Set<string | number>>>();
+    for (const [id, record] of table.entries()) {
+      for (const [field, value] of Object.entries(record)) {
+        if (value === undefined || value === null || typeof value === "object") continue;
+        let values = fields.get(field);
+        if (!values) {
+          values = new Map();
+          fields.set(field, values);
+        }
+        let ids = values.get(indexKey(value));
+        if (!ids) {
+          ids = new Set();
+          values.set(indexKey(value), ids);
+        }
+        ids.add(id);
+      }
+    }
+    this.indexes.set(entityName, fields);
   }
 
   // ---------------------------------------------------------------------------

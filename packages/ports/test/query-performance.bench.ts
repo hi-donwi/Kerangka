@@ -1,4 +1,4 @@
-import { bench, describe } from "vitest";
+import { describe, expect, it } from "vitest";
 import { MemoryStore } from "../src/index.js";
 
 const rows = new Map<string, Record<string, unknown>>();
@@ -15,20 +15,28 @@ for (let i = 0; i < 20_000; i += 1) {
 const store = new MemoryStore(new Map([["Invoice", rows]]));
 
 describe("query filtering: bounded scan versus predicate pushdown", () => {
-  bench("bounded scan", () => {
+  it("records a repeatable 20,000-record baseline", async () => {
+    const iterations = 100;
+    const scanStart = performance.now();
+    for (let i = 0; i < iterations; i += 1) {
     const result = Array.from(rows.values())
       .filter((row) => row.tenantId === "tenant-a" && row.status === "sent" && Number(row.priority) > 1)
       .slice(0, 50);
-    if (result.length === 0) throw new Error("benchmark fixture unexpectedly empty");
-  });
+      expect(result.length).toBeGreaterThan(0);
+    }
+    const scanMs = performance.now() - scanStart;
 
-  bench("predicate pushdown", async () => {
-    const result = await store.find("Invoice", undefined, {
-      tenantId: "tenant-a",
-      where: ["and", ["==", ["get", "status"], "sent"], [">", ["get", "priority"], 1]],
-      limit: 50,
-      offset: 0,
-    });
-    if (result.items.length === 0) throw new Error("benchmark fixture unexpectedly empty");
+    const pushdownStart = performance.now();
+    for (let i = 0; i < iterations; i += 1) {
+      const result = await store.find("Invoice", undefined, {
+        tenantId: "tenant-a",
+        where: ["and", ["==", ["get", "status"], "sent"], [">", ["get", "priority"], 1]],
+        limit: 50,
+        offset: 0,
+      });
+      expect(result.items.length).toBeGreaterThan(0);
+    }
+    const pushdownMs = performance.now() - pushdownStart;
+    console.info(`[query benchmark] scan=${scanMs.toFixed(2)}ms pushdown=${pushdownMs.toFixed(2)}ms iterations=${iterations}`);
   });
 });
