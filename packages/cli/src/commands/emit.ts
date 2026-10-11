@@ -88,7 +88,8 @@ export function emitCommand(
     case "types:go":
     case "types:rust":
     case "types:rs":
-    case "types:dart": {
+    case "types:dart":
+    case "types:wasm": {
       const lang = target.split(":")[1] as TargetLanguage;
       return codegenCommand(filePath, {
         target: lang,

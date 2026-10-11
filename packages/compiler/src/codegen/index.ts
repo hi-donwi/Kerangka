@@ -12,8 +12,9 @@ import { PythonCodegen } from "./python.js";
 import { GoCodegen } from "./go.js";
 import { RustCodegen } from "./rust.js";
 import { DartCodegen } from "./dart.js";
+import { WasmCodegen } from "./wasm.js";
 
-export type TargetLanguage = "ts" | "typescript" | "java" | "python" | "py" | "go" | "golang" | "rust" | "rs" | "dart";
+export type TargetLanguage = "ts" | "typescript" | "java" | "python" | "py" | "go" | "golang" | "rust" | "rs" | "dart" | "wasm";
 
 export interface CodegenOptions {
   packageName?: string;
@@ -39,12 +40,14 @@ export class CodeGenerator {
         return RustCodegen.generate(kir);
       case "dart":
         return DartCodegen.generate(kir);
+      case "wasm":
+        return WasmCodegen.generate(kir);
       default:
-        throw new Error(`Unsupported codegen target language: '${target}'. Supported targets: ts, java, python, go, rust, dart`);
+        throw new Error(`Unsupported codegen target language: '${target}'. Supported targets: ts, java, python, go, rust, dart, wasm`);
     }
   }
 }
 
-export { TypeScriptCodegen, JavaCodegen, PythonCodegen, GoCodegen, RustCodegen, DartCodegen };
+export { TypeScriptCodegen, JavaCodegen, PythonCodegen, GoCodegen, RustCodegen, DartCodegen, WasmCodegen };
 
 
