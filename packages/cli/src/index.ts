@@ -33,3 +33,7 @@ export * from "./commands/run.js";
 export * from "./commands/pkg.js";
 export * from "./commands/verify.js";
 export * from "./commands/decisions.js";
+export * from "./commands/scaffold.js";
+export * from "./commands/switch.js";
+
+

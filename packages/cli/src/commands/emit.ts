@@ -85,7 +85,10 @@ export function emitCommand(
     case "types:ts":
     case "types:java":
     case "types:python":
-    case "types:go": {
+    case "types:go":
+    case "types:rust":
+    case "types:rs":
+    case "types:dart": {
       const lang = target.split(":")[1] as TargetLanguage;
       return codegenCommand(filePath, {
         target: lang,
@@ -96,8 +99,9 @@ export function emitCommand(
 
     default:
       console.error(
-        `Error: Unsupported emit target '${target}'. Supported targets: compose, openapi, asyncapi, json-schema, graphql, mcp, uidl, sql:postgres, sql:sqlite, types:ts, types:java, types:python, types:go`
+        `Error: Unsupported emit target '${target}'. Supported targets: compose, openapi, asyncapi, json-schema, graphql, mcp, uidl, sql:postgres, sql:sqlite, types:ts, types:java, types:python, types:go, types:rust`
       );
       return false;
   }
 }
+

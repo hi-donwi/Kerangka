@@ -104,6 +104,26 @@ describe("Kerangka CLI Commands", () => {
     expect(content).toContain("export interface Invoice {");
   });
 
+  it("codegenCommand generates Rust code", () => {
+    const outRs = path.join(tmpDir, "models.rs");
+    const success = codegenCommand(examplePath, { target: "rust", output: outRs });
+    expect(success).toBe(true);
+    expect(fs.existsSync(outRs)).toBe(true);
+    const content = fs.readFileSync(outRs, "utf-8");
+    expect(content).toContain("pub struct Invoice {");
+    expect(content).toContain("use serde::{Deserialize, Serialize};");
+  });
+
+  it("codegenCommand generates Dart code", () => {
+    const outDart = path.join(tmpDir, "models.dart");
+    const success = codegenCommand(examplePath, { target: "dart", output: outDart });
+    expect(success).toBe(true);
+    expect(fs.existsSync(outDart)).toBe(true);
+    const content = fs.readFileSync(outDart, "utf-8");
+    expect(content).toContain("class Invoice {");
+    expect(content).toContain("factory Invoice.fromJson(Map<String, dynamic> json)");
+  });
+
   it("diffCommand analyzes differences between two models", () => {
     const success = diffCommand(examplePath, examplePath);
     expect(success).toBe(true);
@@ -124,7 +144,20 @@ describe("Kerangka CLI Commands", () => {
     const success = emitCommand("compose", examplePath, { output: outEmit });
     expect(success).toBe(true);
     expect(fs.existsSync(outEmit)).toBe(true);
+
+    const outRust = path.join(tmpDir, "emitted-types.rs");
+    const successRust = emitCommand("types:rust", examplePath, { output: outRust });
+    expect(successRust).toBe(true);
+    expect(fs.existsSync(outRust)).toBe(true);
+    expect(fs.readFileSync(outRust, "utf-8")).toContain("pub struct Invoice {");
+
+    const outDart = path.join(tmpDir, "emitted-types.dart");
+    const successDart = emitCommand("types:dart", examplePath, { output: outDart });
+    expect(successDart).toBe(true);
+    expect(fs.existsSync(outDart)).toBe(true);
+    expect(fs.readFileSync(outDart, "utf-8")).toContain("class Invoice {");
   });
+
 
   it("lintCommand passes on every example with the recommended preset", () => {
     const examplesDir = path.resolve(__dirname, "../../../examples");

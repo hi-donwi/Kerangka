@@ -25,6 +25,7 @@ interface ProblemBody {
   detail?: string;
   title?: string;
   errors?: Array<{ field?: string; message?: string }>;
+  invalidParams?: Array<{ name?: string; reason?: string }>;
 }
 
 const STATUS_TO_CODE: Record<number, DataErrorCode> = {
@@ -143,17 +144,28 @@ export async function toDataError(response: Response): Promise<DataError> {
     STATUS_TO_CODE[response.status] ??
     (response.status >= 500 ? "server" : "validation");
 
-  const fields = toFields(body?.errors);
+  const fields = toFields(body?.errors, body?.invalidParams);
   const message = body?.detail ?? body?.title ?? `Kerangka responded ${response.status}`;
   return new DataError(message, code, fields);
 }
 
-function toFields(errors: ProblemBody["errors"]): Record<string, string> | undefined {
-  if (!Array.isArray(errors)) return undefined;
+function toFields(
+  errors: ProblemBody["errors"],
+  invalidParams?: ProblemBody["invalidParams"]
+): Record<string, string> | undefined {
   const fields: Record<string, string> = {};
-  for (const item of errors) {
-    if (item && typeof item.field === "string" && typeof item.message === "string") {
-      fields[item.field] = item.message;
+  if (Array.isArray(errors)) {
+    for (const item of errors) {
+      if (item && typeof item.field === "string" && typeof item.message === "string") {
+        fields[item.field] = item.message;
+      }
+    }
+  }
+  if (Array.isArray(invalidParams)) {
+    for (const item of invalidParams) {
+      if (item && typeof item.name === "string" && typeof item.reason === "string") {
+        fields[item.name] = item.reason;
+      }
     }
   }
   return Object.keys(fields).length > 0 ? fields : undefined;

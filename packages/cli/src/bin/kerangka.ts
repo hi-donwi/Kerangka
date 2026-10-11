@@ -33,6 +33,9 @@ import { runCommand } from "../commands/run.js";
 import { verifyCommand } from "../commands/verify.js";
 import { decisionsExportCommand, decisionsImportCommand } from "../commands/decisions.js";
 import { pkgCommand } from "../commands/pkg.js";
+import { scaffoldCommand, type BackendStack, type FrontendStack, type DatabaseDialect } from "../commands/scaffold.js";
+import { switchCommand } from "../commands/switch.js";
+
 
 function printHelp(): void {
   console.log(`
@@ -45,7 +48,10 @@ USAGE:
 
 COMMANDS:
   init [template]         Scaffold a workspace or single-file starter (todo, invoicing, commerce, workspace)
+  scaffold [name]         Scaffold polyglot starter with backend (go|python|rust|node) and frontend (react|flutter)
+  switch <type> <stack>   Switch stack in current project (switch backend <go|python|rust|node> | switch frontend <react|flutter>)
   add <type> <name>       Generate files in standard structure (context, aggregate, action, policy, query, view)
+
   check <file>            Verify model syntax, references, and expressions
   lint <path>             Report boundaries, naming rules, and complexity budgets
   build <file>            Compile model into canonical KIR JSON
@@ -64,7 +70,7 @@ COMMANDS:
                            (--session <file> keeps the session across a restart)
   verify <file>           Static analysis of workflows, permissions, decision tables, and events
   decisions <subcommand>  Import or export decision tables (decisions export | decisions import)
-  codegen <file>          Generate typed models (TypeScript, Java 21, Python, Go)
+  codegen <file>          Generate typed models (TypeScript, Java 21, Python, Go, Rust, Dart)
   diff <file1> <file2>    Analyze structural and breaking changes between two model versions
   graph <file>            Draw the architecture / context map as Mermaid
   expand <file>           Display expanded entity models with resolved shorthands
@@ -74,7 +80,8 @@ COMMANDS:
 
 OPTIONS:
   -d, --dialect <name>    SQL dialect for 'ddl' and 'db diff' (postgres | sqlite, default: postgres)
-  -t, --target <lang>     Target language for 'codegen' (ts | java | python | go, default: ts)
+  -t, --target <lang>     Target language for 'codegen' (ts | java | python | go | rust | dart, default: ts)
+
   --package <name>        Package namespace for generated Java or Go code
   --check-breaking        Exit with error code if breaking changes are detected in 'diff'
   --check-destructive     Exit with error code if unapproved destructive steps are detected in 'db diff'
@@ -110,6 +117,11 @@ EXAMPLES:
   kerangka build examples/invoicing.kerangka.json -o build/invoicing.kir.json
   kerangka codegen examples/invoicing.kerangka.json --target java -o InvoiceModel.java
   kerangka codegen examples/invoicing.kerangka.json --target python -o models.py
+  kerangka codegen examples/invoicing.kerangka.json --target go -o models.go
+  kerangka codegen examples/invoicing.kerangka.json --target rust -o models.rs
+  kerangka codegen examples/invoicing.kerangka.json --target dart -o models.dart
+
+
   kerangka diff old.json new.json --check-breaking
   kerangka db diff build/invoicing.kir.json examples/invoicing.kerangka.json
   kerangka db diff db.sqlite model.json --dialect sqlite --phase expand
@@ -163,9 +175,16 @@ async function main(): Promise<void> {
         actor: { type: "string" },
         now: { type: "string" },
         trace: { type: "boolean" },
+        backend: { type: "string" },
+        frontend: { type: "string" },
+        database: { type: "string" },
+        db: { type: "string" },
+        model: { type: "string" },
+        cwd: { type: "string" },
       },
       allowPositionals: true,
     });
+
 
     if (values.version) {
       console.log(`kerangka v${VERSION}`);
@@ -180,7 +199,7 @@ async function main(): Promise<void> {
     const command = positionals[0]!;
     const file = positionals[1];
 
-    if (!file && command !== "help" && command !== "version" && command !== "init" && command !== "decisions" && command !== "pkg" && command !== "db") {
+    if (!file && command !== "help" && command !== "version" && command !== "init" && command !== "scaffold" && command !== "decisions" && command !== "pkg" && command !== "db") {
       console.error(`Error: Missing argument for command '${command}'`);
       printHelp();
       process.exit(1);
@@ -196,6 +215,31 @@ async function main(): Promise<void> {
         });
         break;
       }
+      case "scaffold": {
+        success = scaffoldCommand(positionals[1] || values.name || "my-polyglot-app", {
+          output: values.output,
+          backend: values.backend as BackendStack,
+          frontend: values.frontend as FrontendStack,
+          database: (values.db || values.database) as DatabaseDialect,
+        });
+        break;
+      }
+      case "switch": {
+        const type = positionals[1];
+        const target = positionals[2];
+        if (!type || !target) {
+          console.error("Error: 'switch' requires both target type and stack: kerangka switch <backend|frontend> <target>");
+          process.exit(1);
+        }
+        success = switchCommand(type, target, {
+          model: values.model,
+          database: (values.db || values.database) as string,
+          cwd: values.cwd,
+        });
+        break;
+      }
+
+
       case "add": {
         const type = positionals[1];
         const name = positionals[2];

@@ -78,11 +78,27 @@ kerangka mcp examples/invoicing.kerangka.json -o mcp-tools.json
 # Generate UIDL screen documents for UIDL-Runtime
 kerangka uidl examples/invoicing.kerangka.json -o uidl-screens/
 
-# Generate typed language models (TypeScript, Java 21, Python, Go)
+# Generate typed language models (TypeScript, Java 21, Python, Go, Rust, Dart)
 kerangka codegen examples/invoicing.kerangka.json --target ts -o models.ts
 kerangka codegen examples/invoicing.kerangka.json --target java -o Invoice.java
 kerangka codegen examples/invoicing.kerangka.json --target python -o models.py
 kerangka codegen examples/invoicing.kerangka.json --target go -o models.go
+kerangka codegen examples/invoicing.kerangka.json --target rust -o models.rs
+kerangka codegen examples/invoicing.kerangka.json --target dart -o models.dart
+
+# Scaffold full-stack polyglot project (switch backend & frontend stacks seamlessly)
+kerangka scaffold my-app --backend go --frontend react --db postgres
+kerangka scaffold my-app --backend python --frontend flutter --db sqlite
+kerangka scaffold my-app --backend rust --frontend react --db postgres
+
+# Instant stack switcher for existing projects
+kerangka switch backend rust
+kerangka switch backend python
+kerangka switch backend go
+kerangka switch frontend flutter
+kerangka switch frontend react
+
+
 
 # Analyze breaking and structural changes between model versions
 # Every contract the model publishes: entities, workflows, event payloads,
