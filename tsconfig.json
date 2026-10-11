@@ -24,7 +24,8 @@
       "@kerangka/ports/test-kits": ["packages/ports/src/test-kits/index.ts"],
       "@kerangka/ports": ["packages/ports/src/index.ts"],
       "@kerangka/server": ["packages/server/src/index.ts"],
-      "@kerangka/std": ["packages/std/src/index.ts"]
+      "@kerangka/std": ["packages/std/src/index.ts"],
+      "@kerangka/uidl": ["packages/uidl/src/index.ts"]
     }
   },
   "include": [

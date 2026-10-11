@@ -99,6 +99,10 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     expect(Array.isArray(items)).toBe(true);
     expect(items.length).toBe(1);
 
+    const filteredListRes = await fetch(`${baseUrl}/api/customer?name=Acme%20Corp&sort=name:desc`);
+    expect(filteredListRes.status).toBe(200);
+    expect(await filteredListRes.json()).toEqual([expect.objectContaining({ id: "cust-1" })]);
+
     // 4. Create and Transition Invoice
     const invoiceRes = await fetch(`${baseUrl}/api/invoice`, {
       method: "POST",

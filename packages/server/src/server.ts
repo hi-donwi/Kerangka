@@ -109,6 +109,65 @@ const reportable = ({ index, type, target, code }: UndeliveredEffect): FailedEff
 });
 
 /**
+ * One committed mutation to an entity, pushed over a change stream.
+ *
+ * Deliberately a *change notification*, not the new record: a subscribed list re-queries on the
+ * event rather than patching itself from the payload, so it stays correct under filtering,
+ * sorting and pagination it cannot see. `version` is the record's optimistic-concurrency token
+ * when the store keeps one, so a client can skip a refresh it already has.
+ */
+export interface ChangeEvent {
+  entity: string;
+  operation: "create" | "update" | "delete" | "action";
+  id: string;
+  version?: number;
+  /** Present when `operation` is `"action"`: the action or transition that ran. */
+  action?: string;
+  /** ISO-8601 commit time. */
+  at: string;
+}
+
+/** One open `text/event-stream` connection following an entity. */
+interface ChangeSubscriber {
+  res: http.ServerResponse;
+  /** When set, the subscriber only receives changes committed under the same tenant. */
+  tenantId?: string;
+}
+
+function versionOf(record: unknown): number | undefined {
+  if (record && typeof record === "object" && "version" in record) {
+    const value = (record as Record<string, unknown>).version;
+    return typeof value === "number" ? value : undefined;
+  }
+  return undefined;
+}
+
+function wantsEventStream(req: http.IncomingMessage): boolean {
+  const accept = req.headers.accept;
+  return typeof accept === "string" && accept.includes("text/event-stream");
+}
+
+function parseSortParam(value: string | null): Record<string, "asc" | "desc"> | undefined {
+  if (!value) return undefined;
+  const sort: Record<string, "asc" | "desc"> = {};
+  for (const clause of value.split(",")) {
+    const [field, direction = "asc"] = clause.split(":", 2);
+    if (!field || (direction !== "asc" && direction !== "desc")) return undefined;
+    sort[field] = direction;
+  }
+  return Object.keys(sort).length > 0 ? sort : undefined;
+}
+
+function parseWhereParam(value: string | null): unknown {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Add the routes the server serves that the model does not describe.
  *
  * The emitter's document is about the model; this server is about a running deployment, and
@@ -154,6 +213,15 @@ export class KerangkaServer {
   private quiet: boolean;
   private enableSchedulerRunner: boolean;
   private idempotencyCache = new Map<string, { status: number; body: unknown; headers?: Record<string, string> }>();
+
+  /**
+   * Live change subscribers, keyed by lower-cased entity name; each entry is one open
+   * `text/event-stream`. A host follows a collection without polling, and the server pushes a
+   * `ChangeEvent` after every committed mutation. Empty sets are deleted so a disconnected
+   * client leaves nothing behind.
+   */
+  private changeStreams = new Map<string, Set<ChangeSubscriber>>();
+
 
   constructor(kir: KIRDocument, options: ServerOptions = {}) {
     this.kir = kir;
@@ -218,6 +286,14 @@ export class KerangkaServer {
 
   async stop(): Promise<void> {
     this.runner.stop();
+    // End every change stream first: an open keep-alive response would otherwise hold the
+    // server open past `close`.
+    for (const subscribers of this.changeStreams.values()) {
+      for (const subscriber of subscribers) {
+        if (!subscriber.res.writableEnded) subscriber.res.end();
+      }
+    }
+    this.changeStreams.clear();
     return new Promise((resolve, reject) => {
       if (!this.httpServer) return resolve();
       this.httpServer.close((err) => {
@@ -326,10 +402,20 @@ export class KerangkaServer {
       if (method === "GET") {
         const limit = parseInt(url.searchParams.get("limit") || "50", 10);
         const offset = parseInt(url.searchParams.get("offset") || "0", 10);
-        const queryResult = await this.store.find(entityName, undefined, {
+        const sort = parseSortParam(url.searchParams.get("sort"));
+        const where = parseWhereParam(url.searchParams.get("where"));
+        const search = url.searchParams.get("search") || undefined;
+        const filter: Record<string, string> = {};
+        for (const [key, value] of url.searchParams.entries()) {
+          if (!["limit", "offset", "sort", "tenantId", "where", "search"].includes(key)) filter[key] = value;
+        }
+        const queryResult = await this.store.find(entityName, Object.keys(filter).length > 0 ? filter : undefined, {
           limit,
           offset,
           tenantId,
+          sort,
+          where,
+          search,
         });
         res.setHeader("X-Total-Count", String(queryResult.total));
         this.sendJson(res, 200, queryResult.items);
@@ -340,7 +426,8 @@ export class KerangkaServer {
         const body = await this.readJsonBody(req);
 
         // Validation
-        const validation = this.engine.validate(entityName, body);
+        const bodyWithDefaults = this.engine.applyDefaults(entityName, body, actor, new Date());
+        const validation = this.engine.validate(entityName, bodyWithDefaults);
         if (!validation.valid) {
           this.sendProblem(
             res,
@@ -356,7 +443,7 @@ export class KerangkaServer {
         const entityDef = this.kir.entities[entityName];
         const keyField = entityDef?.key || "id";
         const id = body[keyField] || `${entityName.toLowerCase()}_${Date.now()}`;
-        const recordWithComputed = this.engine.compute(entityName, { ...body, [keyField]: id });
+        const recordWithComputed = this.engine.compute(entityName, { ...bodyWithDefaults, [keyField]: id });
         const created = await this.store.create(entityName, recordWithComputed, {
           tenantId,
           actor: actor?.id ? { id: actor.id } : undefined,
@@ -366,9 +453,30 @@ export class KerangkaServer {
           this.idempotencyCache.set(idempotencyKey, { status: 201, body: created, headers: { "X-Idempotent-Replayed": "true" } });
         }
 
+        this.broadcastChange(entityName, { operation: "create", id, version: versionOf(created), tenantId });
         this.sendJson(res, 201, created);
         return;
       }
+    }
+
+    // Change stream: /api/{entity}/events, opened only when the client asks for
+    // `text/event-stream`. The path has the same shape as an item read
+    // (/api/{entity}/{id}), so an `Accept` header is what tells them apart — a record whose id is
+    // literally `events` stays readable by a JSON client, and an EventSource (which always sends
+    // `Accept: text/event-stream`) gets the live stream.
+    if (parts.length === 2 && parts[1] === "events" && wantsEventStream(req)) {
+      if (method !== "GET") {
+        this.sendProblem(
+          res,
+          405,
+          "Method Not Allowed",
+          `Subscribe to ${entityName} changes with GET /api/${entityName}/events.`,
+          "METHOD_NOT_ALLOWED"
+        );
+        return;
+      }
+      this.handleChangeStream(req, res, entityName, tenantId);
+      return;
     }
 
     // Item endpoint: /api/{entity}/{id}
@@ -423,6 +531,7 @@ export class KerangkaServer {
             this.idempotencyCache.set(idempotencyKey, { status: 200, body: updated, headers: { "X-Idempotent-Replayed": "true" } });
           }
 
+          this.broadcastChange(entityName, { operation: "update", id, version: versionOf(updated), tenantId });
           this.sendJson(res, 200, updated);
           return;
         } catch (err: unknown) {
@@ -441,6 +550,7 @@ export class KerangkaServer {
           soft,
           actor: actor?.id ? { id: actor.id } : undefined,
         });
+        this.broadcastChange(entityName, { operation: "delete", id, tenantId });
         res.statusCode = 204;
         res.end();
         return;
@@ -520,6 +630,13 @@ export class KerangkaServer {
           this.idempotencyCache.set(idempotencyKey, { status: 200, body: resPayload, headers: { "X-Idempotent-Replayed": "true" } });
         }
 
+        this.broadcastChange(entityName, {
+          operation: "action",
+          id,
+          action: actionName,
+          version: versionOf(updatedState),
+          tenantId,
+        });
         this.sendJson(res, 200, resPayload);
         return;
       }
@@ -852,6 +969,88 @@ export class KerangkaServer {
       return;
     }
     await (handler as (context: OperationalContext) => void | Promise<void>).call(this, context);
+  }
+
+  /**
+   * Subscribe one client to an entity's change feed.
+   *
+   * `text/event-stream` is a long-lived response: the connection stays open and the server
+   * pushes a `change` event after every committed mutation. A `: ping` comment every 20s keeps
+   * an idle proxy from closing it. The subscriber is removed when the socket closes, so a
+   * dropped client leaks nothing; `stop()` ends the rest.
+   */
+  private handleChangeStream(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    entityName: string,
+    tenantId?: string
+  ): void {
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    // Tells nginx and friends not to buffer the stream into uselessness.
+    res.setHeader("X-Accel-Buffering", "no");
+    res.statusCode = 200;
+    res.flushHeaders?.();
+
+    const key = entityName.toLowerCase();
+    let subscribers = this.changeStreams.get(key);
+    if (!subscribers) {
+      subscribers = new Set<ChangeSubscriber>();
+      this.changeStreams.set(key, subscribers);
+    }
+    const subscriber: ChangeSubscriber = { res, tenantId };
+    subscribers.add(subscriber);
+
+    res.write(`: connected to ${entityName} change stream\n\n`);
+
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) res.write(": ping\n\n");
+    }, 20000);
+
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      subscribers.delete(subscriber);
+      // Only the set that is still current may be removed: a later subscriber may have
+      // registered a fresh set under the same key, and deleting by key alone would drop it.
+      if (subscribers.size === 0 && this.changeStreams.get(key) === subscribers) {
+        this.changeStreams.delete(key);
+      }
+    };
+    req.on("close", cleanup);
+    res.on("close", cleanup);
+  }
+
+  /**
+   * Push a change to everyone following the entity.
+   *
+   * `operation` is the committed act, not the record: a subscribed list re-queries on any of
+   * them rather than guessing what to patch, so it stays correct under filtering, sorting and
+   * pagination the payload cannot describe. `tenantId` scopes delivery — a subscriber bound to a
+   * tenant never sees another tenant's change.
+   */
+  private broadcastChange(
+    entityName: string,
+    change: { operation: ChangeEvent["operation"]; id: string; version?: number; action?: string; tenantId?: string }
+  ): void {
+    const subscribers = this.changeStreams.get(entityName.toLowerCase());
+    if (!subscribers || subscribers.size === 0) return;
+
+    const event: ChangeEvent = {
+      entity: entityName,
+      operation: change.operation,
+      id: change.id,
+      ...(change.version !== undefined ? { version: change.version } : {}),
+      ...(change.action !== undefined ? { action: change.action } : {}),
+      at: new Date().toISOString(),
+    };
+    const frame = `event: change\ndata: ${JSON.stringify(event)}\n\n`;
+
+    for (const subscriber of subscribers) {
+      if (subscriber.tenantId !== undefined && subscriber.tenantId !== change.tenantId) continue;
+      if (subscriber.res.writableEnded) continue;
+      subscriber.res.write(frame);
+    }
   }
 
   private sendJson(res: http.ServerResponse, status: number, data: unknown): void {

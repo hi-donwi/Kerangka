@@ -41,6 +41,20 @@ describe("TypeScript Reference Engine", () => {
     expect(computed.status).toBe("draft");
   });
 
+  it("applies literal and expression defaults without overwriting input", () => {
+    const raw = readFileSync(resolve(examplesDir, "invoicing.kerangka.json"), "utf8");
+    const kir = compile(raw);
+    const engine = loadEngine(kir);
+
+    const defaulted = engine.applyDefaults("Invoice", {}, undefined, "2026-10-11T00:00:00.000Z");
+    expect(defaulted.status).toBe("draft");
+    expect(defaulted.issuedOn).toBe("2026-10-11");
+
+    const explicit = engine.applyDefaults("Invoice", { status: "paid", issuedOn: "2020-01-01" });
+    expect(explicit.status).toBe("paid");
+    expect(explicit.issuedOn).toBe("2020-01-01");
+  });
+
   it("blocks empty invoice from transition with GUARD_FAILED", () => {
     const raw = readFileSync(resolve(examplesDir, "invoicing.kerangka.json"), "utf8");
     const kir = compile(raw);

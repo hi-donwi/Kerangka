@@ -1,0 +1,19 @@
+{
+  "name": "@kerangka/uidl",
+  "version": "0.1.0",
+  "description": "UIDL host bridge: a DataAdapter and mutation handler that speak Kerangka's compiled REST semantics",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "license": "Apache-2.0"
+}

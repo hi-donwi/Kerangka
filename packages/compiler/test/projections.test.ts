@@ -39,6 +39,11 @@ describe("Kerangka Projections", () => {
       expect(openapi.paths["/api/invoice"]).toBeDefined();
       expect(openapi.paths["/api/invoice"].get).toBeDefined();
       expect(openapi.paths["/api/invoice"].post).toBeDefined();
+      expect(openapi.paths["/api/invoice/events"].get).toBeDefined();
+      expect(openapi.paths["/api/invoice/events"].get.responses["200"].content["text/event-stream"]).toBeDefined();
+      expect(openapi.paths["/api/invoice"].get.parameters.map((parameter: any) => parameter.name)).toEqual(
+        expect.arrayContaining(["sort", "where", "search"]),
+      );
       expect(openapi.paths["/api/invoice/{id}"]).toBeDefined();
       expect(openapi.paths["/api/invoice/{id}"].get).toBeDefined();
       expect(openapi.paths["/api/invoice/{id}"].put).toBeDefined();
@@ -93,6 +98,8 @@ describe("Kerangka Projections", () => {
   describe("UIDL Screen Projection", () => {
     it("generates UIDL documents compliant with UIDL-Runtime schema", () => {
       const docs = generateUIDL(kir);
+      const findNode = (node: any, pred: (n: any) => boolean): any =>
+        pred(node) ? node : (node.children ?? []).map((c: any) => findNode(c, pred)).find(Boolean);
 
       // Home dashboard
       const homeDoc = docs["home"]!;
@@ -103,13 +110,21 @@ describe("Kerangka Projections", () => {
       expect(homeDoc.root.type).toBe("Container");
       expect(homeDoc.root.children?.length).toBeGreaterThan(0);
 
+      // KPI cards are bound to the state.$data query envelope, not invented metric widgets.
+      const kpiCard = findNode(homeDoc.root, (n) => n.id === "kpi-0");
+      expect(kpiCard?.type).toBe("Column");
+      expect(kpiCard?.children?.some((c: any) => c.id === "kpi-0-value")).toBe(true);
+      expect((homeDoc.dataSources as Record<string, any>)?.["kpi-0"]?.["$query"]?.collection).toBe("Invoice");
+
       // Invoices list
       const listDoc = docs["invoices"]!;
       expect(listDoc).toBeDefined();
       expect(listDoc.version).toBe("1.0.0");
       expect(listDoc.route).toBe("/invoices");
-      expect(listDoc.dataSources?.items).toBeDefined();
-      const tableNode = listDoc.root.children?.find(c => c.type === "Table");
+      const itemsQuery = (listDoc.dataSources as any)?.items?.["$query"];
+      expect(itemsQuery?.collection).toBe("Invoice");
+      expect(itemsQuery?.page?.number).toEqual({ $bind: "state.page" });
+      const tableNode = findNode(listDoc.root, (n) => n.type === "DataTable");
       expect(tableNode).toBeDefined();
 
       // Invoice form
@@ -117,13 +132,11 @@ describe("Kerangka Projections", () => {
       expect(formDoc).toBeDefined();
       expect(formDoc.version).toBe("1.0.0");
       expect(formDoc.route).toBe("/invoice/:id");
-      expect(formDoc.dataSources?.record).toBeDefined();
+      const recordQuery = (formDoc.dataSources as any)?.record?.["$query"];
+      expect(recordQuery?.filters).toEqual([{ field: "id", op: "eq", value: { $bind: "state.params.id" } }]);
 
-      // Navigation shell
-      const navDoc = docs["navigation-shell"]!;
-      expect(navDoc).toBeDefined();
-      expect(navDoc.version).toBe("1.0.0");
-      expect(navDoc.root.type).toBe("AppShell");
+      // No invented navigation shell: nav lives as a Navbar inside each document.
+      expect(docs["navigation-shell"]).toBeUndefined();
     });
   });
 
@@ -145,7 +158,7 @@ describe("Kerangka Projections", () => {
         expect(path, `${path} is a deployment route, not a model one`).toMatch(
           /^\/api\/[a-z]/
         );
-        expect(path).not.toMatch(/mcp|events|effects/i);
+        expect(path).not.toMatch(/mcp|effects/i);
       }
     });
 
