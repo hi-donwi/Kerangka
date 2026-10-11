@@ -12,6 +12,7 @@ import { FieldDefinition, KIRDocument } from "../types.js";
 export interface OpenAPIOptions {
   serverUrl?: string;
   apiVersion?: string;
+  includeOperationalRoutes?: boolean;
 }
 
 export class OpenAPIGenerator {
@@ -349,6 +350,148 @@ export class OpenAPIGenerator {
           }
         }
       }
+    }
+
+    if (options.includeOperationalRoutes) {
+      schemas.CloudEvent = {
+        type: "object",
+        required: ["id", "source", "specversion", "type"],
+        properties: {
+          id: { type: "string" },
+          source: { type: "string" },
+          specversion: { type: "string", default: "1.0" },
+          type: { type: "string" },
+          time: { type: "string", format: "date-time" },
+          data: { type: "object" }
+        }
+      };
+
+      schemas.ConnectorEffect = {
+        type: "object",
+        required: ["id", "effect"],
+        properties: {
+          id: { type: "string" },
+          effect: { type: "string" },
+          attempts: { type: "integer" },
+          input: { type: "object" }
+        }
+      };
+
+      paths["/api/events"] = {
+        get: {
+          summary: "List queued outbox events",
+          operationId: "listOutboxEvents",
+          tags: ["Operational"],
+          parameters: [
+            { name: "limit", in: "query", schema: { type: "integer", default: 50 } },
+            { name: "since", in: "query", schema: { type: "string" } }
+          ],
+          responses: {
+            "200": {
+              description: "Array of outbox events",
+              content: {
+                "application/json": {
+                  schema: { type: "array", items: { $ref: "#/components/schemas/CloudEvent" } }
+                }
+              }
+            },
+            "501": { $ref: "#/components/responses/ProblemResponse" }
+          }
+        }
+      };
+
+      paths["/api/events/{id}/ack"] = {
+        post: {
+          summary: "Acknowledge event delivery",
+          operationId: "ackOutboxEvent",
+          tags: ["Operational"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Event acknowledged" },
+            "404": { $ref: "#/components/responses/ProblemResponse" }
+          }
+        }
+      };
+
+      paths["/api/events/{id}/nack"] = {
+        post: {
+          summary: "Negative-acknowledge event delivery",
+          operationId: "nackOutboxEvent",
+          tags: ["Operational"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Event rejected and scheduled for retry" },
+            "404": { $ref: "#/components/responses/ProblemResponse" }
+          }
+        }
+      };
+
+      paths["/api/effects"] = {
+        get: {
+          summary: "List undelivered connector host effects",
+          operationId: "listUndeliveredEffects",
+          tags: ["Operational"],
+          parameters: [
+            { name: "limit", in: "query", schema: { type: "integer", default: 50 } }
+          ],
+          responses: {
+            "200": {
+              description: "Array of pending host effects",
+              content: {
+                "application/json": {
+                  schema: { type: "array", items: { $ref: "#/components/schemas/ConnectorEffect" } }
+                }
+              }
+            },
+            "501": { $ref: "#/components/responses/ProblemResponse" }
+          }
+        }
+      };
+
+      paths["/api/effects/{id}/ack"] = {
+        post: {
+          summary: "Acknowledge effect execution",
+          operationId: "ackEffect",
+          tags: ["Operational"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Effect acknowledged" },
+            "404": { $ref: "#/components/responses/ProblemResponse" }
+          }
+        }
+      };
+
+      paths["/api/effects/{id}/nack"] = {
+        post: {
+          summary: "Negative-acknowledge effect execution",
+          operationId: "nackEffect",
+          tags: ["Operational"],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": { description: "Effect rejected and retry attempt incremented" },
+            "404": { $ref: "#/components/responses/ProblemResponse" }
+          }
+        }
+      };
+
+      paths["/api/mcp"] = {
+        get: {
+          summary: "List Model Context Protocol tool declarations",
+          operationId: "listMcpTools",
+          tags: ["Operational"],
+          responses: {
+            "200": { description: "Array of MCP tools for AI agents" }
+          }
+        },
+        post: {
+          summary: "Invoke Model Context Protocol tool",
+          operationId: "callMcpTool",
+          tags: ["Operational"],
+          responses: {
+            "200": { description: "Result of tool invocation" }
+          }
+        }
+      };
     }
 
     return {

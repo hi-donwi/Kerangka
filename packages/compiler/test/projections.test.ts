@@ -54,6 +54,27 @@ describe("Kerangka Projections", () => {
       expect(openapi.paths["/api/invoice/{id}/actions/pay"]).toBeDefined();
       expect(openapi.paths["/api/invoice/{id}/actions/void"]).toBeDefined();
     });
+
+    it("emits operational routes when includeOperationalRoutes is true", () => {
+      const openapi = generateOpenAPI(kir, { includeOperationalRoutes: true }) as any;
+
+      expect(openapi.paths["/api/events"]).toBeDefined();
+      expect(openapi.paths["/api/events"].get.operationId).toBe("listOutboxEvents");
+      expect(openapi.paths["/api/events/{id}/ack"]).toBeDefined();
+      expect(openapi.paths["/api/events/{id}/nack"]).toBeDefined();
+
+      expect(openapi.paths["/api/effects"]).toBeDefined();
+      expect(openapi.paths["/api/effects"].get.operationId).toBe("listUndeliveredEffects");
+      expect(openapi.paths["/api/effects/{id}/ack"]).toBeDefined();
+      expect(openapi.paths["/api/effects/{id}/nack"]).toBeDefined();
+
+      expect(openapi.paths["/api/mcp"]).toBeDefined();
+      expect(openapi.paths["/api/mcp"].get.operationId).toBe("listMcpTools");
+      expect(openapi.paths["/api/mcp"].post.operationId).toBe("callMcpTool");
+
+      expect(openapi.components.schemas.CloudEvent).toBeDefined();
+      expect(openapi.components.schemas.ConnectorEffect).toBeDefined();
+    });
   });
 
   describe("GraphQL SDL Projection", () => {
