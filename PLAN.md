@@ -1666,7 +1666,7 @@ to the compatibility matrix.
 
 | Command | Purpose |
 |---|---|
-| `kerangka init [template]` | Scaffold a workspace (or a single-file document) and a host project |
+| `kerangka init [starter]` | Write a starter from the catalog (`kerangka init --list`; `packages/cli/starters/`, ADR-0043) |
 | `kerangka add context \| aggregate \| action \| policy \| query \| view` | Generate files in the standard structure (§7.3), each with an example test |
 | `kerangka check [path]` | Validate; errors carry a code, JSON pointer, line and column, and a hint |
 | `kerangka lint [path]` | Boundaries, naming rules, and complexity budgets (§7.7) |

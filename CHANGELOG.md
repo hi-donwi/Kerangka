@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Starters are data under `packages/cli/starters/` (ADR-0043): `kerangka init --list` prints the
+  catalog, and three new starters join the existing four: `api`, `dashboard`, and
+  `admin-console`. Every starter carries declarative examples and passes the examples gate
+  (`starters.test.ts`). `kerangka scaffold` builds from the `todo` starter's model.
 - Template instances (ADR-0043): `{ "use": "std:approval", "with": { ... } }` at an entity's
   `workflow`, at an entry of its `actions`, or at an entry of `views` is expanded by the
   compiler. Arguments are checked against the template's `params`, keys beside `use` are merged
@@ -27,6 +31,10 @@ All notable changes to this project are documented here. The format follows
   - Docker Compose orchestration for cross-stack execution.
 
 ### Changed
+- `kerangka init <name>` refuses an unknown starter and suggests the closest one, where it
+  used to write the `workspace` starter silently. A workspace starter is written into a folder
+  named after the app unless `--output` says otherwise, and the suggested next commands point
+  at it.
 - `std:approval` keys its transitions by name (`submit`, `approve`, `reject`) and
   `std:masterDetail` is a `list` view with `columns`, the shapes a model document uses. Neither
   could be used before, so no model changes meaning.
@@ -35,6 +43,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 - Package templates were registered and locked but never expanded, so no model could use one.
+- The `commerce` starter's policies ran `Invoice.create` and `Reservation.create`, which it
+  never declared, so a freshly initialised project failed `kerangka verify`.
 
 ## [0.1.0] - 2026-10-11
 
