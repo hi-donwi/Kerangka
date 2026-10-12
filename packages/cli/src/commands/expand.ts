@@ -1,6 +1,7 @@
 /**
  * Kerangka CLI - Expand Command
- * Expands shorthands and inlines traits, printing formatted JSON.
+ * Prints the model as the compiler sees it: shorthands expanded, traits inlined, and template
+ * instances replaced by their expansion (PLAN.md §7.5: "nothing is magic").
  */
 
 import { readFileSync } from "node:fs";
@@ -11,8 +12,10 @@ export function expandCommand(filePath: string): boolean {
     const raw = readFileSync(filePath, "utf8");
     const kir = compile(raw, { sourcePath: filePath });
 
-    // Output formatted expanded entities
-    process.stdout.write(JSON.stringify(kir.entities, null, 2) + "\n");
+    // Entities, and views when the model declares any: a view template expands into `views`,
+    // so printing the entities alone would hide exactly what a template did.
+    const expanded = { entities: kir.entities, ...(kir.views ? { views: kir.views } : {}) };
+    process.stdout.write(JSON.stringify(expanded, null, 2) + "\n");
     return true;
   } catch (err) {
     if (err instanceof CompilerError) {

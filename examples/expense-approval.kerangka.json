@@ -1,0 +1,59 @@
+{
+  "kerangka": "0.1",
+  "app": "expense-approval",
+  "meta": { "title": "Expense Approval", "timezone": "UTC" },
+  "roles": ["employee", "manager"],
+  "entities": {
+    "Expense": {
+      "traits": ["std:auditable"],
+      "fields": {
+        "description": "string!",
+        "amount": "decimal(12,2)! >= 0",
+        "status": "enum(draft, submitted, approved, rejected) = draft"
+      },
+      "workflow": {
+        "use": "std:approval",
+        "with": { "submitter": "employee", "approver": "manager" },
+        "transitions": {
+          "reopen": { "from": "rejected", "to": "draft", "roles": ["employee"] }
+        }
+      }
+    }
+  },
+  "views": {
+    "expenses": {
+      "use": "std:masterDetail",
+      "with": { "entity": "Expense", "columns": ["description", "amount", "status"] }
+    }
+  },
+  "examples": [
+    {
+      "name": "an employee submits a draft",
+      "run": "Expense.submit",
+      "record": { "description": "Train ticket", "amount": "42.00", "status": "draft" },
+      "actor": { "roles": ["employee"] },
+      "expect": { "ok": true, "record": { "status": "submitted" } }
+    },
+    {
+      "name": "an employee cannot approve their own submission",
+      "run": "Expense.approve",
+      "record": { "description": "Train ticket", "amount": "42.00", "status": "submitted" },
+      "actor": { "roles": ["employee"] },
+      "expect": { "ok": false }
+    },
+    {
+      "name": "a manager approves a submission",
+      "run": "Expense.approve",
+      "record": { "description": "Train ticket", "amount": "42.00", "status": "submitted" },
+      "actor": { "roles": ["manager"] },
+      "expect": { "ok": true, "record": { "status": "approved" } }
+    },
+    {
+      "name": "a rejected expense can be reopened as a draft",
+      "run": "Expense.reopen",
+      "record": { "description": "Train ticket", "amount": "42.00", "status": "rejected" },
+      "actor": { "roles": ["employee"] },
+      "expect": { "ok": true, "record": { "status": "draft" } }
+    }
+  ]
+}
