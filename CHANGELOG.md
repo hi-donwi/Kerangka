@@ -11,6 +11,10 @@ All notable changes to this project are documented here. The format follows
   catalog, and three new starters join the existing four: `api`, `dashboard`, and
   `admin-console`. Every starter carries declarative examples and passes the examples gate
   (`starters.test.ts`). `kerangka scaffold` builds from the `todo` starter's model.
+- `saas-auth` starter: organizations and members with an invite-accept-suspend workflow,
+  owner/admin/member permissions, and a role change only the owner may make. Checking
+  credentials stays in the host adapter that produces the actor; the screens are UIDL-Runtime's
+  `compileAuthPage` and `wrapInShell`.
 - Template instances (ADR-0043): `{ "use": "std:approval", "with": { ... } }` at an entity's
   `workflow`, at an entry of its `actions`, or at an entry of `views` is expanded by the
   compiler. Arguments are checked against the template's `params`, keys beside `use` are merged

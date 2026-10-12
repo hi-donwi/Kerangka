@@ -122,6 +122,8 @@ transitions `submit`, `approve`, and `reject`, and `std:masterDetail` is a `list
 - [x] Template expansion in the compiler, with `meta-schema` support for instances
 - [x] `std:approval` and `std:masterDetail` in the document shape
 - [x] Starters under `packages/cli/starters/`, read by `kerangka init` and `kerangka scaffold`
-- [ ] UIDL-Runtime: recipes exported without React; `auth` and `shell` recipes
+- [x] UIDL-Runtime: recipes exported without React (`uidl-runtime/recipes`); `compileAuthPage`,
+  `wrapInShell`, and `compileLandingPage` (UIDL-Runtime ADR-0010), not yet released to npm
+- [x] `saas-auth` starter: the identity model, with credentials left to the host
 - [ ] Packs `identity` and `admin`; the UIDL projector maps views onto UIDL recipes (own ADR)
 - [ ] UIDL-Builder reads its gallery from the catalogs
