@@ -1,0 +1,28 @@
+{
+  "context": "billing",
+  "dependsOn": ["orders"],
+  "entities": {
+    "Invoice": {
+      "fields": {
+        "invoiceNumber": "string! unique",
+        "orderId": "uuid!",
+        "status": "enum(draft, issued, paid) = draft"
+      },
+      "actions": {
+        "create": { "roles": ["system"] }
+      }
+    }
+  },
+  "policies": {
+    "onOrderPlaced": {
+      "on": "orders.OrderPlaced",
+      "run": "Invoice.create",
+      "with": {
+        "id": "concat('inv-', event.data.orderId)",
+        "invoiceNumber": "concat('INV-', event.data.orderId)",
+        "orderId": "event.data.orderId",
+        "status": "draft"
+      }
+    }
+  }
+}

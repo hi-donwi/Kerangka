@@ -1,0 +1,14 @@
+{
+  "starter": "workspace",
+  "description": "A modular workspace with one bounded context, laid out for 'kerangka add'",
+  "layout": "workspace",
+  "tags": ["workspace", "contexts"],
+  "files": [
+    { "from": "workspace.json", "to": "kerangka.${ext}" },
+    { "from": "deploy.json", "to": "deploy.kerangka.json" },
+    { "from": "contexts/core/context.json", "to": "contexts/core/context.kerangka.${ext}" },
+    { "from": "contexts/core/aggregates/Item.json", "to": "contexts/core/aggregates/Item.kerangka.${ext}" }
+  ],
+  "directories": ["contexts/core/views", "contexts/core/policies", "contexts/core/tests"],
+  "next": ["kerangka check ${target}", "kerangka add aggregate Order --context core", "kerangka graph ${target}", "kerangka dev ${target}"]
+}

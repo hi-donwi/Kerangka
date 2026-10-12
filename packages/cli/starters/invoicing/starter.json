@@ -1,0 +1,7 @@
+{
+  "starter": "invoicing",
+  "description": "Invoices with embedded lines, computed totals, and a draft-issued-paid lifecycle",
+  "layout": "document",
+  "tags": ["single-file", "workflow", "computed"],
+  "files": [{ "from": "model.json", "to": "${app}.kerangka.${ext}" }]
+}

@@ -1,0 +1,14 @@
+{
+  "aggregate": "Item",
+  "fields": {
+    "name": "string! >= 2 <= 80",
+    "status": "enum(active, archived) = active",
+    "createdAt": "datetime"
+  },
+  "actions": {
+    "archive": {
+      "when": "status == 'active'",
+      "run": { "status": "'archived'" }
+    }
+  }
+}

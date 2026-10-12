@@ -1,0 +1,15 @@
+{
+  "kerangka": "0.1",
+  "app": "${app}",
+  "meta": { "title": "${app} Application", "timezone": "UTC" },
+  "contexts": ["core"],
+  "lint": { "extends": ["kerangka:recommended"] },
+  "examples": [
+    {
+      "name": "an active item can be archived",
+      "run": "Item.archive",
+      "record": { "name": "First item", "status": "active" },
+      "expect": { "ok": true, "record": { "status": "archived" } }
+    }
+  ]
+}

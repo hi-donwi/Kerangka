@@ -14,6 +14,7 @@ import {
   emitDockerCompose,
   type TargetLanguage
 } from "@kerangka/compiler";
+import { starterDocument } from "../starters.js";
 
 export type BackendStack = "go" | "python" | "rust" | "node";
 export type FrontendStack = "react" | "flutter";
@@ -42,7 +43,8 @@ export function scaffoldCommand(
     }
 
     // 1. Write the declarative source of truth model
-    const model = getStarterModel(appName);
+    // The same model `kerangka init todo` writes: one catalog, two commands (ADR-0043).
+    const model = starterDocument("todo", appName);
     const modelPath = path.join(targetDir, `${appName}.kerangka.json`);
     fs.writeFileSync(modelPath, JSON.stringify(model, null, 2) + "\n", "utf-8");
 
@@ -79,36 +81,6 @@ export function scaffoldCommand(
     console.error(`Error scaffolding project: ${err.message}`);
     return false;
   }
-}
-
-function getStarterModel(appName: string) {
-  return {
-    kerangka: "0.1",
-    app: appName,
-    meta: {
-      title: `${appName} Polyglot Application`,
-      timezone: "UTC"
-    },
-    entities: {
-      Task: {
-        fields: {
-          title: "string! >= 3 <= 100",
-          description: "string",
-          priority: "enum(low, medium, high) = medium",
-          completed: "bool = false",
-          dueAt: "datetime"
-        },
-        actions: {
-          complete: {
-            when: "!completed",
-            run: {
-              completed: true
-            }
-          }
-        }
-      }
-    }
-  };
 }
 
 export function scaffoldBackend(targetDir: string, kir: any, backend: BackendStack, db: DatabaseDialect): void {

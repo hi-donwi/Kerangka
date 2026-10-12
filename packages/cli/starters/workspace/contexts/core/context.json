@@ -1,0 +1,9 @@
+{
+  "context": "core",
+  "description": "Core business domain capabilities",
+  "glossary": { "Item": "A tracked domain entity item" },
+  "exports": { "entities": ["Item"], "events": ["ItemCreated"] },
+  "events": {
+    "ItemCreated": { "itemId": "uuid!", "name": "string!" }
+  }
+}

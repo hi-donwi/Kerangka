@@ -35,5 +35,6 @@ export * from "./commands/verify.js";
 export * from "./commands/decisions.js";
 export * from "./commands/scaffold.js";
 export * from "./commands/switch.js";
+export * from "./starters.js";
 
 

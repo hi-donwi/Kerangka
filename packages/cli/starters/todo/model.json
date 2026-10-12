@@ -1,0 +1,35 @@
+{
+  "kerangka": "0.1",
+  "app": "${app}",
+  "meta": { "title": "Simple Task Management", "timezone": "UTC" },
+  "entities": {
+    "Task": {
+      "fields": {
+        "title": "string! >= 3 <= 100",
+        "completed": "bool = false",
+        "priority": "enum(low, medium, high) = medium",
+        "dueAt": "datetime"
+      },
+      "actions": {
+        "complete": {
+          "when": "!completed",
+          "run": { "completed": true }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "name": "an open task can be completed",
+      "run": "Task.complete",
+      "record": { "title": "Write the report", "completed": false, "priority": "medium" },
+      "expect": { "ok": true, "record": { "completed": true } }
+    },
+    {
+      "name": "a completed task cannot be completed again",
+      "run": "Task.complete",
+      "record": { "title": "Write the report", "completed": true, "priority": "medium" },
+      "expect": { "ok": false }
+    }
+  ]
+}
