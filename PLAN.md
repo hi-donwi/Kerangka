@@ -1045,7 +1045,8 @@ A trait:
 ```
 
 A template is used where its kind of declaration goes: at an entity's `workflow`, at an entry
-of an entity's `actions`, or at an entry of `views` (ADR-0043):
+of an entity's `actions`, at an entry of `views`, or as a whole entry of `entities` (ADR-0043;
+official packs such as `@kerangka/identity` ship entity templates):
 
 ```json
 "workflow": {

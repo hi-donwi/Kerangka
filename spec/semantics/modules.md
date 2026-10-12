@@ -41,6 +41,7 @@ A template instance stands where a declaration of the template's `type` goes:
 | `workflow` | `entities.<Entity>.workflow` |
 | `action` | `entities.<Entity>.actions.<name>` |
 | `view` | `views.<name>` |
+| `entity` | `entities.<Entity>` (the document chooses the name) |
 
 1. **Resolution.** `use` names a template exported by a package the document uses
    (`std:approval`, `@kerangka/std:approval`). An unknown name is `TEMPLATE_UNKNOWN`; a template
@@ -54,11 +55,14 @@ A template instance stands where a declaration of the template's `type` goes:
    are not template parameters and are left unchanged. Object keys are never substituted; a
    placeholder in one is `TEMPLATE_PARAM_IN_KEY`. A placeholder the template does not declare is
    `TEMPLATE_PARAM_UNDECLARED`.
-4. **Metadata.** `template`, `type`, `description`, and `params` describe the template and are not
+4. **Order.** An entity instance expands first; workflow and action instances in its result,
+   including ones written beside its `use`, expand after it. An entity template whose own body
+   contains an instance is `TEMPLATE_INVALID`.
+5. **Metadata.** `template`, `type`, `description`, and `params` describe the template and are not
    part of its expansion. A template whose body contains `use` is `TEMPLATE_INVALID`: templates do
    not nest.
-5. **Local keys.** Any key beside `use` and `with` must be a key of the position. It is merged into
+6. **Local keys.** Any key beside `use` and `with` must be a key of the position. It is merged into
    the expansion: a key the expansion lacks is added; when both are objects their entries are
    merged; an entry or key present in both is `TEMPLATE_KEY_CONFLICT`.
-6. **Checking.** The expansion is validated by the structural layer exactly as hand-written input
+7. **Checking.** The expansion is validated by the structural layer exactly as hand-written input
    is, and its diagnostics carry the pointer of the position inside the instance.

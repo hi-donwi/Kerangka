@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Entity templates and official packs (ADR-0043 amendment): `{ "use": "identity:member" }` at an
+  entry of `entities` places a pack's entity under the document's own name.
+  `@kerangka/identity` (organization, member) and `@kerangka/admin` (an append-only audit entry)
+  ship with the compiler and load when named in `packages`. The `saas-auth` starter now uses
+  `@kerangka/identity` instead of its own copy of the model.
 - Starters are data under `packages/cli/starters/` (ADR-0043): `kerangka init --list` prints the
   catalog, and three new starters join the existing four: `api`, `dashboard`, and
   `admin-console`. Every starter carries declarative examples and passes the examples gate

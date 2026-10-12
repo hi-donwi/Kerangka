@@ -82,6 +82,29 @@ The two shipped templates now have the shapes the language reads: `std:approval`
 transitions `submit`, `approve`, and `reject`, and `std:masterDetail` is a `list` view with
 `columns`.
 
+## Amendment (2026-10-12): entity templates and official packs
+
+Packs such as `identity` and `admin` need to carry entities, and packages could carry only
+types, traits, and templates. Rather than letting a package contribute entities under names it
+chooses, a template gained a fourth kind, **`entity`**, used at an entry of `entities`:
+
+```json
+"packages": { "@kerangka/identity": "^0.1" },
+"entities": {
+  "Organization": { "use": "identity:organization" },
+  "Member": { "use": "identity:member", "with": { "organization": "Organization" } }
+}
+```
+
+- The document names the entity, so a pack never claims a name in someone else's model.
+- Keys beside `use` merge as for every template; a `workflow` or action instance written there
+  expands after the entity does, so `std:approval` composes with an entity template while
+  templates still do not nest (an entity template whose body holds an instance is
+  `TEMPLATE_INVALID`).
+- **Official packs** (`@kerangka/identity`, `@kerangka/admin`) ship with the compiler,
+  versioned in lockstep (ADR-0006), and load when a document names them in `packages`; there is
+  nothing to install. They live in `packages/std/src/packs.ts`.
+
 ## Consequences
 
 ### Positive
@@ -125,5 +148,7 @@ transitions `submit`, `approve`, and `reject`, and `std:masterDetail` is a `list
 - [x] UIDL-Runtime: recipes exported without React (`uidl-runtime/recipes`); `compileAuthPage`,
   `wrapInShell`, and `compileLandingPage` (UIDL-Runtime ADR-0010), not yet released to npm
 - [x] `saas-auth` starter: the identity model, with credentials left to the host
-- [ ] Packs `identity` and `admin`; the UIDL projector maps views onto UIDL recipes (own ADR)
+- [x] Packs `identity` and `admin` as entity templates in official packs (amendment above);
+  `saas-auth` uses `@kerangka/identity`
+- [ ] The UIDL projector maps views onto UIDL recipes (own ADR)
 - [ ] UIDL-Builder reads its gallery from the catalogs

@@ -11,7 +11,7 @@ adding a folder here, and nothing in the CLI changes.
 | `api` | document | A REST API: audited, soft-deleted records, role permissions, a named query |
 | `dashboard` | document | KPI tiles over a deal pipeline and a list built from `std:masterDetail` |
 | `admin-console` | document | Requests on the `std:approval` workflow, a dashboard, list and form screens |
-| `saas-auth` | document | Organizations, invited members, roles, suspension; credentials stay in the host |
+| `saas-auth` | document | Organizations and invited members from the `@kerangka/identity` pack; credentials stay in the host |
 | `workspace` | workspace | One bounded context laid out for `kerangka add` |
 | `commerce` | workspace | Orders, billing, and inventory as contexts that talk through events |
 
