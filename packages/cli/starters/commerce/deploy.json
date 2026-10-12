@@ -1,0 +1,16 @@
+{
+  "deploy": "0.1",
+  "app": "${app}",
+  "topologies": {
+    "monolith": {
+      "services": { "shop": { "contexts": ["orders", "billing", "inventory"], "store": "postgres" } }
+    },
+    "distributed": {
+      "services": {
+        "ordersService": { "contexts": ["orders"], "store": "postgres" },
+        "billingService": { "contexts": ["billing"], "store": "postgres" },
+        "inventoryService": { "contexts": ["inventory"], "store": "postgres" }
+      }
+    }
+  }
+}

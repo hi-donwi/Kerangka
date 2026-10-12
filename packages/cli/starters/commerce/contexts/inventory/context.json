@@ -1,0 +1,26 @@
+{
+  "context": "inventory",
+  "dependsOn": ["orders"],
+  "entities": {
+    "Reservation": {
+      "fields": {
+        "orderId": "uuid!",
+        "active": "bool = true"
+      },
+      "actions": {
+        "create": { "roles": ["system"] }
+      }
+    }
+  },
+  "policies": {
+    "onOrderPlaced": {
+      "on": "orders.OrderPlaced",
+      "run": "Reservation.create",
+      "with": {
+        "id": "concat('res-', event.data.orderId)",
+        "orderId": "event.data.orderId",
+        "active": true
+      }
+    }
+  }
+}

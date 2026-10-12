@@ -1,0 +1,26 @@
+{
+  "context": "orders",
+  "exports": { "events": ["OrderPlaced"] },
+  "entities": {
+    "Order": {
+      "fields": {
+        "orderNumber": "string! unique",
+        "customerId": "uuid!",
+        "status": "enum(draft, placed) = draft"
+      },
+      "workflow": {
+        "field": "status",
+        "transitions": {
+          "place": {
+            "from": "draft",
+            "to": "placed",
+            "then": [{ "emit": "OrderPlaced", "data": { "orderId": "id" } }]
+          }
+        }
+      }
+    }
+  },
+  "events": {
+    "OrderPlaced": { "orderId": "uuid!" }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "starter": "todo",
+  "description": "One file, one entity, one guarded action: the smallest model that runs",
+  "layout": "document",
+  "tags": ["single-file", "learning"],
+  "files": [{ "from": "model.json", "to": "${app}.kerangka.${ext}" }]
+}

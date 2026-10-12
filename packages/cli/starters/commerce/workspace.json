@@ -1,0 +1,22 @@
+{
+  "kerangka": "0.1",
+  "app": "${app}",
+  "meta": { "title": "Modular Commerce Workspace", "timezone": "UTC" },
+  "roles": ["customer", "system", "admin"],
+  "contexts": ["orders", "billing", "inventory"],
+  "lint": { "extends": ["kerangka:recommended"] },
+  "examples": [
+    {
+      "name": "a draft order can be placed",
+      "run": "Order.place",
+      "record": {
+        "id": "4b0e6d0a-6f1d-4c55-8f0b-2a0d3e3c9a11",
+        "orderNumber": "SO-0001",
+        "customerId": "7f1c9a52-2d4e-4b8a-9a3e-1f5b6c7d8e90",
+        "status": "draft"
+      },
+      "actor": { "roles": ["customer"] },
+      "expect": { "ok": true, "record": { "status": "placed" } }
+    }
+  ]
+}

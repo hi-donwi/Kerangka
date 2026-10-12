@@ -26,7 +26,7 @@ import { diffCommand } from "../commands/diff.js";
 import { composeCommand } from "../commands/compose.js";
 import { emitCommand } from "../commands/emit.js";
 import { graphCommand } from "../commands/graph.js";
-import { initCommand } from "../commands/init.js";
+import { initCommand, listStartersCommand } from "../commands/init.js";
 import { addCommand } from "../commands/add.js";
 import { serveCommand } from "../commands/serve.js";
 import { runCommand } from "../commands/run.js";
@@ -47,7 +47,7 @@ USAGE:
   kerangka emit <target> <file> [options]
 
 COMMANDS:
-  init [template]         Scaffold a workspace or single-file starter (todo, invoicing, commerce, workspace)
+  init [starter]          Write a starter into a new project; --list shows every starter
   scaffold [name]         Scaffold polyglot starter with backend (go|python|rust|node) and frontend (react|flutter)
   switch <type> <stack>   Switch stack in current project (switch backend <go|python|rust|node> | switch frontend <react|flutter>)
   add <type> <name>       Generate files in standard structure (context, aggregate, action, policy, query, view)
@@ -170,6 +170,7 @@ async function main(): Promise<void> {
         into: { type: "string" },
         "hit-policy": { type: "string" },
         stdio: { type: "boolean" },
+        list: { type: "boolean" },
         record: { type: "string" },
         input: { type: "string" },
         actor: { type: "string" },
@@ -208,6 +209,10 @@ async function main(): Promise<void> {
     let success = false;
     switch (command) {
       case "init": {
+        if (values.list) {
+          success = listStartersCommand();
+          break;
+        }
         success = initCommand(positionals[1], {
           output: values.output,
           name: values.name,

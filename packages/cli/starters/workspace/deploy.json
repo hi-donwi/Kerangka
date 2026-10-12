@@ -1,0 +1,9 @@
+{
+  "deploy": "0.1",
+  "app": "${app}",
+  "topologies": {
+    "monolith": {
+      "services": { "api": { "contexts": ["core"], "store": "sqlite" } }
+    }
+  }
+}

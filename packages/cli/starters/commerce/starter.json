@@ -1,0 +1,19 @@
+{
+  "starter": "commerce",
+  "description": "Orders, billing, and inventory as three contexts that talk through events",
+  "layout": "workspace",
+  "tags": ["workspace", "contexts", "events", "policies"],
+  "files": [
+    { "from": "workspace.json", "to": "kerangka.${ext}" },
+    { "from": "deploy.json", "to": "deploy.kerangka.json" },
+    { "from": "contexts/orders/context.json", "to": "contexts/orders/context.kerangka.${ext}" },
+    { "from": "contexts/billing/context.json", "to": "contexts/billing/context.kerangka.${ext}" },
+    { "from": "contexts/inventory/context.json", "to": "contexts/inventory/context.kerangka.${ext}" }
+  ],
+  "directories": [
+    "contexts/orders/aggregates", "contexts/orders/views", "contexts/orders/policies",
+    "contexts/billing/aggregates", "contexts/billing/views", "contexts/billing/policies",
+    "contexts/inventory/aggregates", "contexts/inventory/views", "contexts/inventory/policies"
+  ],
+  "next": ["kerangka check ${target}", "kerangka verify ${target}", "kerangka emit asyncapi ${target}", "kerangka graph ${target}"]
+}

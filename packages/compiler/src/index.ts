@@ -24,6 +24,7 @@ export * from "./workspace.js";
 export * from "./lint/linter.js";
 export * from "./verify/verifier.js";
 export * from "./packages/index.js";
+export { suggestion } from "./diagnostics.js";
 
 import { Compiler } from "./compiler.js";
 import { DDLGenerator, DDLOptions } from "./ddl/generator.js";
