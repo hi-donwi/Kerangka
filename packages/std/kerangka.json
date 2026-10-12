@@ -79,31 +79,29 @@
     "approval": {
       "template": "approval",
       "type": "workflow",
-      "description": "Standard multi-state approval workflow with submitter and approver roles",
-      "params": ["submitter", "approver"],
+      "description": "Draft, submit, then approve or reject. The entity declares its state field (default 'status') as enum(draft, submitted, approved, rejected)",
+      "params": {
+        "submitter": { "description": "the role that may submit a draft" },
+        "approver": { "description": "the role that may approve or reject a submission" }
+      },
       "states": ["draft", "submitted", "approved", "rejected"],
       "initial": "draft",
-      "transitions": [
-        { "from": "draft", "to": "submitted", "action": "submit", "roles": ["${submitter}"] },
-        { "from": "submitted", "to": "approved", "action": "approve", "roles": ["${approver}"] },
-        { "from": "submitted", "to": "rejected", "action": "reject", "roles": ["${approver}"] }
-      ]
+      "transitions": {
+        "submit": { "from": "draft", "to": "submitted", "roles": ["${submitter}"] },
+        "approve": { "from": "submitted", "to": "approved", "roles": ["${approver}"] },
+        "reject": { "from": "submitted", "to": "rejected", "roles": ["${approver}"] }
+      }
     },
     "masterDetail": {
       "template": "masterDetail",
       "type": "view",
-      "description": "Master-detail layout template for collection browsing and item inspection",
-      "params": ["entity", "title"],
-      "layout": "split",
-      "master": {
-        "component": "List",
-        "entity": "${entity}",
-        "title": "${title}"
+      "description": "A list of one entity whose rows open that entity's form",
+      "params": {
+        "entity": { "description": "the entity to list" },
+        "columns": { "description": "the fields shown as columns, as a list of field names" }
       },
-      "detail": {
-        "component": "Form",
-        "entity": "${entity}"
-      }
+      "list": "${entity}",
+      "columns": "${columns}"
     }
   },
   "presets": {

@@ -5,6 +5,8 @@
  * License: Apache-2.0
  */
 
+import type { TemplateParams } from "./template.js";
+
 export interface StdTypeDefinition {
   type: string;
   description?: string;
@@ -23,36 +25,46 @@ export interface StdTraitDefinition {
   invariants?: string[];
 }
 
+/** One transition, in the shape a model document writes it (keyed by its action name). */
 export interface StdWorkflowTransition {
-  from: string;
+  from: string | string[];
   to: string;
-  action: string;
-  roles?: string[];
-  guard?: string;
-}
-
-export interface StdWorkflowTemplate {
-  template: string;
-  type: "workflow";
-  description?: string;
-  params: string[];
-  states: string[];
-  initial: string;
-  transitions: StdWorkflowTransition[];
-}
-
-export interface StdViewTemplate {
-  template: string;
-  type: "view";
-  description?: string;
-  params: string[];
-  layout: string;
-  master?: Record<string, unknown>;
-  detail?: Record<string, unknown>;
+  roles?: string[] | string;
+  when?: string;
   [key: string]: unknown;
 }
 
-export type StdTemplate = StdWorkflowTemplate | StdViewTemplate;
+/** What every template declares about itself; none of it is part of the expansion. */
+export interface StdTemplateMeta {
+  template: string;
+  description?: string;
+  params?: TemplateParams;
+}
+
+/** Expands at an entity's `workflow`. */
+export interface StdWorkflowTemplate extends StdTemplateMeta {
+  type: "workflow";
+  field?: string;
+  states?: string[];
+  initial?: string;
+  terminal?: string[];
+  transitions: Record<string, StdWorkflowTransition>;
+  [key: string]: unknown;
+}
+
+/** Expands at one entry of an entity's `actions`. */
+export interface StdActionTemplate extends StdTemplateMeta {
+  type: "action";
+  [key: string]: unknown;
+}
+
+/** Expands at one entry of the document's `views`. */
+export interface StdViewTemplate extends StdTemplateMeta {
+  type: "view";
+  [key: string]: unknown;
+}
+
+export type StdTemplate = StdWorkflowTemplate | StdActionTemplate | StdViewTemplate;
 
 export interface StdLintPreset {
   budgets: {

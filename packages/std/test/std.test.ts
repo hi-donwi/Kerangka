@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   AddressType,
   AuditableTrait,
@@ -8,9 +11,10 @@ import {
   PeriodType,
   SoftDeleteTrait,
   STD_PACKAGE,
-  StdWorkflowTemplate,
   TenantScopedTrait,
 } from "../src/index.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 describe("@kerangka/std", () => {
   it("provides standard value types", () => {
@@ -44,34 +48,52 @@ describe("@kerangka/std", () => {
     expect(TenantScopedTrait.readFilter).toBe("tenantId == actor.tenantId");
   });
 
-  it("instantiates workflow templates without code or loops", () => {
+  it("instantiates the approval workflow in the shape a model document writes it", () => {
     const approval = STD_PACKAGE.templates?.approval;
     expect(approval).toBeDefined();
     if (!approval) return;
 
-    const instantiated = instantiateTemplate<StdWorkflowTemplate>(approval, {
-      submitter: "employee",
-      approver: "manager",
-    });
+    const instantiated = instantiateTemplate<{
+      transitions: Record<string, { roles: string[] }>;
+      initial: string;
+    }>(approval, { submitter: "employee", approver: "manager" });
 
-    expect(instantiated.transitions[0]?.roles).toEqual(["employee"]);
-    expect(instantiated.transitions[1]?.roles).toEqual(["manager"]);
-    expect(instantiated.transitions[2]?.roles).toEqual(["manager"]);
+    expect(instantiated.initial).toBe("draft");
+    expect(instantiated.transitions.submit?.roles).toEqual(["employee"]);
+    expect(instantiated.transitions.approve?.roles).toEqual(["manager"]);
+    expect(instantiated.transitions.reject?.roles).toEqual(["manager"]);
+    // The description of the template is not part of what it expands to.
+    expect(instantiated).not.toHaveProperty("template");
+    expect(instantiated).not.toHaveProperty("params");
   });
 
-  it("instantiates view templates with parameters", () => {
+  it("instantiates the masterDetail view with the keys the UIDL projector reads", () => {
     const masterDetail = STD_PACKAGE.templates?.masterDetail;
     expect(masterDetail).toBeDefined();
     if (!masterDetail) return;
 
     const instantiated = instantiateTemplate(masterDetail, {
       entity: "Invoice",
-      title: "Invoice Overview",
-    }) as any;
+      columns: ["number", "total"],
+    });
 
-    expect(instantiated.master.entity).toBe("Invoice");
-    expect(instantiated.master.title).toBe("Invoice Overview");
-    expect(instantiated.detail.entity).toBe("Invoice");
+    expect(instantiated).toEqual({ list: "Invoice", columns: ["number", "total"] });
+  });
+
+  it("refuses arguments that do not fit, naming every problem", () => {
+    const approval = STD_PACKAGE.templates?.approval;
+    if (!approval) throw new Error("approval missing");
+    expect(() => instantiateTemplate(approval, { submitter: "employee", aprover: "manager" })).toThrow(
+      /TEMPLATE_PARAM_UNKNOWN[\s\S]*TEMPLATE_PARAM_MISSING/
+    );
+  });
+
+  it("ships a kerangka.json manifest identical to STD_PACKAGE", () => {
+    // The manifest is what a package reader sees; STD_PACKAGE is what the compiler resolves.
+    // Two descriptions of one package drift unless something compares them.
+    const manifestPath = path.resolve(__dirname, "../kerangka.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    expect(manifest).toEqual(JSON.parse(JSON.stringify(STD_PACKAGE)));
   });
 
   it("provides recommended lint preset", () => {
