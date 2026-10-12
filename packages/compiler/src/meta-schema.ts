@@ -143,6 +143,13 @@ export const TRANSITION_KEYS = [
 /** The keys one action may declare. `do` is the declared name for the statement list. */
 export const ACTION_KEYS = ["roles", "input", "when", "run", "emit", "do", "then"] as const;
 
+/**
+ * The keys that make an object a template instance (PLAN.md §7.5) rather than a declaration.
+ * Any other key beside them is merged into the expansion, so it must be a key of the position
+ * the instance stands in; what it holds is checked once the template has been expanded.
+ */
+export const TEMPLATE_INSTANCE_KEYS = ["use", "with"] as const;
+
 /** The keys one rule may declare. */
 export const RULE_KEYS = ["id", "field", "message", "check", "versions", "effectiveDate"] as const;
 
@@ -670,6 +677,7 @@ class StructuralValidator {
     for (const [name, action] of Object.entries(actions)) {
       if (!isPlainObject(action)) continue; // already reported by checkMap
       const aat = (key: string) => `${at(name)}${key ? `/${key}` : ""}`;
+      if (this.templateInstance(action, ACTION_KEYS, aat, "action key")) continue;
       this.unknownKeys(action, ACTION_KEYS, aat, "action key");
       this.checkStringList(action.roles, "roles", aat("roles"), "role names");
       this.checkEmitList(action, aat);
@@ -855,6 +863,40 @@ class StructuralValidator {
   }
 
   /**
+   * Check a template instance standing where a declaration goes, and say whether it was one.
+   *
+   * Only the instance's own form is checked here: `use` names a template and `with` holds the
+   * arguments. The declaration it becomes does not exist until the compiler has resolved the
+   * packages, so its shape is checked then, against this same layer.
+   */
+  private templateInstance(
+    holder: Record<string, unknown>,
+    known: readonly string[],
+    at: (key: string) => string,
+    label: string
+  ): boolean {
+    if (!Object.prototype.hasOwnProperty.call(holder, "use")) return false;
+    this.unknownKeys(holder, [...TEMPLATE_INSTANCE_KEYS, ...known], at, label);
+    if (typeof holder.use !== "string" || holder.use.length === 0) {
+      this.error(
+        "SCHEMA_INVALID",
+        `'use' must name a template, not ${describe(holder.use)}.`,
+        at("use"),
+        'Write "use": "std:approval".'
+      );
+    }
+    if (holder.with !== undefined && !isPlainObject(holder.with)) {
+      this.error(
+        "SCHEMA_INVALID",
+        `'with' must be an object of template arguments, not ${describe(holder.with)}.`,
+        at("with"),
+        'Write "with": { "parameter": "value" }.'
+      );
+    }
+    return true;
+  }
+
+  /**
    * Check an entity's `workflow`: its own keys, the form of its states, and its transitions.
    *
    * `workflow` was the largest thing below an entity that nothing checked. A misspelled
@@ -878,6 +920,7 @@ class StructuralValidator {
     }
 
     const at = (key: string) => `${entityAt("workflow")}/${key}`;
+    if (this.templateInstance(workflow, WORKFLOW_KEYS, at, "workflow key")) return;
     this.unknownKeys(workflow, WORKFLOW_KEYS, at, "workflow key");
     this.checkString(workflow, "field", at);
     this.checkString(workflow, "initial", at);

@@ -73,7 +73,7 @@ COMMANDS:
   codegen <file>          Generate typed models (TypeScript, Java 21, Python, Go, Rust, Dart)
   diff <file1> <file2>    Analyze structural and breaking changes between two model versions
   graph <file>            Draw the architecture / context map as Mermaid
-  expand <file>           Display expanded entity models with resolved shorthands
+  expand <file>           Print entities and views with shorthands, traits, and templates expanded
   stats <file>            Display architectural metrics and complexity analysis
   test <file>             Execute declarative examples against the reference engine
   run <file> <action>     Execute one action and print the result (--record, --input, --actor)

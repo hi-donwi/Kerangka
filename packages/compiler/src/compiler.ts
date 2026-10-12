@@ -12,6 +12,7 @@ import { offsetToPosition, pointer, SourceLocator, suggestion } from "./diagnost
 import { validateModelStructure } from "./meta-schema.js";
 import { LOCKFILE_NAME, PackageResolver, readLockfile, verifyLockfile } from "./packages/index.js";
 import { normalizeField } from "./shorthand.js";
+import { expandDocumentTemplates } from "./templates.js";
 import { lowerReadFilter } from "./read-filter.js";
 import {
   CompilerDiagnostic,
@@ -146,6 +147,41 @@ export class Compiler {
         "",
         "Run 'kerangka pkg lock' to generate kerangka.lock."
       );
+    }
+
+    // 0c. Replace every template instance with its expansion (PLAN.md §7.5, ADR-0043), before
+    // anything reads the entities or views, so every later stage sees an ordinary model and the
+    // IR never holds a template (ADR-0011).
+    const expansion = expandDocumentTemplates(doc, pkgResolution.templates);
+    if (expansion.instances.length > 0 || expansion.diagnostics.length > 0) {
+      const before = this.diagnostics.length;
+      doc = expansion.document;
+      for (const diag of expansion.diagnostics) {
+        this.addError(diag.code, diag.message, diag.path, diag.hint);
+      }
+      // An expansion is held to the same structural layer as a declaration written by hand: a
+      // typo'd key in a package's template, or an argument of the wrong form, is reported and
+      // pointed at the instance it came from. Only diagnostics inside an instance are taken;
+      // the rest of the document already passed this layer above.
+      for (const diag of validateModelStructure(doc)) {
+        const instance = expansion.instances.find(
+          (i) => diag.path === i.path || (diag.path ?? "").startsWith(`${i.path}/`)
+        );
+        if (!instance) continue;
+        this.addError(
+          diag.code,
+          `${diag.message} (in the expansion of template '${instance.template}')`,
+          diag.path,
+          diag.hint
+        );
+      }
+      if (this.diagnostics.length > before) {
+        this.attachPositions(text);
+        throw new CompilerError(
+          `Template expansion failed with ${this.diagnostics.length - before} error(s)`,
+          [...this.diagnostics]
+        );
+      }
     }
 
     // Merge traits: package traits + workspace traits + document traits
