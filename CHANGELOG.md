@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Template instances (ADR-0043): `{ "use": "std:approval", "with": { ... } }` at an entity's
+  `workflow`, at an entry of its `actions`, or at an entry of `views` is expanded by the
+  compiler. Arguments are checked against the template's `params`, keys beside `use` are merged
+  as additions only, and the expansion goes through the same structural checks as hand-written
+  input. `expandTemplate` in `@kerangka/std` is the one implementation of substitution.
 - Polyglot multi-stack code generation targets in `@kerangka/compiler`:
   - Rust code generator emitting idiomatic types with `serde::{Serialize, Deserialize}`.
   - Dart code generator emitting null-safe immutable models with JSON serialization.
@@ -20,6 +25,16 @@ All notable changes to this project are documented here. The format follows
   - Reference backends in Go, Python, and Rust.
   - Reference frontends in React and Flutter with UIDL screen definitions.
   - Docker Compose orchestration for cross-stack execution.
+
+### Changed
+- `std:approval` keys its transitions by name (`submit`, `approve`, `reject`) and
+  `std:masterDetail` is a `list` view with `columns`, the shapes a model document uses. Neither
+  could be used before, so no model changes meaning.
+- `instantiateTemplate` returns only the expansion and throws when the arguments do not fit.
+- `kerangka expand` prints `{ "entities", "views" }`, so an expanded view template is visible.
+
+### Fixed
+- Package templates were registered and locked but never expanded, so no model could use one.
 
 ## [0.1.0] - 2026-10-11
 
