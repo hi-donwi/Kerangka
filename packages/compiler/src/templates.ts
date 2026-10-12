@@ -8,7 +8,8 @@
  *
  *     "workflow": { "use": "std:approval", "with": { "submitter": "employee", "approver": "manager" } }
  *
- * at an entity's `workflow`, at one entry of an entity's `actions`, or at one entry of `views`.
+ * at an entity's `workflow`, at one entry of an entity's `actions`, at one entry of `views`, or
+ * as a whole entry of `entities`.
  * The compiler replaces each instance with its expansion before anything reads the document,
  * so the IR never holds a template (ADR-0011) and every later stage sees an ordinary model.
  *
@@ -54,6 +55,7 @@ const KIND_POSITIONS: Record<TemplateKind, string> = {
   workflow: "an entity's 'workflow'",
   action: "an entry of an entity's 'actions'",
   view: "an entry of 'views'",
+  entity: "an entry of 'entities'",
 };
 
 /** Replace every template instance in the document with its expansion. */
@@ -74,7 +76,20 @@ export function expandDocumentTemplates(
   if (isPlainObject(doc.entities)) {
     const copy: Record<string, unknown> = {};
     for (const [entityName, entity] of Object.entries(doc.entities)) {
-      copy[entityName] = isPlainObject(entity) ? expandEntity(entityName, entity, expand) : entity;
+      if (!isPlainObject(entity)) {
+        copy[entityName] = entity;
+        continue;
+      }
+      // An entity template first; its result, with the keys written beside `use` merged in,
+      // may then carry workflow or action instances of its own, which expand next. That is how
+      // `{ "use": "identity:member", "workflow": { "use": "std:approval" } }` composes without
+      // a template ever containing another.
+      let declaration: Record<string, unknown> | undefined = entity;
+      if (isTemplateInstance(entity)) {
+        declaration = expand(entity, "entity", pointer("entities", entityName));
+        if (!declaration) continue;
+      }
+      copy[entityName] = expandEntity(entityName, declaration, expand);
     }
     entities = copy as RawKerangkaDocument["entities"];
   }
@@ -197,6 +212,19 @@ function expandInstance(
     return undefined;
   }
 
+  if (kind === "entity") {
+    const nested = nestedInstance(template);
+    if (nested) {
+      diagnostics.push({
+        code: "TEMPLATE_INVALID",
+        message: `Template '${name}' contains a template instance at '${nested}'; templates do not nest.`,
+        path: `${at}/use`,
+        hint: "Write the declaration out in the template, or put the instance beside 'use' in the document.",
+      });
+      return undefined;
+    }
+  }
+
   const expansion = expandTemplate(template, args, name);
   for (const problem of expansion.problems) {
     diagnostics.push({
@@ -209,6 +237,17 @@ function expandInstance(
   if (!expansion.value) return undefined;
 
   return mergeLocalKeys(expansion.value, instance, name, at, diagnostics);
+}
+
+/** Where an entity template's body holds an instance, if anywhere: its workflow or an action. */
+function nestedInstance(template: Record<string, unknown>): string | undefined {
+  if (isTemplateInstance(template.workflow)) return "/workflow";
+  if (isPlainObject(template.actions)) {
+    for (const [name, action] of Object.entries(template.actions)) {
+      if (isTemplateInstance(action)) return pointer("actions", name);
+    }
+  }
+  return undefined;
 }
 
 /** Merge the keys written beside `use` into the expansion; a collision is an error. */

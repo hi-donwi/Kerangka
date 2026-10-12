@@ -4,8 +4,9 @@
  * Status: Draft
  * License: Apache-2.0
  *
- * PLAN.md §7.5: a template is a parameterised fragment (a workflow, an action, or a view) and
- * it substitutes values only. No conditionals, no loops, no nesting: what the author reads in
+ * PLAN.md §7.5: a template is a parameterised fragment (a workflow, an action, a view, or a
+ * whole entity, ADR-0043) and it substitutes values only. No conditionals, no loops, no
+ * nesting: what the author reads in
  * the package is what the compiled model holds, with the arguments put in.
  *
  * Lives here rather than in the compiler so that `instantiateTemplate` and the compiler share
@@ -13,7 +14,7 @@
  */
 
 /** The positions a template may stand in. */
-export const TEMPLATE_KINDS = ["workflow", "action", "view"] as const;
+export const TEMPLATE_KINDS = ["workflow", "action", "view", "entity"] as const;
 export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
 
 /** Keys that describe a template and are never part of what it expands to. */

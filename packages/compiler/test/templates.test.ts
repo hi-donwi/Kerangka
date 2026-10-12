@@ -297,3 +297,105 @@ describe("an action template from a local package", () => {
     ]);
   });
 });
+
+describe("an entity template from an official pack", () => {
+  const accounts = (entities: Record<string, unknown>, packages: Record<string, string> = { "@kerangka/identity": "^0.1" }) =>
+    ({ kerangka: "0.1", app: "accounts", roles: ["owner", "admin", "member"], packages, entities }) as unknown as RawKerangkaDocument;
+
+  it("places identity:member and identity:organization under the names the document gives", () => {
+    const kir = compile(accounts({ Company: { use: "identity:organization" }, Staff: { use: "identity:member", with: { organization: "Company" } } }));
+    expect(kir.entities.Staff!.fields.organization).toMatchObject({ type: "ref", target: "Company" });
+    expect(kir.entities.Staff!.fields.role).toMatchObject({ type: "enum", values: ["owner", "admin", "member"] });
+    expect(Object.keys(kir.entities.Staff!.workflow!.transitions)).toEqual(["accept", "suspend", "reactivate"]);
+    expect(kir.entities.Company!.fields.createdAt).toBeDefined(); // std:auditable came with it
+  });
+
+  it("runs the pack's rules: nobody suspends the owner, and only the owner changes roles", () => {
+    const engine = new Engine(compile(accounts({ Organization: { use: "identity:organization" }, Member: { use: "identity:member" } })));
+    const admin = { id: "u-a", roles: ["admin"] };
+    const owner = { id: "u-o", roles: ["owner"] };
+    const active = (role: string) => ({ organization: "org-1", email: "x@example.com", role, status: "active" });
+    expect(engine.run("Member", "suspend", active("member"), {}, admin).ok).toBe(true);
+    expect(engine.run("Member", "suspend", active("owner"), {}, admin).ok).toBe(false);
+    expect(engine.run("Member", "changeRole", active("member"), { newRole: "admin" }, admin).ok).toBe(false);
+    const promoted = engine.run("Member", "changeRole", active("member"), { newRole: "admin" }, owner);
+    expect(promoted.ok).toBe(true);
+    expect(promoted.record?.role).toBe("admin");
+  });
+
+  it("takes role names as arguments", () => {
+    const kir = compile(
+      accounts({ Organization: { use: "identity:organization", with: { ownerRole: "founder", readers: ["founder"] } }, Member: { use: "identity:member", with: { ownerRole: "founder" } } })
+    );
+    expect(kir.entities.Member!.fields.role).toMatchObject({ values: ["founder", "admin", "member"] });
+    expect(kir.entities.Member!.actions!.changeRole!.roles).toEqual(["founder"]);
+    expect(kir.entities.Organization!.permissions).toMatchObject({ read: ["founder"], update: ["founder"] });
+  });
+
+  it("adds a field written beside 'use', and refuses one the template already has", () => {
+    const added = compile(accounts({ Organization: { use: "identity:organization" }, Member: { use: "identity:member", fields: { phone: "string" } } }));
+    expect(added.entities.Member!.fields.phone).toBeDefined();
+    const diagnostics = diagnosticsOf(accounts({ Organization: { use: "identity:organization" }, Member: { use: "identity:member", fields: { email: "string" } } }));
+    expect(diagnostics).toEqual([expect.objectContaining({ code: "TEMPLATE_KEY_CONFLICT", path: "/entities/Member/fields/email" })]);
+  });
+
+  it("is unknown until the document names the pack", () => {
+    const diagnostics = diagnosticsOf(accounts({ Member: { use: "identity:member" } }, {}));
+    expect(diagnostics).toEqual([expect.objectContaining({ code: "TEMPLATE_UNKNOWN", path: "/entities/Member/use" })]);
+  });
+
+  it("refuses an entity template standing where a workflow goes", () => {
+    const diagnostics = diagnosticsOf(accounts({ Member: { fields: { email: "email!" }, workflow: { use: "identity:member" } } }));
+    expect(diagnostics).toEqual([expect.objectContaining({ code: "TEMPLATE_KIND_MISMATCH", path: "/entities/Member/workflow/use" })]);
+  });
+
+  it("keeps the audit trail append-only", () => {
+    const engine = new Engine(compile(accounts({ AuditEntry: { use: "admin:auditEntry" } }, { "@kerangka/admin": "^0.1" })));
+    const admin = { id: "u-a", roles: ["admin"] };
+    expect(engine.canOperate("AuditEntry", "read", admin).allowed).toBe(true);
+    expect(engine.canOperate("AuditEntry", "update", admin).allowed).toBe(false);
+    expect(engine.canOperate("AuditEntry", "delete", admin).allowed).toBe(false);
+  });
+});
+
+describe("an entity template from a local package", () => {
+  const pack = {
+    claim: {
+      template: "claim",
+      type: "entity",
+      params: [],
+      fields: { amount: "decimal(12,2)! >= 0", status: "enum(draft, submitted, approved, rejected) = draft" },
+    },
+    nested: {
+      template: "nested",
+      type: "entity",
+      params: [],
+      fields: { status: "enum(draft, submitted, approved, rejected) = draft" },
+      workflow: { use: "std:approval", with: { submitter: "a", approver: "b" } },
+    },
+  };
+
+  it("composes with a workflow instance written beside 'use'", () => {
+    const modelPath = withLocalPackage(pack, {
+      kerangka: "0.1",
+      app: "claims",
+      entities: { Claim: { use: "@acme/pack:claim", workflow: { use: "std:approval", with: { submitter: "staff", approver: "manager" } } } },
+    });
+    const kir = compile(fs.readFileSync(modelPath, "utf8"), { sourcePath: modelPath });
+    expect(kir.entities.Claim!.fields.amount).toMatchObject({ type: "decimal" });
+    expect(kir.entities.Claim!.workflow!.transitions.approve?.roles).toEqual(["manager"]);
+  });
+
+  it("refuses an entity template that contains an instance: templates do not nest", () => {
+    const modelPath = withLocalPackage(pack, { kerangka: "0.1", app: "claims", entities: { Claim: { use: "pack:nested" } } });
+    const diagnostics = diagnosticsOf(fs.readFileSync(modelPath, "utf8"), modelPath);
+    expect(diagnostics).toEqual([
+      expect.objectContaining({ code: "TEMPLATE_INVALID", path: "/entities/Claim/use", message: expect.stringContaining("'/workflow'") }),
+    ]);
+  });
+
+  it("is still checked for typos beside 'use'", () => {
+    const codes = validateModelStructure({ kerangka: "0.1", app: "x", entities: { Claim: { use: "pack:claim", feilds: {} } } });
+    expect(codes).toEqual([expect.objectContaining({ code: "UNKNOWN_KEY", path: "/entities/Claim/feilds" })]);
+  });
+});

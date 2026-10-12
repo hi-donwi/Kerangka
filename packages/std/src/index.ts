@@ -8,3 +8,4 @@
 export * from "./types.js";
 export * from "./std-package.js";
 export * from "./template.js";
+export * from "./packs.js";

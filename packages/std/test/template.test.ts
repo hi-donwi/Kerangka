@@ -105,3 +105,15 @@ describe("expandTemplate", () => {
     expect(result.value).toEqual({ list: "A" });
   });
 });
+
+describe("the official packs", () => {
+  it("expand every template with its declared defaults alone", async () => {
+    const { OFFICIAL_PACKS } = await import("../src/index.js");
+    for (const pack of Object.values(OFFICIAL_PACKS)) {
+      for (const [name, template] of Object.entries(pack.templates ?? {})) {
+        const result = expandTemplate(template as Record<string, unknown>, {}, `${pack.package}:${name}`);
+        expect(result.problems, `${pack.package}:${name}`).toEqual([]);
+      }
+    }
+  });
+});

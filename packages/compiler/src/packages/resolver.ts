@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  OFFICIAL_PACKS,
   STD_PACKAGE,
   StdLintPreset,
   StdPackageManifest,
@@ -111,6 +112,23 @@ export class PackageResolver {
 
   private resolvePackage(pkgName: string, versionRange: string): ResolvedPackage | undefined {
     const base = this.basePath ?? process.cwd();
+
+    // Official packs ship with the compiler, versioned in lockstep with it (ADR-0006,
+    // ADR-0043), so naming one is enough: there is nothing to install.
+    const official = OFFICIAL_PACKS[pkgName];
+    if (official) {
+      return {
+        name: official.package,
+        version: official.version,
+        source: `builtin:${official.package}@${official.version}`,
+        integrity: computePackageIntegrity(official),
+        manifest: official,
+        types: official.types ?? {},
+        traits: official.traits ?? {},
+        templates: official.templates ?? {},
+        presets: official.presets ?? {},
+      };
+    }
 
     // Check if local file / folder path
     if (pkgName.startsWith(".") || pkgName.startsWith("/") || versionRange.startsWith("file:")) {

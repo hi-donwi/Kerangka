@@ -406,6 +406,7 @@ class StructuralValidator {
     for (const [name, entity] of Object.entries(entities)) {
       if (!isPlainObject(entity)) continue; // already reported by checkMap
       const at = (key: string) => pointer("entities", name, key);
+      if (this.templateInstance(entity, ENTITY_KEYS, at, "entity key")) continue;
       this.unknownKeys(entity, ENTITY_KEYS, at, "entity key");
 
       const fields = entity.fields;

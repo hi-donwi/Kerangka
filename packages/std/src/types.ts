@@ -64,7 +64,13 @@ export interface StdViewTemplate extends StdTemplateMeta {
   [key: string]: unknown;
 }
 
-export type StdTemplate = StdWorkflowTemplate | StdActionTemplate | StdViewTemplate;
+/** Expands at one entry of `entities`, under the name the document gives it. */
+export interface StdEntityTemplate extends StdTemplateMeta {
+  type: "entity";
+  [key: string]: unknown;
+}
+
+export type StdTemplate = StdWorkflowTemplate | StdActionTemplate | StdViewTemplate | StdEntityTemplate;
 
 export interface StdLintPreset {
   budgets: {
