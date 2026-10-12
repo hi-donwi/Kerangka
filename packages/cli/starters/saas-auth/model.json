@@ -1,0 +1,96 @@
+{
+  "kerangka": "0.1",
+  "app": "${app}",
+  "meta": {
+    "title": "${app} Accounts",
+    "description": "Who belongs to which organization and what each may do. Checking a password or a token stays in the host, which turns a session into the actor.",
+    "timezone": "UTC"
+  },
+  "roles": ["owner", "admin", "member"],
+  "entities": {
+    "Organization": {
+      "traits": ["std:auditable"],
+      "fields": {
+        "name": "string! >= 2 <= 80",
+        "slug": "string! unique"
+      },
+      "permissions": {
+        "read": ["owner", "admin", "member"],
+        "create": ["owner"],
+        "update": ["owner"],
+        "delete": ["owner"]
+      }
+    },
+    "Member": {
+      "traits": ["std:auditable"],
+      "fields": {
+        "organization": "ref(Organization)!",
+        "email": "email!",
+        "displayName": "string",
+        "role": "enum(owner, admin, member) = member",
+        "status": "enum(invited, active, suspended) = invited"
+      },
+      "permissions": {
+        "read": ["owner", "admin", "member"],
+        "create": ["owner", "admin"],
+        "update": { "owner": true, "admin": "role != 'owner'" },
+        "delete": ["owner"]
+      },
+      "workflow": {
+        "field": "status",
+        "initial": "invited",
+        "transitions": {
+          "accept": { "from": "invited", "to": "active", "roles": ["owner", "admin", "member"] },
+          "suspend": { "from": "active", "to": "suspended", "roles": ["owner", "admin"], "when": "role != 'owner'" },
+          "reactivate": { "from": "suspended", "to": "active", "roles": ["owner", "admin"] }
+        }
+      },
+      "actions": {
+        "changeRole": {
+          "roles": ["owner"],
+          "input": { "newRole": "enum(admin, member)!" },
+          "when": "status == 'active' && role != 'owner'",
+          "run": { "role": "input.newRole" }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "name": "an invited member accepts the invitation",
+      "run": "Member.accept",
+      "record": { "organization": "org-1", "email": "ana@example.com", "role": "member", "status": "invited" },
+      "actor": { "id": "u-ana", "roles": ["member"] },
+      "expect": { "ok": true, "record": { "status": "active" } }
+    },
+    {
+      "name": "an admin suspends an active member",
+      "run": "Member.suspend",
+      "record": { "organization": "org-1", "email": "ana@example.com", "role": "member", "status": "active" },
+      "actor": { "id": "u-admin", "roles": ["admin"] },
+      "expect": { "ok": true, "record": { "status": "suspended" } }
+    },
+    {
+      "name": "nobody suspends the owner",
+      "run": "Member.suspend",
+      "record": { "organization": "org-1", "email": "owner@example.com", "role": "owner", "status": "active" },
+      "actor": { "id": "u-admin", "roles": ["admin"] },
+      "expect": { "ok": false }
+    },
+    {
+      "name": "a member cannot suspend anyone",
+      "run": "Member.suspend",
+      "record": { "organization": "org-1", "email": "ana@example.com", "role": "member", "status": "active" },
+      "actor": { "id": "u-bob", "roles": ["member"] },
+      "expect": { "ok": false }
+    },
+    {
+      "name": "the owner makes an active member an admin",
+      "run": "Member.changeRole",
+      "record": { "organization": "org-1", "email": "ana@example.com", "role": "member", "status": "active" },
+      "input": { "newRole": "admin" },
+      "actor": { "id": "u-owner", "roles": ["owner"] },
+      "expect": { "ok": true, "record": { "role": "admin" } }
+    }
+  ]
+}

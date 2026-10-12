@@ -43,7 +43,7 @@ describe("the starter catalog", () => {
     const names = starters.map((s) => s.starter);
     expect(names).toEqual([...names].sort());
     expect(names).toEqual(
-      expect.arrayContaining(["admin-console", "api", "commerce", "dashboard", "invoicing", "todo", "workspace"])
+      expect.arrayContaining(["admin-console", "api", "commerce", "dashboard", "invoicing", "saas-auth", "todo", "workspace"])
     );
     for (const starter of starters) {
       expect(starter.description.length, `${starter.starter} has no description`).toBeGreaterThan(0);

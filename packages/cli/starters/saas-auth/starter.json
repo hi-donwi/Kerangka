@@ -1,0 +1,8 @@
+{
+  "starter": "saas-auth",
+  "description": "Accounts for a multi-user app: organizations, invited members, roles, suspension",
+  "layout": "document",
+  "tags": ["identity", "auth", "rbac", "workflow"],
+  "files": [{ "from": "model.json", "to": "${app}.kerangka.${ext}" }],
+  "next": ["kerangka check ${target}", "kerangka verify ${target}", "kerangka emit openapi ${target} -o openapi.json", "kerangka dev ${target}"]
+}
