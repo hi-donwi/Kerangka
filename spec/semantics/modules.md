@@ -29,5 +29,36 @@ All high-level abstraction constructs are flattened during compilation into the 
 
 - **Traits:** Reusable bundles of fields, rules, defaults, and permissions (`std:auditable`, `std:tenantScoped`) are injected into target entities.
 - **Defs:** Named pure expressions are inlined at their call sites.
-- **Templates:** Parameterised UI or action templates have their parameter values substituted.
+- **Templates:** Parameterised workflow, action, and view templates are expanded where an instance names them (`{ "use": "std:approval", "with": { ... } }`), with their parameter values substituted. See §4.
 - **Packages:** Reusable packages installed from npm or Git repositories are resolved, validated, and flattened into the consuming workspace IR.
+
+## 4. Template Instances
+
+A template instance stands where a declaration of the template's `type` goes:
+
+| Template `type` | Position |
+|---|---|
+| `workflow` | `entities.<Entity>.workflow` |
+| `action` | `entities.<Entity>.actions.<name>` |
+| `view` | `views.<name>` |
+
+1. **Resolution.** `use` names a template exported by a package the document uses
+   (`std:approval`, `@kerangka/std:approval`). An unknown name is `TEMPLATE_UNKNOWN`; a template
+   at a position of another type is `TEMPLATE_KIND_MISMATCH`.
+2. **Arguments.** `with` maps parameter names to JSON values. An argument the template does not
+   declare is `TEMPLATE_PARAM_UNKNOWN`; a declared parameter with no argument and no `default` is
+   `TEMPLATE_PARAM_MISSING`.
+3. **Substitution.** A string that is exactly `${p}` is replaced by the argument's JSON value.
+   `${p}` inside a longer string is replaced by the argument's text, and the argument must then be
+   a string, number, or boolean (`TEMPLATE_PARAM_NOT_SCALAR`). Placeholders containing `.` or `:`
+   are not template parameters and are left unchanged. Object keys are never substituted; a
+   placeholder in one is `TEMPLATE_PARAM_IN_KEY`. A placeholder the template does not declare is
+   `TEMPLATE_PARAM_UNDECLARED`.
+4. **Metadata.** `template`, `type`, `description`, and `params` describe the template and are not
+   part of its expansion. A template whose body contains `use` is `TEMPLATE_INVALID`: templates do
+   not nest.
+5. **Local keys.** Any key beside `use` and `with` must be a key of the position. It is merged into
+   the expansion: a key the expansion lacks is added; when both are objects their entries are
+   merged; an entry or key present in both is `TEMPLATE_KEY_CONFLICT`.
+6. **Checking.** The expansion is validated by the structural layer exactly as hand-written input
+   is, and its diagnostics carry the pointer of the position inside the instance.

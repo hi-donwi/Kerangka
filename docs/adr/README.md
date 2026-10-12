@@ -46,3 +46,4 @@ This directory records all significant architectural, semantic, and structural d
 | [0040](0040-declared-read-filter-is-enforced-and-absent-means-denied.md) | A Declared Read Filter Is Enforced, and Absent Means Denied | Accepted | 2026-10-01 |
 | [0041](0041-a-denied-equality-and-a-literal-list-push-down.md) | A Denied Equality and a Literal List Push Down Under the Same Two Conditions | Accepted | 2026-10-04 |
 | [0042](0042-a-postgres-session-store-locks-rows-not-the-file.md) | A Postgres Session Store Locks Rows, Not the File | Accepted | 2026-10-04 |
+| [0043](0043-predefined-presets-live-with-their-owner.md) | Predefined Presets Live With Their Owner, and a Template Is Used With `use` | Accepted | 2026-10-12 |

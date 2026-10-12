@@ -1044,11 +1044,27 @@ A trait:
 }
 ```
 
+A template is used where its kind of declaration goes: at an entity's `workflow`, at an entry
+of an entity's `actions`, or at an entry of `views` (ADR-0043):
+
+```json
+"workflow": {
+  "use": "std:approval",
+  "with": { "submitter": "employee", "approver": "manager" },
+  "transitions": { "reopen": { "from": "rejected", "to": "draft", "roles": ["employee"] } }
+}
+```
+
+A string that is exactly `"${param}"` becomes the argument's JSON value; `${param}` inside a
+longer string is interpolated. `params` is a list of required names or a map of names to
+`{ "default", "description" }`. Keys written beside `use` are additions merged one level
+deep, never overrides: a key or entry the template already defines is an error.
+
 Limits that stop reuse from becoming a hidden programming language:
 
 - **Defs** may call other defs but never recursively; the compiler inlines them.
 - **Templates** substitute values only (`${param}` becomes a JSON value). They contain no
-  conditionals and no loops.
+  conditionals and no loops, and they do not nest.
 - **Traits** never override silently: two definitions of the same field are a compile
   error; an aggregate drops a trait member only with an explicit `exclude`.
 - `kerangka expand` prints the fully expanded result, so nothing is magic.
