@@ -684,9 +684,9 @@ class StructuralValidator {
 
       if (isPlainObject(value)) {
         for (const [role, condition] of Object.entries(value)) {
-          // `true` grants unconditionally; a string is an expression the verifier evaluates.
-          // A number is a permission that reads as present and grants nothing.
-          if (condition === true || typeof condition === "string") continue;
+          // `true` grants unconditionally, `false` denies explicitly, and a string is a condition
+          // decided against the record. A number reads as present and grants nothing.
+          if (typeof condition === "boolean" || typeof condition === "string") continue;
           this.error(
             "SCHEMA_INVALID",
             `'${operation}/${role}' must be true, false, or an expression, not ${describe(condition)}.`,

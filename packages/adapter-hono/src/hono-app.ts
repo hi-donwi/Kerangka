@@ -61,6 +61,19 @@ export interface KerangkaHonoOptions {
   cors?: boolean;
 }
 
+/** `canOperate` asks for the record when only a condition on it could grant (PLAN.md §5.1). */
+const NEEDS_RECORD = "PERMISSION_NEEDS_RECORD";
+
+/**
+ * A list cannot decide a per-record read grant without reading rows the actor may not see, and
+ * filtering them after the fact would make totals and pages lie. Row-level reads are a
+ * readFilter's job (ADR-0040), so a conditional read on a list is refused with that advice.
+ */
+function listDenial(result: { code?: string; reason?: string }): string | undefined {
+  if (result.code !== NEEDS_RECORD) return result.reason;
+  return `${result.reason ?? "This read is conditional"}; a list cannot apply a per-record read condition, so declare it as the entity's readFilter instead`;
+}
+
 export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOptions = {}): Hono {
   const app = new Hono();
 
@@ -318,7 +331,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
     const canRead = engine.canOperate(entityName, "read", actor);
     if (!canRead.allowed) {
-      return sendProblem(c, 403, canRead.code ?? "PERMISSION_DENIED", canRead.reason);
+      return sendProblem(c, 403, canRead.code ?? "PERMISSION_DENIED", listDenial(canRead));
     }
 
     const readScope = engine.authorizeRead(entityName, actor);
@@ -414,7 +427,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
     const actor = getActorContext(c);
     const canCreate = engine.canOperate(entityName, "create", actor);
-    if (!canCreate.allowed) {
+    if (!canCreate.allowed && canCreate.code !== NEEDS_RECORD) {
       return sendProblem(c, 403, canCreate.code ?? "PERMISSION_DENIED", canCreate.reason);
     }
 
@@ -425,6 +438,15 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     try {
       const tenantId = getTenantId(c);
       const body = await readJsonBody(c);
+
+      // A conditional create grant is decided against the record being created.
+      if (canCreate.code === NEEDS_RECORD) {
+        const decided = engine.canOperate(entityName, "create", actor, body);
+        if (!decided.allowed) {
+          await failIdempotentRequest(c);
+          return sendProblem(c, 403, decided.code ?? "PERMISSION_DENIED", decided.reason);
+        }
+      }
 
       // Validation
       const bodyWithDefaults = engine.applyDefaults(entityName, body, actor, new Date());
@@ -485,7 +507,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
     const canRead = engine.canOperate(entityName, "read", actor);
     if (!canRead.allowed) {
-      return sendProblem(c, 403, canRead.code ?? "PERMISSION_DENIED", canRead.reason);
+      return sendProblem(c, 403, canRead.code ?? "PERMISSION_DENIED", listDenial(canRead));
     }
 
     try {
@@ -590,9 +612,9 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
     const actor = getActorContext(c);
 
-    // 1. Permission check
+    // 1. Permission check; a conditional grant is decided once the record is loaded
     const canRead = engine.canOperate(entityName, "read", actor);
-    if (!canRead.allowed) {
+    if (!canRead.allowed && canRead.code !== NEEDS_RECORD) {
       return sendProblem(c, 403, canRead.code ?? "PERMISSION_DENIED", canRead.reason);
     }
 
@@ -606,6 +628,13 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     const item = await store.get<Record<string, unknown>>(entityName, id);
     if (!item) {
       return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
+    }
+
+    if (canRead.code === NEEDS_RECORD) {
+      const decided = engine.canOperate(entityName, "read", actor, item);
+      if (!decided.allowed) {
+        return sendProblem(c, 403, decided.code ?? "PERMISSION_DENIED", decided.reason);
+      }
     }
 
     // 4. Verify against readScope.where (ADR-0040 §4)
@@ -634,7 +663,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
     const actor = getActorContext(c);
     const canUpdate = engine.canOperate(entityName, "update", actor);
-    if (!canUpdate.allowed) {
+    if (!canUpdate.allowed && canUpdate.code !== NEEDS_RECORD) {
       return sendProblem(c, 403, canUpdate.code ?? "PERMISSION_DENIED", canUpdate.reason);
     }
 
@@ -647,6 +676,16 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       const existing = await store.get<Record<string, unknown>>(entityName, id, { tenantId });
       if (!existing) {
         return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
+      }
+
+      // A conditional update grant is decided against the record as it stands, before the
+      // change: "billing may update drafts" must not let billing update a sent invoice.
+      if (canUpdate.code === NEEDS_RECORD) {
+        const decided = engine.canOperate(entityName, "update", actor, existing);
+        if (!decided.allowed) {
+          await failIdempotentRequest(c);
+          return sendProblem(c, 403, decided.code ?? "PERMISSION_DENIED", decided.reason);
+        }
       }
 
       const body = await readJsonBody(c);
@@ -701,12 +740,23 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
     const actor = getActorContext(c);
     const canDelete = engine.canOperate(entityName, "delete", actor);
-    if (!canDelete.allowed) {
+    if (!canDelete.allowed && canDelete.code !== NEEDS_RECORD) {
       return sendProblem(c, 403, canDelete.code ?? "PERMISSION_DENIED", canDelete.reason);
     }
 
     const tenantId = getTenantId(c);
     const soft = c.req.query("soft") === "true";
+
+    if (canDelete.code === NEEDS_RECORD) {
+      const existing = await store.get<Record<string, unknown>>(entityName, id, { tenantId });
+      if (!existing) {
+        return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
+      }
+      const decided = engine.canOperate(entityName, "delete", actor, existing);
+      if (!decided.allowed) {
+        return sendProblem(c, 403, decided.code ?? "PERMISSION_DENIED", decided.reason);
+      }
+    }
 
     const deleted = await store.delete(entityName, id, {
       tenantId,

@@ -46,6 +46,13 @@ All notable changes to this project are documented here. The format follows
 - `kerangka expand` prints `{ "entities", "views" }`, so an expanded view template is visible.
 
 ### Fixed
+- **Permissions written as a role map were not enforced** (ADR-0044). `canOperate` allowed any
+  caller unless the operation's permission was a non-empty list, so
+  `"update": { "admin": true, "billing": "status == 'draft'" }` let every role update, and an
+  empty list let every role through. A role map now grants `true` roles and decides string
+  conditions against the record (the stored one for update and delete); an empty list grants no
+  one; a list endpoint refuses a conditional read and points at `readFilter`. `false` is
+  accepted in a role map, as the structural layer's message always said.
 - A named query's `where` written as text is lowered to the tuple form, as a `readFilter` is.
   It used to reach the store as a string, which the REST evaluator skipped, so the query
   answered with every row. A `where` no store can evaluate is `QUERY_WHERE_INVALID`.

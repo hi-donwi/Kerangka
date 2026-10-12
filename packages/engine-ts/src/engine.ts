@@ -1673,7 +1673,22 @@ export class Engine {
    * of a record*. This decides the entity-level gate in front of it. Both exist because they answer
    * different questions, and an endpoint that calls one has not called the other.
    */
-  canOperate(entityName: string, operation: string, actor?: ActorContext): CanResult {
+  /**
+   * Whether the actor may perform a CRUD operation on an entity.
+   *
+   * Permissions name roles as a list (`"read": ["admin"]`) or as a map from role to grant
+   * (`"update": { "admin": true, "billing": "status == 'draft'" }`, PLAN.md §5.1). An operation
+   * the model does not mention is open; an empty list or a map that grants none of the actor's
+   * roles is closed. A conditional grant is decided against `record`; without one the answer is
+   * `PERMISSION_NEEDS_RECORD`, so a caller loads the record and asks again rather than guessing.
+   * A condition that cannot be evaluated grants nothing (ADR-0008).
+   */
+  canOperate(
+    entityName: string,
+    operation: string,
+    actor?: ActorContext,
+    record?: Record<string, unknown>
+  ): CanResult {
     const entity = this.ir.entities?.[entityName];
     if (!entity) {
       return {
@@ -1683,34 +1698,72 @@ export class Engine {
       };
     }
 
-    const permissions = entity.permissions as Record<string, string[]> | undefined;
-    const required = permissions?.[operation];
-
-    if (!Array.isArray(required) || required.length === 0) {
+    const permissions = entity.permissions as Record<string, unknown> | undefined;
+    if (!permissions || !Object.prototype.hasOwnProperty.call(permissions, operation)) {
       return { allowed: true };
     }
+    const declared = permissions[operation];
 
-    // No actor, or an actor with no roles, satisfies nothing. `?.` here would make a missing actor
-    // an empty array, and `[].some(...)` is false anyway — but written out, because the whole point
-    // of ADR-0008 is that this branch is never accidentally permissive.
-    if (!actor || !Array.isArray(actor.roles) || actor.roles.length === 0) {
+    // No actor, or an actor with no roles, satisfies nothing. Written out, because the whole
+    // point of ADR-0008 is that this branch is never accidentally permissive.
+    const roles = actor && Array.isArray(actor.roles) ? actor.roles : [];
+
+    if (Array.isArray(declared)) {
+      if (declared.length > 0 && declared.some((role) => roles.includes(role))) return { allowed: true };
       return {
         allowed: false,
         code: "PERMISSION_DENIED",
-        reason: `'${operation}' on '${entityName}' requires one of [${required.join(", ")}] and the request carried no roles`,
+        reason:
+          declared.length === 0
+            ? `'${operation}' on '${entityName}' is granted to no role`
+            : `'${operation}' on '${entityName}' requires one of [${declared.join(", ")}]`,
       };
     }
 
-    const granted = required.some((role) => actor.roles!.includes(role));
-    if (!granted) {
+    if (isPlainRecord(declared)) {
+      const grants = roles
+        .filter((role) => Object.prototype.hasOwnProperty.call(declared, role))
+        .map((role) => declared[role]);
+      if (grants.some((grant) => grant === true)) return { allowed: true };
+
+      const conditions = grants.filter((grant): grant is string => typeof grant === "string");
+      if (conditions.length > 0) {
+        if (!record) {
+          return {
+            allowed: false,
+            code: "PERMISSION_NEEDS_RECORD",
+            reason: `'${operation}' on '${entityName}' is granted to this actor only under a condition on the record`,
+          };
+        }
+        const decoded = this.decodeRecord(entityName, record);
+        for (const condition of conditions) {
+          try {
+            // A condition is a predicate, not a cell: compiled as written, never read as a word.
+            const expression = compileExpression(condition);
+            if (evaluate(expression, this.evalContext({ record: decoded, data: decoded, actor })) === true) {
+              return { allowed: true };
+            }
+          } catch {
+            // A condition that cannot be parsed or evaluated grants nothing.
+          }
+        }
+      }
+      const granted = Object.entries(declared)
+        .filter(([, grant]) => grant !== false)
+        .map(([role]) => role);
       return {
         allowed: false,
         code: "PERMISSION_DENIED",
-        reason: `'${operation}' on '${entityName}' requires one of [${required.join(", ")}]`,
+        reason: `'${operation}' on '${entityName}' requires one of [${granted.join(", ")}]${conditions.length > 0 ? " under its condition" : ""}`,
       };
     }
 
-    return { allowed: true };
+    // A permission in a shape the language does not define grants nothing.
+    return {
+      allowed: false,
+      code: "PERMISSION_DENIED",
+      reason: `'${operation}' on '${entityName}' has a permission this engine cannot read`,
+    };
   }
 
   queryPlan(
