@@ -7,53 +7,10 @@
     "timezone": "UTC"
   },
   "roles": ["owner", "admin", "member"],
+  "packages": { "@kerangka/identity": "^0.1" },
   "entities": {
-    "Organization": {
-      "traits": ["std:auditable"],
-      "fields": {
-        "name": "string! >= 2 <= 80",
-        "slug": "string! unique"
-      },
-      "permissions": {
-        "read": ["owner", "admin", "member"],
-        "create": ["owner"],
-        "update": ["owner"],
-        "delete": ["owner"]
-      }
-    },
-    "Member": {
-      "traits": ["std:auditable"],
-      "fields": {
-        "organization": "ref(Organization)!",
-        "email": "email!",
-        "displayName": "string",
-        "role": "enum(owner, admin, member) = member",
-        "status": "enum(invited, active, suspended) = invited"
-      },
-      "permissions": {
-        "read": ["owner", "admin", "member"],
-        "create": ["owner", "admin"],
-        "update": { "owner": true, "admin": "role != 'owner'" },
-        "delete": ["owner"]
-      },
-      "workflow": {
-        "field": "status",
-        "initial": "invited",
-        "transitions": {
-          "accept": { "from": "invited", "to": "active", "roles": ["owner", "admin", "member"] },
-          "suspend": { "from": "active", "to": "suspended", "roles": ["owner", "admin"], "when": "role != 'owner'" },
-          "reactivate": { "from": "suspended", "to": "active", "roles": ["owner", "admin"] }
-        }
-      },
-      "actions": {
-        "changeRole": {
-          "roles": ["owner"],
-          "input": { "newRole": "enum(admin, member)!" },
-          "when": "status == 'active' && role != 'owner'",
-          "run": { "role": "input.newRole" }
-        }
-      }
-    }
+    "Organization": { "use": "identity:organization" },
+    "Member": { "use": "identity:member", "with": { "organization": "Organization" } }
   },
   "examples": [
     {

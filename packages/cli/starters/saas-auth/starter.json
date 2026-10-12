@@ -1,8 +1,8 @@
 {
   "starter": "saas-auth",
-  "description": "Accounts for a multi-user app: organizations, invited members, roles, suspension",
+  "description": "Accounts from the @kerangka/identity pack: organizations, invited members, roles, suspension",
   "layout": "document",
-  "tags": ["identity", "auth", "rbac", "workflow"],
+  "tags": ["identity", "auth", "rbac", "workflow", "packs"],
   "files": [{ "from": "model.json", "to": "${app}.kerangka.${ext}" }],
-  "next": ["kerangka check ${target}", "kerangka verify ${target}", "kerangka emit openapi ${target} -o openapi.json", "kerangka dev ${target}"]
+  "next": ["kerangka check ${target}", "kerangka expand ${target}", "kerangka verify ${target}", "kerangka dev ${target}"]
 }
