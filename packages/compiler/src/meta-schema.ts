@@ -150,6 +150,13 @@ export const ACTION_KEYS = ["roles", "input", "when", "run", "emit", "do", "then
  */
 export const TEMPLATE_INSTANCE_KEYS = ["use", "with"] as const;
 
+/**
+ * The keys a view may declare. A view is exactly one of `dashboard`, `list`, or `form`; the
+ * rest refine it. `filters` is declared by PLAN.md §5.1 and not read by the UIDL projector yet.
+ */
+export const VIEW_KINDS = ["dashboard", "list", "form"] as const;
+export const VIEW_KEYS = [...VIEW_KINDS, "columns", "filters", "open", "actions", "sections"] as const;
+
 /** The keys one rule may declare. */
 export const RULE_KEYS = ["id", "field", "message", "check", "versions", "effectiveDate"] as const;
 
@@ -347,7 +354,51 @@ class StructuralValidator {
     }
 
     this.validateEntities(doc.entities);
+    this.validateViews(doc.views);
     return this.diagnostics;
+  }
+
+  /**
+   * Check each view says what it is. The UIDL projector renders a view only when it names a
+   * `dashboard`, a `list`, or a `form`; anything else was skipped without a word, which is how
+   * `{ "type": "list", "entity": "Todo" }` shipped in an example and never produced a screen.
+   */
+  private validateViews(views: unknown): void {
+    if (!isPlainObject(views)) return; // already reported by checkMap
+    for (const [name, view] of Object.entries(views)) {
+      if (!isPlainObject(view)) continue; // already reported by checkMap
+      const at = (key: string) => pointer("views", name, key);
+      if (this.templateInstance(view, VIEW_KEYS, at, "view key")) continue;
+
+      const kinds = VIEW_KINDS.filter((kind) => view[kind] !== undefined);
+      const loose = typeof view.type === "string" && (VIEW_KINDS as readonly string[]).includes(view.type);
+      for (const key of Object.keys(view)) {
+        if ((VIEW_KEYS as readonly string[]).includes(key)) continue;
+        this.error(
+          "UNKNOWN_KEY",
+          `Unknown view key '${key}'.`,
+          at(key),
+          loose && typeof view.entity === "string" && (key === "type" || key === "entity")
+            ? `A view names its kind as the key: write "${String(view.type)}": "${view.entity}".`
+            : suggestion(key, VIEW_KEYS, "view keys")
+        );
+      }
+      if (kinds.length === 0 && !loose) {
+        this.error(
+          "VIEW_KIND_MISSING",
+          `View '${name}' is not a dashboard, a list, or a form, so it renders nothing.`,
+          pointer("views", name),
+          `Add "list": "<Entity>", "form": "<Entity>", or "dashboard": [ ... ].`
+        );
+      } else if (kinds.length > 1) {
+        this.error(
+          "VIEW_KIND_CONFLICT",
+          `View '${name}' declares ${kinds.join(" and ")}; a view is exactly one of them.`,
+          pointer("views", name),
+          "Split it into one view per kind."
+        );
+      }
+    }
   }
 
   private validateEntities(entities: unknown): void {

@@ -46,6 +46,13 @@ All notable changes to this project are documented here. The format follows
 - `kerangka expand` prints `{ "entities", "views" }`, so an expanded view template is visible.
 
 ### Fixed
+- A named query's `where` written as text is lowered to the tuple form, as a `readFilter` is.
+  It used to reach the store as a string, which the REST evaluator skipped, so the query
+  answered with every row. A `where` no store can evaluate is `QUERY_WHERE_INVALID`.
+- A view must be a `dashboard`, a `list`, or a `form` (`VIEW_KIND_MISSING`,
+  `VIEW_KIND_CONFLICT`), and unknown view keys are reported. `examples/todo` and
+  `examples/polyglot` declared `{ "type": "list", "entity": ... }`, which the projector never
+  read, so those views had produced no screen; both now use `"list"`.
 - The engine reads a decimal in its wire form. A decimal field sent as a JSON string
   (`"150.00"`, PLAN.md §9.1) reached K1 as a string: `price > 0` was false, so guards failed
   closed on every spec-encoded record, and `>= 0` never ran, so constraints failed open. Records

@@ -17,9 +17,8 @@
     }
   },
   "views": {
-    "home": {
-      "type": "list",
-      "entity": "Todo",
+    "todos": {
+      "list": "Todo",
       "columns": ["title", "priority", "completed"]
     }
   },

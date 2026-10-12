@@ -32,9 +32,8 @@
     }
   },
   "views": {
-    "home": {
-      "type": "list",
-      "entity": "Task",
+    "task-list": {
+      "list": "Task",
       "columns": ["title", "priority", "completed", "dueAt"]
     }
   },
