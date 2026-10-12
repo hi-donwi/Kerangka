@@ -38,6 +38,17 @@
   },
   "examples": [
     {
+      "name": "an invoice with lines can be issued",
+      "run": "Invoice.issue",
+      "record": {
+        "invoiceNumber": "INV-0001",
+        "customerId": "7f1c9a52-2d4e-4b8a-9a3e-1f5b6c7d8e90",
+        "status": "draft",
+        "lines": [{ "description": "Consulting", "qty": 2, "price": "150.00" }]
+      },
+      "expect": { "ok": true, "record": { "status": "issued" } }
+    },
+    {
       "name": "a draft invoice can be cancelled",
       "run": "Invoice.cancel",
       "record": {
