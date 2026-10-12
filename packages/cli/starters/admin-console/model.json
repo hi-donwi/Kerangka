@@ -1,0 +1,71 @@
+{
+  "kerangka": "0.1",
+  "app": "${app}",
+  "meta": { "title": "${app} Console", "timezone": "UTC" },
+  "roles": ["staff", "approver", "admin"],
+  "entities": {
+    "Request": {
+      "traits": ["std:auditable"],
+      "fields": {
+        "title": "string! >= 3 <= 120",
+        "details": "string",
+        "amount": "decimal(12,2)! >= 0",
+        "status": "enum(draft, submitted, approved, rejected) = draft"
+      },
+      "permissions": {
+        "read": ["staff", "approver", "admin"],
+        "create": ["staff", "admin"],
+        "update": { "admin": true, "staff": "status == 'draft'" },
+        "delete": ["admin"]
+      },
+      "workflow": {
+        "use": "std:approval",
+        "with": { "submitter": "staff", "approver": "approver" },
+        "transitions": {
+          "reopen": { "from": "rejected", "to": "draft", "roles": ["staff"] }
+        }
+      }
+    }
+  },
+  "views": {
+    "home": {
+      "dashboard": [
+        { "kpi": "Awaiting approval", "count": "Request", "where": "status == 'submitted'" },
+        { "kpi": "Approved amount", "sum": "Request.amount", "where": "status == 'approved'" }
+      ]
+    },
+    "requests": {
+      "use": "std:masterDetail",
+      "with": { "entity": "Request", "columns": ["title", "amount", "status"] }
+    },
+    "request-form": {
+      "form": "Request",
+      "actions": ["submit", "approve", "reject", "reopen"],
+      "sections": [["title", "amount"], ["details"], ["status"]]
+    }
+  },
+  "navigation": ["home", "requests"],
+  "examples": [
+    {
+      "name": "staff submit a draft request",
+      "run": "Request.submit",
+      "record": { "title": "New laptop", "amount": "1500.00", "status": "draft" },
+      "actor": { "id": "u-1", "roles": ["staff"] },
+      "expect": { "ok": true, "record": { "status": "submitted" } }
+    },
+    {
+      "name": "staff cannot approve a request",
+      "run": "Request.approve",
+      "record": { "title": "New laptop", "amount": "1500.00", "status": "submitted" },
+      "actor": { "id": "u-1", "roles": ["staff"] },
+      "expect": { "ok": false }
+    },
+    {
+      "name": "an approver approves a submitted request",
+      "run": "Request.approve",
+      "record": { "title": "New laptop", "amount": "1500.00", "status": "submitted" },
+      "actor": { "id": "u-2", "roles": ["approver"] },
+      "expect": { "ok": true, "record": { "status": "approved" } }
+    }
+  ]
+}

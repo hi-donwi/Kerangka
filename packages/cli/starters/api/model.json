@@ -1,0 +1,53 @@
+{
+  "kerangka": "0.1",
+  "app": "${app}",
+  "meta": { "title": "${app} API", "description": "A REST API served from one Kerangka model", "timezone": "UTC" },
+  "roles": ["admin", "member"],
+  "entities": {
+    "Project": {
+      "traits": ["std:auditable", "std:softDelete"],
+      "fields": {
+        "name": "string! >= 2 <= 80",
+        "description": "string",
+        "status": "enum(active, archived) = active"
+      },
+      "permissions": {
+        "read": ["admin", "member"],
+        "create": ["admin", "member"],
+        "update": { "admin": true, "member": "status == 'active'" },
+        "delete": ["admin"]
+      },
+      "actions": {
+        "archive": {
+          "roles": ["admin"],
+          "when": "status == 'active'",
+          "run": { "status": "'archived'" }
+        }
+      }
+    }
+  },
+  "queries": {
+    "recentProjects": {
+      "from": "Project",
+      "select": ["id", "name", "status", "createdAt"],
+      "orderBy": ["-createdAt"],
+      "pageSize": 20
+    }
+  },
+  "examples": [
+    {
+      "name": "an admin archives an active project",
+      "run": "Project.archive",
+      "record": { "name": "Website relaunch", "status": "active" },
+      "actor": { "id": "u-1", "roles": ["admin"] },
+      "expect": { "ok": true, "record": { "status": "archived" } }
+    },
+    {
+      "name": "a member cannot archive a project",
+      "run": "Project.archive",
+      "record": { "name": "Website relaunch", "status": "active" },
+      "actor": { "id": "u-2", "roles": ["member"] },
+      "expect": { "ok": false }
+    }
+  ]
+}
