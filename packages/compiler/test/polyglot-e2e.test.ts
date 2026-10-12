@@ -25,9 +25,9 @@ describe("Polyglot Showcase End-to-End Validation", () => {
     const ir = compile(model);
     expect(ir.app).toBe("polyglot-tasks");
     expect(ir.entities.Task).toBeDefined();
-    expect(ir.entities.Task.fields.title).toBeDefined();
-    expect(ir.entities.Task.actions.complete).toBeDefined();
-    expect(ir.entities.Task.actions.reopen).toBeDefined();
+    expect(ir.entities.Task?.fields.title).toBeDefined();
+    expect(ir.entities.Task?.actions?.complete).toBeDefined();
+    expect(ir.entities.Task?.actions?.reopen).toBeDefined();
   });
 
   it("generates Rust types matching domain entity and enum variants", () => {
@@ -100,7 +100,7 @@ describe("Polyglot Showcase End-to-End Validation", () => {
     // 1. Run complete action -> ok
     const completeRes = await engine.run("Task.complete", task);
     expect(completeRes.ok).toBe(true);
-    expect(completeRes.record.completed).toBe(true);
+    expect(completeRes.record?.completed).toBe(true);
 
     // 2. Run complete on already completed task -> refused by precondition (!completed)
     const invalidCompleteRes = await engine.run("Task.complete", completeRes.record);
@@ -109,7 +109,7 @@ describe("Polyglot Showcase End-to-End Validation", () => {
     // 3. Run reopen on completed task -> ok
     const reopenRes = await engine.run("Task.reopen", completeRes.record);
     expect(reopenRes.ok).toBe(true);
-    expect(reopenRes.record.completed).toBe(false);
+    expect(reopenRes.record?.completed).toBe(false);
 
     // 4. Run reopen on already open task -> refused by precondition (completed)
     const invalidReopenRes = await engine.run("Task.reopen", reopenRes.record);
