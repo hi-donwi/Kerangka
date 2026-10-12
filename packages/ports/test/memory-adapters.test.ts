@@ -48,6 +48,8 @@ describe("In-Memory Test Adapters", () => {
     expect(received).toHaveLength(1);
   });
 
+  // 1200 inserts: under a full parallel suite this has crossed the default 5 s, failing a
+  // run that tests nothing about time. The bound is about load, not about the store.
   it("pushes compound predicates and multi-key sort without crossing tenants", async () => {
     const store = new MemoryStore();
     for (let i = 0; i < 1200; i += 1) {
@@ -70,7 +72,7 @@ describe("In-Memory Test Adapters", () => {
     expect(result.items).toHaveLength(20);
     expect(result.items.every((item) => item.tenantId === "tenant-a")).toBe(true);
     expect(result.items.every((item) => item.status === "sent" && Number(item.priority) > 0)).toBe(true);
-  });
+  }, 20_000);
 
   it("MemoryCache sets, gets, deletes, and invalidates patterns", async () => {
     const cache = new MemoryCache();
