@@ -14,6 +14,7 @@ import {
   StdViewTemplate,
   StdWorkflowTemplate,
 } from "./types.js";
+import { expandTemplate } from "./template.js";
 
 export const MoneyType: StdTypeDefinition = {
   type: "Money",
@@ -93,32 +94,32 @@ export const TenantScopedTrait: StdTraitDefinition = {
 export const ApprovalWorkflowTemplate: StdWorkflowTemplate = {
   template: "approval",
   type: "workflow",
-  description: "Standard multi-state approval workflow with submitter and approver roles",
-  params: ["submitter", "approver"],
+  description:
+    "Draft, submit, then approve or reject. The entity declares its state field " +
+    "(default 'status') as enum(draft, submitted, approved, rejected)",
+  params: {
+    submitter: { description: "the role that may submit a draft" },
+    approver: { description: "the role that may approve or reject a submission" },
+  },
   states: ["draft", "submitted", "approved", "rejected"],
   initial: "draft",
-  transitions: [
-    { from: "draft", to: "submitted", action: "submit", roles: ["${submitter}"] },
-    { from: "submitted", to: "approved", action: "approve", roles: ["${approver}"] },
-    { from: "submitted", to: "rejected", action: "reject", roles: ["${approver}"] },
-  ],
+  transitions: {
+    submit: { from: "draft", to: "submitted", roles: ["${submitter}"] },
+    approve: { from: "submitted", to: "approved", roles: ["${approver}"] },
+    reject: { from: "submitted", to: "rejected", roles: ["${approver}"] },
+  },
 };
 
 export const MasterDetailViewTemplate: StdViewTemplate = {
   template: "masterDetail",
   type: "view",
-  description: "Master-detail layout template for collection browsing and item inspection",
-  params: ["entity", "title"],
-  layout: "split",
-  master: {
-    component: "List",
-    entity: "${entity}",
-    title: "${title}",
+  description: "A list of one entity whose rows open that entity's form",
+  params: {
+    entity: { description: "the entity to list" },
+    columns: { description: "the fields shown as columns, as a list of field names" },
   },
-  detail: {
-    component: "Form",
-    entity: "${entity}",
-  },
+  list: "${entity}",
+  columns: "${columns}",
 };
 
 export const KerangkaRecommendedPreset: StdLintPreset = {
@@ -173,34 +174,19 @@ export const STD_PACKAGE: StdPackageManifest = {
 };
 
 /**
- * Instantiates a template by substituting ${param} with the provided string argument.
- * PLAN.md §7.5: Templates substitute values only (${param} becomes a JSON value).
- * They contain no conditionals and no loops.
+ * Instantiate a template with arguments, returning only what it expands to.
+ *
+ * Throws with every problem when the arguments do not fit the template. The compiler reports
+ * the same problems as diagnostics instead; both go through `expandTemplate`, so the two can
+ * never disagree about what a template means.
  */
-export function instantiateTemplate<T = unknown>(
+export function instantiateTemplate<T = Record<string, unknown>>(
   template: StdTemplate | Record<string, unknown>,
-  params: Record<string, string>
+  params: Record<string, unknown>
 ): T {
-  const substitute = (val: unknown): unknown => {
-    if (typeof val === "string") {
-      let replaced = val;
-      for (const [key, replacement] of Object.entries(params)) {
-        replaced = replaced.replaceAll(`\${${key}}`, replacement);
-      }
-      return replaced;
-    }
-    if (Array.isArray(val)) {
-      return val.map(substitute);
-    }
-    if (val !== null && typeof val === "object") {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(val)) {
-        out[k] = substitute(v);
-      }
-      return out;
-    }
-    return val;
-  };
-
-  return substitute(template) as T;
+  const result = expandTemplate(template as Record<string, unknown>, params);
+  if (!result.value) {
+    throw new Error(result.problems.map((p) => `${p.code}: ${p.message}`).join("\n"));
+  }
+  return result.value as T;
 }
