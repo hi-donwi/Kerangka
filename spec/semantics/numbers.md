@@ -14,6 +14,9 @@ Kerangka **prohibits IEEE 754 floating point arithmetic** for business calculati
 ### 2.1 Representation
 - All decimal numbers are represented as **exact fixed-point numbers**.
 - Wire representation in JSON payloads is strictly a **string** (`"1250.50"`), preventing float conversion by native JSON parsers.
+- **Reading.** An engine reads a decimal field, at any depth (embedded entities, lists, value types, action inputs), from either its wire string or a JSON number, by the field's declared type, before anything evaluates it. A guard, a computed field, and a `min`/`max` constraint therefore see the same number whichever form arrived.
+- **Refusal.** A value in a decimal field that is neither a JSON number nor a decimal string (`-?digits[.digits]`) is invalid with code `INVALID_DECIMAL`; its constraints are not skipped.
+- **Writing.** The emitted contracts (JSON Schema, OpenAPI) currently declare decimals as JSON numbers, and the reference engine returns numbers. Moving output to the string form is an open decision (it changes every contract and generated client), tracked with conformance cases `workflow-guard-decimal-wire-string` and `val-decimal-*`.
 - Maximum precision is capped at **28 total digits** (matching SQL standard `decimal(28, s)` and IEEE 754-2008 decimal128).
 
 ### 2.2 Rounding Mode: `HALF_EVEN`

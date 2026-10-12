@@ -46,6 +46,11 @@ All notable changes to this project are documented here. The format follows
 - `kerangka expand` prints `{ "entities", "views" }`, so an expanded view template is visible.
 
 ### Fixed
+- The engine reads a decimal in its wire form. A decimal field sent as a JSON string
+  (`"150.00"`, PLAN.md §9.1) reached K1 as a string: `price > 0` was false, so guards failed
+  closed on every spec-encoded record, and `>= 0` never ran, so constraints failed open. Records
+  and action inputs are now decoded by declared type, embedded lines and value types included,
+  and a decimal field holding a non-number is `INVALID_DECIMAL`. Four conformance cases cover it.
 - Package templates were registered and locked but never expanded, so no model could use one.
 - The `commerce` starter's policies ran `Invoice.create` and `Reservation.create`, which it
   never declared, so a freshly initialised project failed `kerangka verify`.

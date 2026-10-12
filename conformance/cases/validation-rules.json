@@ -813,6 +813,79 @@
       "expect": {
         "valid": true
       }
+    },
+    {
+      "id": "val-decimal-wire-string-below-minimum",
+      "description": "A decimal sent as a JSON string is held to its declared minimum",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-decimal",
+          "entities": {
+            "Payment": {
+              "fields": {
+                "amount": "decimal(12,2)! >= 0"
+              }
+            }
+          }
+        },
+        "record": {
+          "amount": "-5.00"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "MIN_CONSTRAINT",
+        "errorField": "amount"
+      }
+    },
+    {
+      "id": "val-decimal-wire-string-valid",
+      "description": "A decimal sent as a JSON string within its bounds is valid",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-decimal",
+          "entities": {
+            "Payment": {
+              "fields": {
+                "amount": "decimal(12,2)! >= 0"
+              }
+            }
+          }
+        },
+        "record": {
+          "amount": "12.50"
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "val-decimal-not-a-number",
+      "description": "A value in a decimal field that is neither a number nor a decimal string is refused, not skipped",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "val-decimal",
+          "entities": {
+            "Payment": {
+              "fields": {
+                "amount": "decimal(12,2)! >= 0"
+              }
+            }
+          }
+        },
+        "record": {
+          "amount": "ten"
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errorCode": "INVALID_DECIMAL",
+        "errorField": "amount"
+      }
     }
   ]
 }

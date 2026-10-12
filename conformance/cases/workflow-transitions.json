@@ -922,6 +922,62 @@
         "ok": false,
         "error": "GUARD_FAILED"
       }
+    },
+    {
+      "id": "workflow-guard-decimal-wire-string",
+      "description": "A decimal sent in its wire form (a JSON string) is compared as a number by a guard, including a total computed over embedded lines",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "wf-decimal",
+          "entities": {
+            "Invoice": {
+              "fields": {
+                "status": "enum(draft, issued) = draft",
+                "lines": "list(Line)",
+                "total": {
+                  "type": "decimal(12,2)",
+                  "compute": "sum(lines, qty * price)"
+                }
+              },
+              "workflow": {
+                "field": "status",
+                "transitions": {
+                  "issue": {
+                    "from": "draft",
+                    "to": "issued",
+                    "when": "total > 0"
+                  }
+                }
+              }
+            },
+            "Line": {
+              "embedded": true,
+              "fields": {
+                "qty": "int!",
+                "price": "decimal(12,2)!"
+              }
+            }
+          }
+        },
+        "record": {
+          "status": "draft",
+          "lines": [
+            {
+              "qty": 2,
+              "price": "150.00"
+            }
+          ]
+        },
+        "transition": "issue"
+      },
+      "expect": {
+        "ok": true,
+        "record": {
+          "status": "issued",
+          "total": 300
+        }
+      }
     }
   ]
 }

@@ -64,6 +64,22 @@ interface StatementContext {
   effects: Effect[];
 }
 
+/** The JSON string form of a decimal (spec/semantics/numbers.md §2.1). */
+const DECIMAL_WIRE = /^-?\d+(\.\d+)?$/;
+
+/** Embedded entities may nest; a self-referencing one must not recurse forever. */
+const MAX_DECODE_DEPTH = 16;
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The type name of a compiled field (`{ type }`) or of a value type's shorthand (`"decimal(12,2)!"`). */
+function fieldTypeName(def: unknown): string | undefined {
+  if (typeof def === "string") return /^\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(def)?.[1];
+  if (isPlainRecord(def) && typeof def.type === "string") return def.type;
+  return undefined;
+}
+
 export class Engine {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly ir: any;
@@ -431,6 +447,61 @@ export class Engine {
     return { ...base, functions: this.decisionFunctions() };
   }
 
+  // ---------------------------------------------------------------------------
+  // Wire decoding
+  // ---------------------------------------------------------------------------
+
+  /**
+   * A decimal travels as a JSON string such as "150.00" (PLAN.md §9.1,
+   * spec/semantics/numbers.md §2.1), and K1 compares and computes numbers. Handed the string,
+   * `price > 0` was false (a guard failing closed on every spec-encoded record) and a
+   * `>= 0` constraint never ran (failing open). Every record and input is read through this
+   * before anything evaluates it. Numbers pass through, so callers that send numbers are
+   * unaffected; a string that is not a decimal is left as it is, for `validate` to refuse.
+   */
+  decodeRecord(entityName: string, record: Record<string, unknown>): Record<string, unknown> {
+    const fields = this.ir.entities?.[entityName]?.fields as Record<string, unknown> | undefined;
+    return fields ? this.decodeFields(fields, record, 0) : record;
+  }
+
+  private decodeInput(entityName: string, opName: string, input: Record<string, unknown>): Record<string, unknown> {
+    const defs = this.ir.entities?.[entityName]?.actions?.[opName]?.input as Record<string, unknown> | undefined;
+    return defs ? this.decodeFields(defs, input, 0) : input;
+  }
+
+  private decodeFields(defs: Record<string, unknown>, value: Record<string, unknown>, depth: number): Record<string, unknown> {
+    if (depth > MAX_DECODE_DEPTH || !isPlainRecord(value)) return value;
+    const out: Record<string, unknown> = { ...value };
+    for (const [name, def] of Object.entries(defs)) {
+      if (out[name] === undefined || out[name] === null) continue;
+      out[name] = this.decodeValue(def, out[name], depth + 1);
+    }
+    return out;
+  }
+
+  private decodeValue(def: unknown, value: unknown, depth: number): unknown {
+    const type = fieldTypeName(def);
+    if (type === "decimal") {
+      return typeof value === "string" && DECIMAL_WIRE.test(value.trim()) ? Number(value.trim()) : value;
+    }
+    if (type === "list") {
+      const element = (def as { element?: unknown }).element;
+      return Array.isArray(value) && element !== undefined
+        ? value.map((entry) => this.decodeValue(element, entry, depth + 1))
+        : value;
+    }
+    // An embedded entity is written either as `ref(Line)` inside a list or by its name; a
+    // value type (`Money`) by its name. A reference to a stored entity is an id: left alone.
+    const target = type === "ref" ? (def as { target?: string }).target : type;
+    if (!target || !isPlainRecord(value)) return value;
+    const entity = this.ir.entities?.[target];
+    if (entity) {
+      return entity.embedded ? this.decodeFields(entity.fields ?? {}, value, depth) : value;
+    }
+    const valueType = this.ir.types?.[target];
+    return valueType?.fields ? this.decodeFields(valueType.fields, value, depth) : value;
+  }
+
   private normalizeArgs(args: unknown[]): NormalizedArgs {
     const arg0 = args[0];
     const arg1 = args[1];
@@ -525,7 +596,14 @@ export class Engine {
       }
     }
 
-    return { entityName, opName, record, input, actor, options };
+    return {
+      entityName,
+      opName,
+      record: this.decodeRecord(entityName, record),
+      input: this.decodeInput(entityName, opName, input),
+      actor,
+      options,
+    };
   }
 
   private createCloudEvent<T = unknown>(
@@ -575,7 +653,7 @@ export class Engine {
     const entity = this.ir.entities?.[entityName];
     if (!entity) return { ...record };
 
-    const result = { ...record };
+    const result = this.decodeRecord(entityName, record);
     for (const [fieldName, fieldDef] of Object.entries(entity.fields ?? {})) {
       if (result[fieldName] !== undefined) continue;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -605,7 +683,7 @@ export class Engine {
     const entity = this.ir.entities?.[entityName];
     if (!entity) return { ...record };
 
-    const result = { ...record };
+    const result = this.decodeRecord(entityName, record);
 
     for (const [fieldName, fieldDef] of Object.entries(entity.fields ?? {})) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -645,6 +723,7 @@ export class Engine {
     }
 
     const errors: ValidationErrorItem[] = [];
+    record = this.decodeRecord(entityName, record);
 
     // 1. Field-level validation
     for (const [fieldName, fieldDef] of Object.entries(entity.fields ?? {})) {
@@ -662,6 +741,16 @@ export class Engine {
       }
 
       if (val !== undefined && val !== null) {
+        // Decoded above, so a decimal that is still not a number was never one. Its min and
+        // max below compare numbers only, so letting it through would skip them silently.
+        if (f.type === "decimal" && typeof val !== "number") {
+          errors.push({
+            field: fieldName,
+            message: `Field '${fieldName}' must be a decimal number, such as "12.50"`,
+            code: "INVALID_DECIMAL",
+          });
+          continue;
+        }
         if (f.min !== undefined && typeof val === "number" && val < f.min) {
           errors.push({
             field: fieldName,
