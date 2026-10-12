@@ -1,0 +1,8 @@
+{
+  "starter": "admin-console",
+  "description": "A back-office console: requests on the std:approval workflow, a dashboard, and list and form screens",
+  "layout": "document",
+  "tags": ["console", "rbac", "approval", "dashboard", "templates"],
+  "files": [{ "from": "model.json", "to": "${app}.kerangka.${ext}" }],
+  "next": ["kerangka check ${target}", "kerangka expand ${target}", "kerangka uidl ${target} -o screens/", "kerangka dev ${target}"]
+}

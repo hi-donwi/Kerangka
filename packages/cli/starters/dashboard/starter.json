@@ -1,0 +1,8 @@
+{
+  "starter": "dashboard",
+  "description": "A sales dashboard: KPI tiles over a deal pipeline, with a list that opens each deal",
+  "layout": "document",
+  "tags": ["dashboard", "kpi", "views", "templates"],
+  "files": [{ "from": "model.json", "to": "${app}.kerangka.${ext}" }],
+  "next": ["kerangka check ${target}", "kerangka uidl ${target} -o screens/", "kerangka dev ${target}"]
+}

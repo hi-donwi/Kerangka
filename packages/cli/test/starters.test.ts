@@ -43,7 +43,7 @@ describe("the starter catalog", () => {
     const names = starters.map((s) => s.starter);
     expect(names).toEqual([...names].sort());
     expect(names).toEqual(
-      expect.arrayContaining(["commerce", "invoicing", "todo", "workspace"])
+      expect.arrayContaining(["admin-console", "api", "commerce", "dashboard", "invoicing", "todo", "workspace"])
     );
     for (const starter of starters) {
       expect(starter.description.length, `${starter.starter} has no description`).toBeGreaterThan(0);
@@ -112,10 +112,10 @@ describe.each(listStarters().map((s) => [s.starter, s.layout] as const))("the %s
 describe("kerangka init", () => {
   it("refuses a starter that does not exist and names the ones that do", () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(initCommand("invoicng", { output: path.join(workDir, "nope") })).toBe(false);
+    expect(initCommand("dashbord", { output: path.join(workDir, "nope") })).toBe(false);
     const said = errors.mock.calls.flat().join("\n");
-    expect(said).toContain("Unknown starter 'invoicng'");
-    expect(said).toContain("Did you mean 'invoicing'?");
+    expect(said).toContain("Unknown starter 'dashbord'");
+    expect(said).toContain("Did you mean 'dashboard'?");
     expect(fs.existsSync(path.join(workDir, "nope"))).toBe(false);
     errors.mockRestore();
   });

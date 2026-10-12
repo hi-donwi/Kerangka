@@ -1,0 +1,55 @@
+{
+  "kerangka": "0.1",
+  "app": "${app}",
+  "meta": { "title": "${app} Dashboard", "timezone": "UTC" },
+  "roles": ["sales", "manager"],
+  "entities": {
+    "Deal": {
+      "traits": ["std:auditable"],
+      "fields": {
+        "title": "string! >= 2 <= 120",
+        "amount": "decimal(12,2)! >= 0",
+        "stage": "enum(lead, qualified, won, lost) = lead",
+        "closedOn": "date"
+      },
+      "workflow": {
+        "field": "stage",
+        "transitions": {
+          "qualify": { "from": "lead", "to": "qualified", "roles": ["sales", "manager"] },
+          "win": { "from": "qualified", "to": "won", "roles": ["sales", "manager"], "then": [{ "set": { "closedOn": "today()" } }] },
+          "lose": { "from": ["lead", "qualified"], "to": "lost", "roles": ["sales", "manager"], "then": [{ "set": { "closedOn": "today()" } }] }
+        }
+      }
+    }
+  },
+  "views": {
+    "home": {
+      "dashboard": [
+        { "kpi": "Won revenue", "sum": "Deal.amount", "where": "stage == 'won'" },
+        { "kpi": "Qualified deals", "count": "Deal", "where": "stage == 'qualified'" },
+        { "kpi": "Lost deals", "count": "Deal", "where": "stage == 'lost'" }
+      ]
+    },
+    "deals": {
+      "use": "std:masterDetail",
+      "with": { "entity": "Deal", "columns": ["title", "amount", "stage", "closedOn"] }
+    }
+  },
+  "navigation": ["home", "deals"],
+  "examples": [
+    {
+      "name": "a qualified deal can be won",
+      "run": "Deal.win",
+      "record": { "title": "Annual plan", "amount": "12000.00", "stage": "qualified" },
+      "actor": { "id": "u-1", "roles": ["sales"] },
+      "expect": { "ok": true, "record": { "stage": "won" } }
+    },
+    {
+      "name": "a lead cannot be won before it is qualified",
+      "run": "Deal.win",
+      "record": { "title": "Annual plan", "amount": "12000.00", "stage": "lead" },
+      "actor": { "id": "u-1", "roles": ["sales"] },
+      "expect": { "ok": false }
+    }
+  ]
+}

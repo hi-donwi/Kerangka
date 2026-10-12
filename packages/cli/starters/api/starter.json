@@ -1,0 +1,8 @@
+{
+  "starter": "api",
+  "description": "A REST API from one model: audited, soft-deleted records, role permissions, a named query",
+  "layout": "document",
+  "tags": ["rest", "openapi", "permissions", "traits"],
+  "files": [{ "from": "model.json", "to": "${app}.kerangka.${ext}" }],
+  "next": ["kerangka check ${target}", "kerangka emit openapi ${target} -o openapi.json", "kerangka dev ${target}"]
+}
