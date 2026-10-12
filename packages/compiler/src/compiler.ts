@@ -233,7 +233,7 @@ export class Compiler {
     // Named queries: top-level plus per-entity, with orderBy strings normalized.
     const allQueries: Record<string, QueryDefinition> = {};
     for (const [queryName, query] of Object.entries(doc.queries ?? {})) {
-      allQueries[queryName] = this.normalizeQuery(query as QueryDefinition);
+      allQueries[queryName] = this.normalizeQuery(query as QueryDefinition, pointer("queries", queryName));
     }
     for (const entity of Object.values(compiledEntities)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -241,13 +241,21 @@ export class Compiler {
       if (entityQueries) {
         for (const [queryName, query] of Object.entries(entityQueries)) {
           if (!allQueries[queryName]) {
-            const normalized = this.normalizeQuery({ ...query, from: query.from ?? "?" });
+            const normalized = this.normalizeQuery({ ...query, from: query.from ?? "?" }, pointer("queries", queryName));
             normalized.from = query.from || (entity.key !== undefined ? "?" : "?");
             normalized.from = (query as QueryDefinition).from || Object.keys(compiledEntities).find((e) => compiledEntities[e] === entity) || "";
             allQueries[queryName] = normalized;
           }
         }
       }
+    }
+
+    if (this.hasErrors()) {
+      this.attachPositions(text);
+      throw new CompilerError(
+        `Compilation failed with ${this.diagnostics.length} diagnostic error(s)`,
+        [...this.diagnostics]
+      );
     }
 
     // Assemble canonical KIR
@@ -283,7 +291,24 @@ export class Compiler {
     return kir;
   }
 
-  private normalizeQuery(query: QueryDefinition): QueryDefinition {
+  private normalizeQuery(query: QueryDefinition, at: string): QueryDefinition {
+    // A `where` written as text is lowered to the tuple form every store evaluates, the same
+    // lowering a readFilter gets. Left as a string, the REST evaluator saw no array, skipped
+    // the predicate, and answered the query with every row: a filter that failed open.
+    let where = query.where as unknown;
+    if (typeof where === "string") {
+      try {
+        where = lowerReadFilter(where);
+      } catch (err) {
+        this.addError(
+          "QUERY_WHERE_INVALID",
+          `Query 'where' cannot be evaluated by a store: ${(err as Error).message}`,
+          `${at}/where`,
+          "Write a predicate over the record's fields and actor, such as \"status == 'active'\"."
+        );
+        where = undefined;
+      }
+    }
     let orderBy: QueryOrderBy[] | undefined;
     if (query.orderBy) {
       orderBy = query.orderBy.map((entry) => {
@@ -302,7 +327,11 @@ export class Compiler {
         return entry;
       });
     }
-    return { ...query, ...(orderBy ? { orderBy } : {}) };
+    return {
+      ...query,
+      ...(where !== query.where ? { where: where as QueryDefinition["where"] } : {}),
+      ...(orderBy ? { orderBy } : {}),
+    };
   }
 
   private inlineTraits(

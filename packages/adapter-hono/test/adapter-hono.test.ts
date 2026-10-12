@@ -404,6 +404,29 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
   });
 
 
+  it("filters a named query whose where is written as text, instead of returning every row", async () => {
+    const qkir = compile(
+      JSON.stringify({
+        kerangka: "0.1",
+        app: "text-where",
+        queries: { urgent: { from: "Task", where: "priority == 'high'" } },
+        entities: { Task: { fields: { title: "string!", priority: "string" } } },
+      })
+    );
+    const app = createKerangkaHonoApp(qkir, { store: new MemoryStore() });
+    for (const [id, priority] of [["t-1", "high"], ["t-2", "low"], ["t-3", "high"]] as const) {
+      await app.request("/api/task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, title: id, priority }),
+      });
+    }
+    const res = await app.request("/api/task/queries/urgent");
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.items.map((t: { id: string }) => t.id).sort()).toEqual(["t-1", "t-3"]);
+  });
+
   it("serves named queries with filtering, sorting, projection, and paging", async () => {
     const doc = {
       kerangka: "0.1",
