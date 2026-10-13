@@ -1041,6 +1041,11 @@ export class KerangkaServer {
     const docId = decodeURIComponent(params[0] ?? "");
     const doc = owner.uidlDocs[docId];
     if (!doc) {
+      const view = owner.screens.view(docId);
+      if (view?.kind === "dashboard") {
+        owner.redirect(res, 307, `/screens/${encodeURIComponent(docId)}`);
+        return;
+      }
       owner.sendProblem(res, 404, "Not Found", `UIDL document '${docId}' not found.`, "NOT_FOUND");
       return;
     }
@@ -1336,6 +1341,13 @@ export class KerangkaServer {
     res.end(JSON.stringify(data, null, 2));
   }
 
+  private redirect(res: http.ServerResponse, status: number, location: string): void {
+    res.statusCode = status;
+    res.setHeader("Location", location);
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.end(`See ${location}\n`);
+  }
+
   private sendProblem(
     res: http.ServerResponse,
     status: number,
@@ -1400,6 +1412,7 @@ export class KerangkaServer {
     const title = this.kir.meta?.title || this.kir.app;
     const entities = Object.keys(this.kir.entities || {});
     const views = Object.keys(this.uidlDocs);
+    const screens = this.screens.views();
     const mcpToolList = this.mcpTools
       .map((t) => `<li><code>${t.name}</code>: ${t.description}</li>`)
       .join("");
@@ -1446,8 +1459,15 @@ export class KerangkaServer {
       <p><a href="/schema.graphql" target="_blank">View GraphQL Schema SDL &rarr;</a></p>
     </div>
     <div class="card">
+      <h2>Screens</h2>
+      <p style="margin-bottom: 12px; font-size: 13px;">Compiled per caller. Dashboards are here, not under <code>/uidl</code>:</p>
+      <ul>
+        ${screens.map((s) => `<li><a href="/screens/${s.id}" target="_blank">/screens/${s.id}</a> <code>${s.kind}</code></li>`).join("")}
+      </ul>
+    </div>
+    <div class="card">
       <h2>UIDL Screen Documents</h2>
-      <p style="margin-bottom: 12px; font-size: 13px;">Targeting <code>@kerangka/uidl-runtime</code>:</p>
+      <p style="margin-bottom: 12px; font-size: 13px;">Static lists and forms for <code>@kerangka/uidl-runtime</code>. A dashboard is not in this list:</p>
       <ul>
         ${views.map((v) => `<li><a href="/uidl/${v}" target="_blank">/uidl/${v}</a></li>`).join("")}
       </ul>

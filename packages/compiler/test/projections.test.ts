@@ -7,7 +7,8 @@ import {
   generateOpenAPI,
   generateGraphQL,
   generateMcpTools,
-  generateUIDL
+  generateUIDL,
+  UIDLGenerator,
 } from "../src/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -122,20 +123,17 @@ describe("Kerangka Projections", () => {
       const findNode = (node: any, pred: (n: any) => boolean): any =>
         pred(node) ? node : (node.children ?? []).map((c: any) => findNode(c, pred)).find(Boolean);
 
-      // Home dashboard
-      const homeDoc = docs["home"]!;
-      expect(homeDoc).toBeDefined();
-      expect(homeDoc.version).toBe("1.0.0");
-      expect(homeDoc.$schema).toBe("https://uidl.dev/schema/v1/document.schema.json");
-      expect(homeDoc.route).toBe("/");
-      expect(homeDoc.root.type).toBe("Container");
-      expect(homeDoc.root.children?.length).toBeGreaterThan(0);
-
-      // KPI cards are bound to the state.$data query envelope, not invented metric widgets.
-      const kpiCard = findNode(homeDoc.root, (n) => n.id === "kpi-0");
-      expect(kpiCard?.type).toBe("Column");
-      expect(kpiCard?.children?.some((c: any) => c.id === "kpi-0-value")).toBe(true);
-      expect((homeDoc.dataSources as Record<string, any>)?.["kpi-0"]?.["$query"]?.collection).toBe("Invoice");
+      // A dashboard is not a static document. Emitting one showed the first row as a sum and
+      // dropped a where the generator could not lower.
+      expect(docs["home"]).toBeUndefined();
+      expect(JSON.stringify(docs)).not.toContain("rows[0]");
+      expect(UIDLGenerator.refusedDashboards(kir)).toEqual([
+        expect.objectContaining({
+          viewId: "home",
+          screen: "/screens/home",
+          code: "DASHBOARD_NOT_STATIC",
+        }),
+      ]);
 
       // Invoices list
       const listDoc = docs["invoices"]!;

@@ -11,6 +11,7 @@ import {
   compile,
   generateCode,
   generateUIDL,
+  UIDLGenerator,
   emitDockerCompose,
   type TargetLanguage
 } from "@kerangka/compiler";
@@ -237,6 +238,9 @@ export function scaffoldFrontend(targetDir: string, kir: any, frontend: Frontend
   const screensDir = path.join(frontendDir, "screens");
   fs.mkdirSync(screensDir, { recursive: true });
   const uidlDocs = generateUIDL(kir);
+  for (const refused of UIDLGenerator.refusedDashboards(kir)) {
+    console.error(refused.message);
+  }
   for (const [docId, doc] of Object.entries(uidlDocs)) {
     fs.writeFileSync(path.join(screensDir, `${docId}.uidl.json`), JSON.stringify(doc, null, 2) + "\n", "utf-8");
   }

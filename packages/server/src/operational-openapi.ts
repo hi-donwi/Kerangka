@@ -465,10 +465,11 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleListUidl",
     operationId: "list_uidl_documents",
     tag: "uidl",
-    summary: "List the UIDL screen documents this model projects to",
+    summary: "List the static UIDL documents this model projects to",
     description:
-      "One document per declared view, plus the navigation shell. A UIDL runtime fetches " +
-      "these to render the model's screens.",
+      "One document per declared list or form view, plus scaffolds. Dashboard views are not " +
+      "in this list: a static document cannot compute their figures. They are served at " +
+      "GET /screens/{viewId}.",
     document: { included: true }
   },
   {
@@ -478,10 +479,12 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleUidlDocument",
     operationId: "get_uidl_document",
     tag: "uidl",
-    summary: "Fetch one UIDL screen document",
+    summary: "Fetch one static UIDL document",
     description:
-      "The document a UIDL runtime renders. Its `$schema` member points at the UIDL document " +
-      "schema, so a runtime can validate what it received.",
+      "The document a UIDL runtime renders for a list or a form. Its `$schema` member points " +
+      "at the UIDL document schema. A dashboard id answers 307 to GET /screens/{docId}, where " +
+      "the figures are computed for the caller. A static document is not returned for it, " +
+      "because that document showed the first row as a sum and dropped a where it could not lower.",
     errorResponses: { "404": "No UIDL document with that id." },
     document: { included: true }
   },
@@ -688,6 +691,19 @@ export function operationalOpenAPI(withQueues: boolean): {
     } else if (route.tag === "host") {
       const what = route.path.startsWith("/api/events") ? "event" : "effect";
       responses["200"] = single(what);
+    }
+
+    if (route.path === "/uidl/{docId}") {
+      responses["307"] = {
+        description:
+          "This id is a dashboard view. Its figures are computed for the caller at GET /screens/{docId}.",
+        headers: {
+          Location: {
+            description: "The screen that computes this dashboard.",
+            schema: { type: "string" }
+          }
+        }
+      };
     }
 
     for (const [status, description] of Object.entries(route.errorResponses ?? {})) {

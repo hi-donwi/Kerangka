@@ -73,10 +73,12 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     expect(listDoc.$schema).toBe("https://uidl.dev/schema/v1/document.schema.json");
     expect(listDoc.route).toBe("/invoices");
 
-    const homeRes = await fetch(`${baseUrl}/uidl/home`);
-    expect(homeRes.status).toBe(200);
-    const homeDoc = await homeRes.json();
-    expect(homeDoc.id).toBe("home");
+    const listed = await (await fetch(`${baseUrl}/uidl`)).json();
+    expect(listed.documents).not.toContain("home");
+
+    const homeRes = await fetch(`${baseUrl}/uidl/home`, { redirect: "manual" });
+    expect(homeRes.status).toBe(307);
+    expect(homeRes.headers.get("location")).toBe("/screens/home");
   });
 
   it("supports REST CRUD on entities", async () => {
@@ -165,6 +167,8 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     const html = await res.text();
     expect(html).toContain("Kerangka Dev Playground");
     expect(html).toContain("Invoicing");
+    expect(html).toContain("/screens/home");
+    expect(html).not.toContain("/uidl/home");
   });
 
   it("returns RFC 9457 Problem Details on invalid input", async () => {
@@ -1146,6 +1150,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
       expect(spec.paths["/uidl"]?.get?.operationId).toBe("list_uidl_documents");
       expect(spec.paths["/uidl/{docId}"]?.get?.operationId).toBe("get_uidl_document");
       expect(spec.paths["/uidl/{docId}"].get.responses["404"]).toBeDefined();
+      expect(spec.paths["/uidl/{docId}"].get.responses["307"]).toBeDefined();
       expect(spec.components.schemas.UIDLDocument).toBeDefined();
       // The tree is recursive, so the node schema has to be a real $ref rather than an
       // inlined copy — a cycle cannot be inlined, and a truncated tree misleads a runtime.

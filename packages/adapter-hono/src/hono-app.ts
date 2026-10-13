@@ -11,6 +11,7 @@ import {
   generateMcpTools,
   generateOpenAPI,
   generateUIDL,
+  UIDLGenerator,
   KIRDocument,
   McpToolDefinition,
   UIDLDocument,
@@ -310,6 +311,10 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     const docId = c.req.param("docId");
     const doc = uidlDocs[docId];
     if (!doc) {
+      const refused = UIDLGenerator.refusedDashboards(kir).find((item) => item.viewId === docId);
+      if (refused) {
+        return sendProblem(c, 404, refused.code, refused.message);
+      }
       return sendProblem(c, 404, "NOT_FOUND", `UIDL document '${docId}' not found`);
     }
     return c.json(doc);

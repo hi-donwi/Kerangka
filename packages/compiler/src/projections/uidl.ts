@@ -50,11 +50,20 @@ export interface UIDLDocument {
 const COLUMN_STYLE: Record<string, unknown> = { display: "flex", flexDirection: "column", gap: "gap-2" };
 const ROW_STYLE: Record<string, unknown> = { display: "flex", flexDirection: "row", gap: "gap-2" };
 
-/** A `$query` filter with the strict shape (`spec/schema/query.schema.json`). */
-interface UIDLFilter {
-  field: string;
-  op: "eq" | "ne" | "in" | "gt" | "gte" | "lt" | "lte" | "between";
-  value: unknown;
+/**
+ * A dashboard view the static generator will not write.
+ *
+ * A Kerangka KPI is an aggregate over the records the caller may read. A static document
+ * cannot compute that: binding `sum`/`avg` to `rows[0]` shows the first row, and dropping a
+ * `where` the generator cannot lower (any `&&`, any call) counts rows the predicate excludes.
+ * Figures are computed per caller at `GET /screens/{viewId}` (ADR-0045).
+ */
+export interface RefusedDashboard {
+  viewId: string;
+  /** Where a running KerangkaServer computes this dashboard for the caller. */
+  screen: string;
+  code: "DASHBOARD_NOT_STATIC";
+  message: string;
 }
 
 /** The widget types a form may use, from the reference registry only. */
@@ -65,18 +74,18 @@ export class UIDLGenerator {
   static readonly SPEC_VERSION = "1.0.0";
 
   /**
-   * Generates one UIDL document per declared view (dashboard / list / form), plus scaffold
-   * list+form documents for entities that have no custom views. Every document carries a
-   * `Navbar` when the app declares navigation.
+   * Generates one UIDL document per declared list or form view, plus scaffold list+form
+   * documents for entities that have no custom views. Dashboard views are not documents:
+   * {@link refusedDashboards} names them, and a server computes their figures at
+   * `GET /screens/{viewId}`. Every document carries a `Navbar` when the app declares navigation.
    */
   static generate(kir: KIRDocument): Record<string, UIDLDocument> {
     const documents: Record<string, UIDLDocument> = {};
     const views = (kir.views || {}) as Record<string, Record<string, unknown>>;
 
     for (const [viewId, viewDef] of Object.entries(views)) {
-      if (viewDef.dashboard) {
-        documents[viewId] = UIDLGenerator.generateDashboardView(viewId, viewDef, kir);
-      } else if (viewDef.list) {
+      if (viewDef.dashboard) continue;
+      if (viewDef.list) {
         documents[viewId] = UIDLGenerator.generateListView(viewId, viewDef, kir);
       } else if (viewDef.form) {
         documents[viewId] = UIDLGenerator.generateFormView(viewId, viewDef, kir);
@@ -104,106 +113,27 @@ export class UIDLGenerator {
     return documents;
   }
 
-  // ---------------------------------------------------------------- dashboard
-
-  private static generateDashboardView(
-    viewId: string,
-    viewDef: Record<string, unknown>,
-    kir: KIRDocument,
-  ): UIDLDocument {
-    const kpis = viewDef.dashboard as Array<Record<string, unknown>>;
-    const dataSources: Record<string, unknown> = {};
-
-    const kpiNodes: UIDLNode[] = (kpis || []).map((kpi, index) => {
-      const key = `kpi-${index}`;
-      const title = (kpi.kpi as string) || `KPI ${index + 1}`;
-      const query = UIDLGenerator.buildKpiQuery(kpi);
-      if (query) dataSources[key] = { $query: query };
-
-      return {
-        id: key,
-        type: "Column" as const,
-        style: { ...COLUMN_STYLE, padding: "p-4" },
-        children: [
-          {
-            id: `${key}-label`,
-            type: "Text" as const,
-            props: { value: title },
-          },
-          {
-            id: `${key}-value`,
-            type: "Text" as const,
-            props: { value: UIDLGenerator.buildKpiBinding(kpi, index) },
-            style: { fontSize: "text-2xl", fontWeight: "font-semibold" },
-          },
-        ],
-      };
-    });
-
-    return {
-      $schema: UIDLGenerator.SCHEMA_URI,
-      version: UIDLGenerator.SPEC_VERSION,
-      id: viewId,
-      name: `${UIDLGenerator.capitalize(viewId)} Dashboard`,
-      route: viewId === "home" ? "/" : `/${viewId}`,
-      ...(dataSources ? { dataSources } : {}),
-      root: {
-        id: `root-${viewId}`,
-        type: "Container",
-        children: [
-          {
-            id: `${viewId}-content`,
-            type: "Column" as const,
-            style: { ...COLUMN_STYLE, padding: "p-4" },
-            children: [
-              {
-                id: `${viewId}-title`,
-                type: "Text" as const,
-                props: { value: `${UIDLGenerator.capitalize(viewId)} Dashboard`, heading: 1 },
-              },
-              ...(kpiNodes.length > 0
-                ? [{ id: `${viewId}-kpis`, type: "Column" as const, style: COLUMN_STYLE, children: kpiNodes }]
-                : []),
-            ],
-          },
-        ],
-      },
-    };
-  }
-
   /**
-   * A KPI value is bound to the query envelope the bridge fills: a `sum`/`avg` lands as one
-   * aggregated row (`state.$data.<kpi>.rows[0].<field>`), a `count` as the result total
-   * (`state.$data.<kpi>.total`). Both read the reserved `state.$data` read-only envelope.
+   * Dashboard views this generator will not write. A static document cannot compute a KPI,
+   * so emitting one would show a wrong number. The server computes them instead.
    */
-  private static buildKpiBinding(kpi: Record<string, unknown>, index: number): Record<string, string> {
-    const key = `kpi-${index}`;
-    const source = String(kpi.sum || kpi.avg || kpi.count || "");
-    const field = UIDLGenerator.lastSegment(source);
-    if (field && kpi.count === undefined) {
-      return { $bind: `state.$data.${key}.rows[0].${field}` };
+  static refusedDashboards(kir: KIRDocument): RefusedDashboard[] {
+    const views = (kir.views || {}) as Record<string, Record<string, unknown>>;
+    const refused: RefusedDashboard[] = [];
+    for (const [viewId, viewDef] of Object.entries(views)) {
+      if (!viewDef.dashboard) continue;
+      const screen = `/screens/${viewId}`;
+      refused.push({
+        viewId,
+        screen,
+        code: "DASHBOARD_NOT_STATIC",
+        message:
+          `Dashboard '${viewId}' is not a static UIDL document. A static generator cannot ` +
+          `compute its figures: a sum is not the first row, and a where it cannot lower must ` +
+          `not be dropped. Serve GET ${screen}.`,
+      });
     }
-    return { $bind: `state.$data.${key}.total` };
-  }
-
-  /**
-   * Lowers a KPI definition into a `$query` on the aggregate's collection. The `where` clause is
-   * lowered only when it is a single comparison on a plain field; anything richer is left to the
-   * bridge, which may enforce the predicate at the boundary.
-   */
-  private static buildKpiQuery(kpi: Record<string, unknown>): Record<string, unknown> | undefined {
-    const source = String(kpi.sum || kpi.avg || kpi.count || "");
-    const collection = UIDLGenerator.firstSegment(source);
-    if (!collection) return undefined;
-
-    const field = UIDLGenerator.lastSegment(source);
-    const query: Record<string, unknown> = { collection };
-    if (field && field !== collection) query.fields = [field];
-
-    const filter = UIDLGenerator.lowerWhere(String(kpi.where || ""));
-    if (filter) query.filters = [filter];
-
-    return query;
+    return refused;
   }
 
   // ---------------------------------------------------------------- list
@@ -652,53 +582,6 @@ export class UIDLGenerator {
       default:
         return undefined;
     }
-  }
-
-  /** Lowers `field == value` (and the other comparison operators) to a strict `$query` filter. */
-  private static lowerWhere(where: string): UIDLFilter | undefined {
-    const trimmed = where.trim();
-    if (!trimmed) return undefined;
-
-    // Only a *single* atomic comparison is lowered. Once the predicate composes (&&, ||, `in`,
-    // calls, another comparison), its truth can no longer be represented by one filter row, so it
-    // is left to the host to enforce rather than mis-lowered.
-    if (/&&|\|\||\b(and|or|not|in|between|contains|like)\b/i.test(trimmed)) return undefined;
-
-    const match = /^([A-Za-z0-9_.]+)\s*(==|!=|>=|<=|>|<)\s*(.+)$/.exec(trimmed);
-    if (!match || match[1] === undefined || match[2] === undefined || match[3] === undefined) return undefined;
-    const [, rawField, op, rawValue] = match;
-    const field = rawField.replace(/^([^.]+)\./, "$1.");
-    if (field.length === 0) return undefined;
-
-    // The RHS must be one token: a quoted string, a bare identifier, or a number. A bare
-    // comparison or whitespace means the "last operator wins" greedy capture swallowed more
-    // predicate than the schema can keep honest.
-    const rhs = rawValue.trim();
-    if (rhs.length === 0 || /[<>=!]/.test(rhs) || /\s/.test(rhs)) return undefined;
-
-    const unquoted = rhs.replace(/^(['"])(.*)\1$/, "$2");
-    const numeric = Number(unquoted);
-    const value = Number.isNaN(numeric) ? (unquoted.length > 0 ? unquoted : rhs) : numeric;
-
-    switch (op) {
-      case "==": return { field, op: "eq", value };
-      case "!=": return { field, op: "ne", value };
-      case ">=": return Number.isNaN(numeric) ? undefined : { field, op: "gte", value };
-      case "<=": return Number.isNaN(numeric) ? undefined : { field, op: "lte", value };
-      case ">": return Number.isNaN(numeric) ? undefined : { field, op: "gt", value };
-      case "<": return Number.isNaN(numeric) ? undefined : { field, op: "lt", value };
-      default: return undefined;
-    }
-  }
-
-  private static firstSegment(source: string): string {
-    return source.split(".").find(Boolean) || "";
-  }
-
-  private static lastSegment(source: string): string {
-    const parts = source.split(".");
-    if (parts.length < 2) return "";
-    return parts.at(-1) ?? "";
   }
 
   private static formatColumnHeader(str: string): string {

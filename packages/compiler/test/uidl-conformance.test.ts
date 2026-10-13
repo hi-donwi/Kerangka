@@ -208,16 +208,19 @@ describe("UIDL Conformance (mirror of UIDL-Runtime schema)", () => {
     expect(problems).toEqual([]);
   });
 
-  it("decorates every document with a Navbar that only targets sibling documents", () => {
+  it("links a Navbar only to a static sibling, never to a refused dashboard", () => {
+    const routes = new Set(Object.values(docs).map((doc) => doc.route));
+    expect(docs.home).toBeUndefined();
+    expect(routes.has("/")).toBe(false);
     for (const [key, doc] of Object.entries(docs)) {
       const navbar = doc.root.children?.find((c) => c.type === "Navbar");
-      expect(navbar, `${key} has no Navbar`).toBeDefined();
       for (const child of navbar?.children ?? []) {
         if (child.type !== "Button") continue;
         const events = (child.events ?? {}) as Record<string, any[]>;
         const route = events.onClick?.[0]?.navigate?.route as unknown;
         expect(typeof route, `${key}: nav "route" must be a plain string`).toBe("string");
         expect(route as string, `${key} nav target must exist`).not.toContain(":id");
+        expect(routes.has(route as string), `${key} nav target ${String(route)} is not a static document`).toBe(true);
       }
     }
   });

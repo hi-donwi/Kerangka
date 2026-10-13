@@ -75,7 +75,8 @@ kerangka graphql examples/invoicing.kerangka.json -o schema.graphql
 # Generate Model Context Protocol (MCP) tool declarations
 kerangka mcp examples/invoicing.kerangka.json -o mcp-tools.json
 
-# Generate UIDL screen documents for UIDL-Runtime
+# Generate static UIDL documents (lists and forms) for UIDL-Runtime.
+# Dashboard figures are not in that output; a running server computes them at GET /screens/{viewId}.
 kerangka uidl examples/invoicing.kerangka.json -o uidl-screens/
 
 # Generate typed language models (TypeScript, Java 21, Python, Go, Rust, Dart)

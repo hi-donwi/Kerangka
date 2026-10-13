@@ -44,6 +44,18 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
     expect(uidlList.documents.length).toBeGreaterThan(0);
   });
 
+  it("refuses a dashboard document instead of serving a wrong KPI", async () => {
+    const invoicing = compile(readFileSync(resolve(examplesDir, "invoicing.kerangka.json"), "utf8"));
+    const app = createKerangkaHonoApp(invoicing);
+    const list = await (await app.request("/uidl")).json();
+    expect(list.documents).not.toContain("home");
+    const res = await app.request("/uidl/home");
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.code).toBe("DASHBOARD_NOT_STATIC");
+    expect(body.detail).toContain("GET /screens/home");
+  });
+
   it("performs full CRUD operations over REST", async () => {
     const store = new MemoryStore();
     const app = createKerangkaHonoApp(kir, { store });

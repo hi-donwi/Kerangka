@@ -7,7 +7,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { compile, generateUIDL } from "@kerangka/compiler";
+import { compile, generateUIDL, UIDLGenerator } from "@kerangka/compiler";
 
 export function uidlCommand(filePath: string, outputDir?: string): boolean {
   try {
@@ -20,6 +20,9 @@ export function uidlCommand(filePath: string, outputDir?: string): boolean {
     const source = fs.readFileSync(fullPath, "utf-8");
     const kir = compile(source, { sourceFile: filePath });
     const docs = generateUIDL(kir);
+    for (const refused of UIDLGenerator.refusedDashboards(kir)) {
+      console.error(refused.message);
+    }
 
     if (outputDir && outputDir !== "-") {
       const targetDir = path.resolve(process.cwd(), outputDir);

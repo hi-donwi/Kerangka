@@ -106,8 +106,7 @@ Mapping onto them showed that the recipes and `kerangka uidl` assume different h
 
 Consequences:
 
-- `/uidl` and `/screens` now both serve dashboards. The generator's dashboards still have the two
-  defects above; they are recorded for the generator, not fixed here.
+- `/screens` serves dashboards with the caller's figures. The static generator does not.
 - The figures are as of the request. A dashboard that should update while open re-requests its
   screen; binding to live data sources stays available to hosts that can aggregate server-side.
 - Computing a KPI reads every record of its entity the caller may read, in memory, as a read
@@ -116,3 +115,25 @@ Consequences:
   and `@dnd-kit/*` that requires React, as dependencies, so npm still installed React.
   `uidl-runtime@0.1.8` lists only `zod`, and the projector requires it: the Negative consequence
   above about React is resolved.
+
+## Amendment (2026-10-13): the static generator refuses a dashboard
+
+The generator's dashboards were still served at `/uidl` and written by `kerangka uidl`. A `sum`
+bound `rows[0].<field>`, so the tile showed the first row, and `lowerWhere` returned nothing for
+any `&&`, so "Overdue" counted every invoice. That document was what a caller opening the
+playground actually saw.
+
+**A dashboard view is not a static UIDL document.**
+
+- `UIDLGenerator.generate` skips a view whose definition is a dashboard. `refusedDashboards`
+  names each one, with `DASHBOARD_NOT_STATIC` and `GET /screens/{viewId}`.
+- `kerangka uidl` prints that refusal on stderr and does not write the file.
+- `GET /uidl/{dashboardId}` on `KerangkaServer` answers **307** to `/screens/{dashboardId}`, so
+  an existing link does not keep returning the wrong document. The playground lists screens,
+  including dashboards, separately from static `/uidl` documents.
+- The Hono adapter does not serve `/screens`. It answers **404** `DASHBOARD_NOT_STATIC` rather
+  than redirecting to a route it does not have.
+
+A static document that showed no number would still be a dashboard a host could mistake for the
+figures. Refusing the document, and sending the caller to the screen that computes them, is the
+closed failure.

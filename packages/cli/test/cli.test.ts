@@ -1,4 +1,4 @@
-import { describe, expect, it, afterAll } from "vitest";
+import { describe, expect, it, afterAll, vi } from "vitest";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -86,13 +86,19 @@ describe("Kerangka CLI Commands", () => {
     expect(Array.isArray(data.tools)).toBe(true);
   });
 
-  it("uidlCommand generates UIDL screens directory", () => {
+  it("uidlCommand generates UIDL screens directory and refuses a dashboard it cannot compute", () => {
     const outUidlDir = path.join(tmpDir, "uidl-screens");
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((msg?: unknown) => {
+      errors.push(String(msg));
+    });
     const success = uidlCommand(examplePath, outUidlDir);
+    spy.mockRestore();
     expect(success).toBe(true);
     expect(fs.existsSync(outUidlDir)).toBe(true);
     expect(fs.existsSync(path.join(outUidlDir, "invoices.uidl.json"))).toBe(true);
-    expect(fs.existsSync(path.join(outUidlDir, "home.uidl.json"))).toBe(true);
+    expect(fs.existsSync(path.join(outUidlDir, "home.uidl.json"))).toBe(false);
+    expect(errors.some((line) => line.includes("GET /screens/home"))).toBe(true);
   });
 
   it("codegenCommand generates TypeScript code", () => {
