@@ -24,8 +24,9 @@ const root = (screen: Screen) => screen.root as unknown as Node;
 const json = (value: unknown) => JSON.stringify(value);
 
 describe("RecipeProjector.views", () => {
-  it("lists declared list and form views, then scaffolds, and leaves dashboards to the generator", () => {
+  it("lists declared views in order, dashboards included, then scaffolds", () => {
     expect(new RecipeProjector(invoicing).views()).toEqual([
+      { id: "home", kind: "dashboard", route: "/" },
       { id: "invoices", kind: "list", entity: "Invoice", route: "/invoices" },
       { id: "invoice", kind: "form", entity: "Invoice", route: "/invoice/:id" },
       { id: "customer-list", kind: "list", entity: "Customer", route: "/customer-list" },
@@ -110,10 +111,58 @@ describe("RecipeProjector.form", () => {
   });
 });
 
+describe("RecipeProjector.dashboard", () => {
+  const projector = new RecipeProjector(invoicing);
+  const texts = (screen: Screen) => {
+    const out: unknown[] = [];
+    const walk = (n: Node) => { if (n.type === "Text") out.push(n.props?.value); n.children?.forEach(walk); };
+    walk(root(screen));
+    return out;
+  };
+
+  it("names each KPI of a dashboard view, in order", () => {
+    expect(projector.kpis("home")).toEqual([
+      { kpi: "Outstanding", sum: "Invoice.total", where: "status == 'sent'" },
+      { kpi: "Overdue", count: "Invoice", where: "status == 'sent' && dueDate < today()" },
+    ]);
+    expect(() => projector.kpis("invoices")).toThrow(/is a list, not a dashboard/);
+  });
+
+  it("shows the values the host computed, printed as numbers", () => {
+    const screen = projector.dashboard("home", [{ value: 300.3 }, { value: 1 }]);
+    expect(screen.id).toBe("home");
+    expect(screen.route).toBe("/");
+    const value = (label: string) => {
+      const cell = find(root(screen), (n) => n.type === "Column" && (n.children ?? []).some((c) => c.props?.value === label));
+      return cell?.children?.[1]?.props;
+    };
+    expect(value("Outstanding")).toMatchObject({ value: "300.3", format: "number" });
+    expect(value("Overdue")).toMatchObject({ value: "1", format: "integer" });
+  });
+
+  it("leaves out a KPI the actor may not read, and marks one that could not be evaluated", () => {
+    const screen = projector.dashboard("home", [{ withheld: true }, { error: "KPI 'Overdue' cannot be evaluated" }]);
+    expect(texts(screen)).not.toContain("Outstanding");
+    expect(texts(screen)).toContain("Overdue");
+    expect(json(screen)).not.toContain("cannot be evaluated");
+  });
+
+  it("refuses values that do not line up with the KPIs", () => {
+    expect(() => projector.dashboard("home", [{ value: 1 }])).toThrow(/2 KPIs/);
+  });
+
+  it("sits in the shell with home marked", () => {
+    const screen = projector.dashboard("home", [{ value: 0 }, { value: 0 }]);
+    expect(find(root(screen), (n) => n.id.endsWith("-nav-home"))?.props).toMatchObject({ "aria-current": "page" });
+    expect(DocumentSchema.safeParse(screen).success).toBe(true);
+  });
+});
+
 describe("every projected screen", () => {
   it("is a valid UIDL document with unique node ids", () => {
     const projector = new RecipeProjector(invoicing);
     const screens = [
+      ...projector.views().filter((v) => v.kind === "dashboard").map((v) => projector.dashboard(v.id, projector.kpis(v.id).map(() => ({ value: 1 })))),
       ...projector.views().filter((v) => v.kind === "list").map((v) => projector.list(v.id)),
       ...projector.views().filter((v) => v.kind === "form").flatMap((v) => [projector.form(v.id), projector.form(v.id, { id: "x-1", data: {} })]),
     ];

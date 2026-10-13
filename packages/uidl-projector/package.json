@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@kerangka/compiler": "*",
-    "uidl-runtime": "^0.1.6"
+    "uidl-runtime": "^0.1.7"
   },
   "license": "Apache-2.0"
 }

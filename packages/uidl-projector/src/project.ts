@@ -10,15 +10,18 @@
  * `mutate` (create, update, transition) on the model's own entities and operations, which the
  * `@kerangka/uidl` bridge already sends to the server, where permissions and rules are enforced.
  *
- * Dashboards are not projected here: the dashboard recipe takes static KPI values, while a
- * Kerangka KPI is a query aggregate. They stay with the compiler's UIDL generator.
+ * A dashboard is compiled with the values its host computed for the caller (ADR-0045): a KPI is
+ * an aggregate over every record the caller may read, which neither a page of rows nor a filter
+ * the bridge can express is enough to compute, so the server evaluates it and this prints it.
  */
 
 import type { FieldDefinition, KIRDocument } from "@kerangka/compiler";
 import {
+  compileDashboardPage,
   compileFormPage,
   compileListPage,
   wrapInShell,
+  type DashboardKpi,
   type FieldMeta,
   type FieldWidget,
   type FormPageMeta,
@@ -38,16 +41,38 @@ export interface ProjectorOptions {
   lang?: "id" | "en";
 }
 
-export type ScreenKind = "list" | "form";
+export type ScreenKind = "list" | "form" | "dashboard";
 
-export interface ScreenView {
-  /** The view id: a declared view, or a scaffold such as `invoice-list`. */
-  id: string;
-  kind: ScreenKind;
-  entity: string;
-  /** The route a host serves it at: `/{id}` for a list, `/{id}/:id` for a form. */
-  route: string;
+export type ScreenView =
+  | {
+      /** The view id: a declared view, or a scaffold such as `invoice-list`. */
+      id: string;
+      kind: "list" | "form";
+      entity: string;
+      /** The route a host serves it at: `/{id}` for a list, `/{id}/:id` for a form. */
+      route: string;
+    }
+  | {
+      id: string;
+      kind: "dashboard";
+      /** `/` for `home`, `/{id}` otherwise, as the shell links it. */
+      route: string;
+    };
+
+/** One entry of a dashboard view, as the model declares it (`views.<id>.dashboard[]`). */
+export interface KpiEntry {
+  kpi?: string;
+  count?: string;
+  sum?: string;
+  avg?: string;
+  where?: string;
 }
+
+/**
+ * What the host computed for one KPI: its value, nothing the actor may see (the KPI is left
+ * out), or a failure to evaluate it (the KPI shows no number; the reason stays on the server).
+ */
+export type KpiResult = { value: number } | { withheld: true } | { error: string };
 
 /** A stored record to edit: its fields and the version the server issued with them. */
 export interface RecordToEdit {
@@ -78,13 +103,47 @@ export class RecipeProjector {
     this.screens = this.collectScreens();
   }
 
-  /** Every list and form screen this model projects, declared views first, then scaffolds. */
+  /** Every screen this model projects, declared views first in their order, then scaffolds. */
   views(): ScreenView[] {
     return this.screens.map((s) => ({ ...s }));
   }
 
   view(id: string): ScreenView | undefined {
     return this.screens.find((s) => s.id === id);
+  }
+
+  /** The KPIs of a dashboard view, in order, for the host to compute. */
+  kpis(viewId: string): KpiEntry[] {
+    this.require(viewId, "dashboard");
+    const declared = (this.kir.views?.[viewId] ?? {}) as ViewDef;
+    return (declared.dashboard as KpiEntry[]).map((kpi) => ({ ...kpi }));
+  }
+
+  /**
+   * The dashboard screen for a dashboard view, with one result per KPI in `kpis(viewId)`. The
+   * values are the caller's: the host computed each over the records that caller may read.
+   */
+  dashboard(viewId: string, results: KpiResult[]): Screen {
+    const view = this.require(viewId, "dashboard");
+    const entries = this.kpis(viewId);
+    if (results.length !== entries.length) {
+      throw new Error(`Dashboard '${viewId}' has ${entries.length} KPIs; ${results.length} results were given`);
+    }
+    const kpis: DashboardKpi[] = [];
+    entries.forEach((entry, index) => {
+      const result = results[index]!;
+      if ("withheld" in result) return;
+      kpis.push({
+        label: both(entry.kpi ?? `KPI ${index + 1}`),
+        value: "value" in result ? result.value : "\u2014",
+        format: this.kpiFormat(entry),
+      });
+    });
+    const document = compileDashboardPage(
+      { name: viewId, label: both(humanize(viewId)), kpis },
+      { hostCapabilities: this.capabilities(), uiPolicy: { lang: this.lang }, docId: viewId }
+    );
+    return this.inShell({ ...document, route: view.route }, view.route);
   }
 
   /** The list screen for a list view. */
@@ -157,7 +216,9 @@ export class RecipeProjector {
     const screens: ScreenView[] = [];
     const views = (this.kir.views ?? {}) as Record<string, ViewDef>;
     for (const [id, def] of Object.entries(views)) {
-      if (typeof def.list === "string" && this.kir.entities[def.list]) {
+      if (Array.isArray(def.dashboard)) {
+        screens.push({ id, kind: "dashboard", route: id === "home" ? "/" : `/${id}` });
+      } else if (typeof def.list === "string" && this.kir.entities[def.list]) {
         screens.push({ id, kind: "list", entity: def.list, route: `/${id}` });
       } else if (typeof def.form === "string" && this.kir.entities[def.form]) {
         screens.push({ id, kind: "form", entity: def.form, route: `/${id}/:id` });
@@ -177,11 +238,22 @@ export class RecipeProjector {
     return screens;
   }
 
+  private require(viewId: string, kind: "dashboard"): Extract<ScreenView, { kind: "dashboard" }>;
+  private require(viewId: string, kind: "list" | "form"): Exclude<ScreenView, { kind: "dashboard" }>;
   private require(viewId: string, kind: ScreenKind): ScreenView {
     const view = this.view(viewId);
     if (!view) throw new ScreenNotFoundError(`No screen '${viewId}' in this model`);
     if (view.kind !== kind) throw new ScreenNotFoundError(`Screen '${viewId}' is a ${view.kind}, not a ${kind}`);
     return view;
+  }
+
+  /** A count is a whole number; a sum of whole numbers is too; anything else is a number. */
+  private kpiFormat(entry: KpiEntry): DashboardKpi["format"] {
+    if (typeof entry.count === "string") return "integer";
+    const source = entry.sum ?? entry.avg ?? "";
+    const [entity, field] = source.split(".");
+    const type = entity && field ? this.kir.entities[entity]?.fields[field]?.type : undefined;
+    return typeof entry.sum === "string" && (type === "int" || type === "integer") ? "integer" : "number";
   }
 
   private formFor(entity: string, preferred?: string): ScreenView | undefined {
