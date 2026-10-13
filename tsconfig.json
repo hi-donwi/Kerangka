@@ -25,7 +25,8 @@
       "@kerangka/ports": ["packages/ports/src/index.ts"],
       "@kerangka/server": ["packages/server/src/index.ts"],
       "@kerangka/std": ["packages/std/src/index.ts"],
-      "@kerangka/uidl": ["packages/uidl/src/index.ts"]
+      "@kerangka/uidl": ["packages/uidl/src/index.ts"],
+      "@kerangka/uidl-projector": ["packages/uidl-projector/src/index.ts"]
     }
   },
   "include": [
