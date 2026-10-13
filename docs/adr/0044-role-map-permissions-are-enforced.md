@@ -65,9 +65,11 @@ for guards and permissions; this was the exception nobody had tested.
 
 ### Neutral
 
-- The Go, Python, and Dart engines do not enforce entity CRUD `permissions` at all yet (they
-  enforce action and transition roles). Parity is follow-up work, tracked in the run that
-  introduced this ADR.
+- The Go, Python, and Dart engines have no expression evaluator yet. They follow this ADR as far
+  as they can without one and refuse the rest: the Go server applies role lists and role maps,
+  and answers 501 for a conditional grant or a read filter it cannot evaluate; all three refuse
+  a guarded transition with `GUARD_UNSUPPORTED`. Evaluating conditions there is part of the
+  Tier 1 engine work.
 
 ## Alternatives Considered
 

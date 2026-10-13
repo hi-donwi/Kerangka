@@ -51,6 +51,12 @@ All notable changes to this project are documented here. The format follows
 - `kerangka expand` prints `{ "entities", "views" }`, so an expanded view template is visible.
 
 ### Fixed
+- The Go, Python, and Dart engines fail closed where they used to fail open. None of them has an
+  expression evaluator yet, so a transition with a guard ran as if the guard passed; it is now
+  refused with `GUARD_UNSUPPORTED`. The Go REST server enforced no entity permissions, skipped
+  read filters, and stored updates unvalidated; it now applies role lists and role maps
+  (ADR-0044), answers 501 for a condition or a read filter it cannot evaluate, and validates the
+  record an update would store. Their tests now run in CI.
 - **Permissions written as a role map were not enforced** (ADR-0044). `canOperate` allowed any
   caller unless the operation's permission was a non-empty list, so
   `"update": { "admin": true, "billing": "status == 'draft'" }` let every role update, and an
