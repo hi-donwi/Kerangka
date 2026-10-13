@@ -28,6 +28,7 @@ import {
 } from "@kerangka/ports";
 import { CloudEvent, Effect, Engine, type ActorContext } from "@kerangka/engine-ts";
 import { equalityConstraints, evaluateWhereInMemory } from "@kerangka/adapter-hono";
+import { RecipeProjector } from "@kerangka/uidl-projector";
 import { SchedulerRunner } from "./scheduler-runner.js";
 import { SessionStoreLike } from "./session-store.js";
 import type { HostEffectEntry, OutboxEntry } from "./session-store.js";
@@ -218,6 +219,8 @@ export class KerangkaServer {
   readonly graphqlSchema: string;
   readonly mcpTools: McpToolDefinition[];
   readonly uidlDocs: Record<string, UIDLDocument>;
+  /** List and form screens compiled per request through UIDL recipes (ADR-0045). */
+  readonly screens: RecipeProjector;
 
   private httpServer: http.Server | null = null;
   private quiet: boolean;
@@ -269,6 +272,7 @@ export class KerangkaServer {
     this.graphqlSchema = generateGraphQL(kir);
     this.mcpTools = generateMcpTools(kir);
     this.uidlDocs = generateUIDL(kir);
+    this.screens = new RecipeProjector(kir);
   }
 
   async start(): Promise<void> {
@@ -405,20 +409,8 @@ export class KerangkaServer {
       }
     }
 
-    const tenantId = (req.headers["x-tenant-id"] as string | undefined) || url.searchParams.get("tenantId") || undefined;
-    const actorId = req.headers["x-actor-id"] as string | undefined;
-    const rolesHeader = req.headers["x-actor-roles"] as string | undefined;
-    const actorRoles = rolesHeader ? rolesHeader.split(",").map((r) => r.trim()).filter(Boolean) : undefined;
-    // A request that names no one (no id, no roles) acts as the dev actor when a playground set
-    // one, in the tenant it asked for; otherwise it holds no role.
-    const namesSomeone = Boolean(actorId || actorRoles);
-    const actor: ActorContext | undefined = namesSomeone
-      ? { id: actorId, roles: actorRoles ?? [], tenantId }
-      : this.devActor
-        ? { ...this.devActor, ...(tenantId ? { tenantId } : {}) }
-        : tenantId
-          ? { roles: [], tenantId }
-          : undefined;
+    const tenantId = this.tenantOf(req, url);
+    const actor = this.actorOf(req, url);
 
     // Collection endpoint: /api/{entity}
     if (parts.length === 1) {
@@ -701,6 +693,25 @@ export class KerangkaServer {
     }
 
     this.sendProblem(res, 404, "Not Found", `No matching route for ${pathname}`, "NOT_FOUND");
+  }
+
+  private tenantOf(req: http.IncomingMessage, url: URL): string | undefined {
+    return (req.headers["x-tenant-id"] as string | undefined) || url.searchParams.get("tenantId") || undefined;
+  }
+
+  /**
+   * The request's actor, from `X-Actor-Id`, `X-Actor-Roles`, and the tenant. A request that names
+   * no one (no id, no roles) acts as the dev actor when a playground set one, in the tenant it
+   * asked for; otherwise it holds no role.
+   */
+  private actorOf(req: http.IncomingMessage, url: URL): ActorContext | undefined {
+    const tenantId = this.tenantOf(req, url);
+    const actorId = req.headers["x-actor-id"] as string | undefined;
+    const rolesHeader = req.headers["x-actor-roles"] as string | undefined;
+    const actorRoles = rolesHeader ? rolesHeader.split(",").map((r) => r.trim()).filter(Boolean) : undefined;
+    if (actorId || actorRoles) return { id: actorId, roles: actorRoles ?? [], tenantId };
+    if (this.devActor) return { ...this.devActor, ...(tenantId ? { tenantId } : {}) };
+    return tenantId ? { roles: [], tenantId } : undefined;
   }
 
   /**
@@ -1034,6 +1045,55 @@ export class KerangkaServer {
       return;
     }
     owner.sendJson(res, 200, doc);
+  }
+
+  private handleListScreens({ res, server }: OperationalContext): void {
+    const owner = server as KerangkaServer;
+    owner.sendJson(res, 200, { screens: owner.screens.views() });
+  }
+
+  /** A list screen, or a form view's create form, for an actor who may read or create. */
+  private handleScreen({ req, res, server, params, url }: OperationalContext): void {
+    const owner = server as KerangkaServer;
+    const viewId = decodeURIComponent(params[0] ?? "");
+    const view = owner.screens.view(viewId);
+    if (!view) {
+      owner.sendProblem(res, 404, "Not Found", `No screen '${viewId}'.`, "SCREEN_NOT_FOUND");
+      return;
+    }
+    const actor = owner.actorOf(req, url);
+    if (view.kind === "list") {
+      if (!owner.authorize(res, view.entity, "read", actor, undefined, { listing: true })) return;
+      owner.sendJson(res, 200, owner.screens.list(viewId));
+      return;
+    }
+    // A conditional create grant is decided when the form is submitted, against what it sends.
+    const decision = owner.permit(view.entity, "create", actor);
+    if (!decision.allowed && decision.code !== "PERMISSION_NEEDS_RECORD") {
+      owner.sendProblem(res, 403, "Forbidden", decision.reason, decision.code);
+      return;
+    }
+    owner.sendJson(res, 200, owner.screens.form(viewId));
+  }
+
+  /** One record's edit form, with its data and version, for an actor who may read that record. */
+  private async handleRecordScreen({ req, res, server, params, url }: OperationalContext): Promise<void> {
+    const owner = server as KerangkaServer;
+    const viewId = decodeURIComponent(params[0] ?? "");
+    const id = decodeURIComponent(params[1] ?? "");
+    const view = owner.screens.view(viewId);
+    if (!view || view.kind !== "form") {
+      owner.sendProblem(res, 404, "Not Found", `No form screen '${viewId}'.`, "SCREEN_NOT_FOUND");
+      return;
+    }
+    const actor = owner.actorOf(req, url);
+    const record = await owner.store.get<Record<string, unknown>>(view.entity, id, { tenantId: owner.tenantOf(req, url) });
+    if (!record) {
+      owner.sendProblem(res, 404, "Not Found", `${view.entity} with id '${id}' not found.`, "NOT_FOUND");
+      return;
+    }
+    if (!owner.authorizeRecordRead(res, view.entity, actor, record)) return;
+    owner.sendJson(res, 200, owner.screens.form(viewId, { id, data: record, version: versionOf(record) }));
   }
 
   /** What a handler is given: the route it is serving, and the request's own parts. */

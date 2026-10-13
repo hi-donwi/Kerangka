@@ -484,6 +484,51 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
       "schema, so a runtime can validate what it received.",
     errorResponses: { "404": "No UIDL document with that id." },
     document: { included: true }
+  },
+  {
+    path: "/screens",
+    method: "GET",
+    session: "not-needed",
+    handler: "handleListScreens",
+    operationId: "list_screens",
+    tag: "uidl",
+    summary: "List the screens compiled per request through UIDL page recipes",
+    description:
+      "One list screen and one form screen per entity view (declared or scaffolded), compiled " +
+      "through uidl-runtime's recipes when asked for (ADR-0045). Dashboards stay under /uidl.",
+    document: { included: true }
+  },
+  {
+    path: "/screens/{viewId}",
+    method: "GET",
+    session: "not-needed",
+    handler: "handleScreen",
+    operationId: "get_screen",
+    tag: "uidl",
+    summary: "Compile a list screen, or the create form of a form view",
+    description:
+      "A list view compiles to its list screen; a form view compiles to an empty create form. " +
+      "The caller must hold the read permission (list) or the create permission (form).",
+    errorResponses: { "403": "The actor may not read or create this entity.", "404": "No screen with that id." },
+    document: { included: true }
+  },
+  {
+    path: "/screens/{viewId}/{id}",
+    method: "GET",
+    session: "not-needed",
+    handler: "handleRecordScreen",
+    operationId: "get_record_screen",
+    tag: "uidl",
+    summary: "Compile the edit form of one record",
+    description:
+      "The form carries the record's fields and its version, so a save is checked for " +
+      "concurrent changes. The record is embedded only when the actor may read it: its read " +
+      "permission and its read filter both apply.",
+    errorResponses: {
+      "403": "The actor may not read this record.",
+      "404": "No form screen with that id, or no record with that id."
+    },
+    document: { included: true }
   }
 ];
 
@@ -586,6 +631,33 @@ export function operationalOpenAPI(withQueues: boolean): {
               properties: {
                 content: { type: "array", items: { type: "object", additionalProperties: true } },
                 isError: { type: "boolean" }
+              }
+            }
+          }
+        }
+      };
+    } else if (route.path === "/screens") {
+      responses["200"] = {
+        description: "The screens this model compiles per request.",
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              required: ["screens"],
+              properties: {
+                screens: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["id", "kind", "entity", "route"],
+                    properties: {
+                      id: { type: "string" },
+                      kind: { type: "string", enum: ["list", "form"] },
+                      entity: { type: "string" },
+                      route: { type: "string" }
+                    }
+                  }
+                }
               }
             }
           }

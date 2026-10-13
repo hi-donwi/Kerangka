@@ -20,7 +20,8 @@
     "@kerangka/adapter-sqlite": "*",
     "@kerangka/compiler": "*",
     "@kerangka/engine-ts": "*",
-    "@kerangka/ports": "*"
+    "@kerangka/ports": "*",
+    "@kerangka/uidl-projector": "*"
   },
   "license": "Apache-2.0"
 }
