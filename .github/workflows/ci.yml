@@ -77,3 +77,29 @@ jobs:
 
       - name: Test Rust SDK
         run: cargo test --manifest-path sdk/rust/Cargo.toml
+
+      # The Go, Python, and Dart SDKs carried tests that no CI job ran, so a regression in them
+      # (or a fail-open gap, ADR-0044) could ship unseen. They run here now.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sdk/go/go.mod
+
+      - name: Test Go SDK
+        working-directory: sdk/go
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Test Python SDK
+        run: PYTHONPATH=sdk/python/src python3 -m unittest discover -s sdk/python/tests
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+
+      - name: Test Dart SDK
+        working-directory: sdk/dart
+        run: |
+          dart pub get
+          dart analyze
+          dart test
