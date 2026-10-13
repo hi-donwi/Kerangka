@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Dashboards are served at `GET /screens/{viewId}` through UIDL-Runtime's dashboard recipe, with
+  the caller's figures (ADR-0045 amendment). `Engine.kpiSource` and `Engine.kpiValue` compute a
+  KPI with K1's own `count`, `sum`, and `avg` over the records its `where` admits; the server
+  passes only the records the caller may read, leaves out a KPI over an entity the caller may not
+  read, and shows no number for a KPI that cannot be evaluated. `@kerangka/uidl-projector`
+  requires `uidl-runtime` 0.1.7 for the KPI `format`.
 - Screens compiled per request through UIDL recipes (ADR-0045). `@kerangka/uidl-projector` maps
   list and form views onto `uidl-runtime/recipes` (workflow transitions and input-free actions
   become buttons; `navigation` becomes a shell), and the server serves `GET /screens`,

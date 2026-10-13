@@ -45,7 +45,8 @@ Mapping onto them showed that the recipes and `kerangka uidl` assume different h
   - A record screen embeds the record only when the actor may read it: its read permission and
     its read filter both apply (ADR-0040, ADR-0044).
 - **Dashboards stay with the compiler's UIDL generator** under `/uidl`, together with everything
-  else `kerangka uidl` writes, until the dashboard recipe can bind a KPI to a query.
+  else `kerangka uidl` writes, until the dashboard recipe can bind a KPI to a query. (Superseded
+  by the amendment below: dashboards are served at `/screens` with values the server computes.)
 
 ## Consequences
 
@@ -76,3 +77,41 @@ Mapping onto them showed that the recipes and `kerangka uidl` assume different h
 | Keep `kerangka uidl` static and map onto the recipes there | Every mismatch above becomes glue in the bridge, and a static edit form cannot carry the record's version |
 | Import `uidl-runtime` into `@kerangka/compiler` | The compiler stays free of dependencies (ADR-0038's reasoning), and React would come with it |
 | Use the recipes only for the shell and auth around the generator's screens | Leaves two implementations of a list and a form, which is what ADR-0043 set out to remove |
+
+## Amendment (2026-10-13): dashboards, with the caller's figures
+
+`uidl-runtime@0.1.7` lets a dashboard KPI bind its value to data. Binding a Kerangka KPI to a
+`$query` turned out to be the wrong mapping, for three reasons found while mapping it:
+
+- The bridge reads one page of rows (50 by default). A `sum` or `avg` over the page is not the
+  aggregate over the collection, and the generator's binding (`rows[0].<field>`) was not even
+  that: it showed the first row's value.
+- A KPI's `where` is K1 (`status == 'sent' && dueDate < today()`). A `$query` filter holds one
+  comparison per row against a literal, so the generator dropped any `where` it could not lower,
+  and "Overdue" counted every invoice.
+- A KPI is a number about records, and who may see it depends on who may read them. A static
+  document shows every caller the same figures.
+
+**A dashboard is compiled with figures the server computes for the caller.**
+
+- `Engine.kpiSource` names a KPI's aggregate, entity, and numeric field; `Engine.kpiValue`
+  decodes each record, keeps those its `where` admits, and aggregates them with K1's own `count`,
+  `sum`, and `avg`, so a KPI means what the same expression means anywhere else in the model.
+  A KPI the engine cannot evaluate is `KPI_INVALID`, never a partial number.
+- `KerangkaServer` passes only the records the caller may read (the read permission, per record,
+  and the read filter). A KPI over an entity the caller may not read is left out, not shown as
+  zero; one that cannot be evaluated shows no number, and its reason stays on the server.
+- `RecipeProjector.dashboard(viewId, results)` maps the figures onto `compileDashboardPage`, with
+  `integer` for a count and `number` otherwise. It does no I/O; the host computes.
+
+Consequences:
+
+- `/uidl` and `/screens` now both serve dashboards. The generator's dashboards still have the two
+  defects above; they are recorded for the generator, not fixed here.
+- The figures are as of the request. A dashboard that should update while open re-requests its
+  screen; binding to live data sources stays available to hosts that can aggregate server-side.
+- Computing a KPI reads every record of its entity the caller may read, in memory, as a read
+  filter's list already does. A store-level aggregate is the optimisation when that is too slow.
+- `uidl-runtime@0.1.7` declares `react` and `react-dom` as optional peers but still lists them,
+  and `@dnd-kit/*` that requires React, as dependencies, so npm still installs React here. The
+  Negative consequence above stands until UIDL-Runtime moves them.
