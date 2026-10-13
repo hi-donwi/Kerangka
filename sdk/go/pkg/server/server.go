@@ -66,6 +66,9 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "Entity Not Found", fmt.Sprintf("Unknown entity '%s'", entity))
 		return
 	}
+	if !s.authorizeRead(w, r, entity) {
+		return
+	}
 
 	tenantID := r.Header.Get("X-Tenant-ID")
 	result, err := s.store.Find(r.Context(), entity, nil, ports.QueryOptions{
@@ -87,6 +90,9 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "Entity Not Found", fmt.Sprintf("Unknown entity '%s'", entity))
 		return
 	}
+	if !s.authorizeRead(w, r, entity) {
+		return
+	}
 
 	tenantID := r.Header.Get("X-Tenant-ID")
 	record, err := s.store.Get(r.Context(), entity, id, tenantID)
@@ -104,6 +110,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusNotFound, "Entity Not Found", fmt.Sprintf("Unknown entity '%s'", entity))
 		return
 	}
+	if !s.authorize(w, r, entity, "create") {
+		return
+	}
 
 	var payload map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -112,23 +121,8 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate against invariants and rules
-	valRes := s.engine.Validate(entity, payload)
-	if !valRes.Valid {
-		invalidParams := make([]map[string]any, len(valRes.Errors))
-		for i, e := range valRes.Errors {
-			invalidParams[i] = map[string]any{
-				"name":    e.Field,
-				"reason":  e.Message,
-				"code":    e.Code,
-			}
-		}
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-			"type":           "https://kerangka.dev/errors/validation-error",
-			"title":          "Validation Failed",
-			"status":         http.StatusUnprocessableEntity,
-			"detail":         "One or more validation constraints were violated",
-			"invalid-params": invalidParams,
-		})
+	if valRes := s.engine.Validate(entity, payload); !valRes.Valid {
+		writeValidationProblem(w, valRes)
 		return
 	}
 
@@ -153,6 +147,10 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.authorize(w, r, entity, "update") {
+		return
+	}
+
 	var patch map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		writeProblem(w, http.StatusBadRequest, "Invalid JSON", err.Error())
@@ -160,6 +158,26 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := r.Header.Get("X-Tenant-ID")
+	existing, err := s.store.Get(r.Context(), entity, id, tenantID)
+	if err != nil || existing == nil {
+		writeProblem(w, http.StatusNotFound, "Not Found", fmt.Sprintf("Record '%s' not found in entity '%s'", id, entity))
+		return
+	}
+
+	// The record as it will be stored is held to the same rules as a created one; an update
+	// used to be written without any validation.
+	merged := make(map[string]any, len(existing)+len(patch))
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for k, v := range patch {
+		merged[k] = v
+	}
+	if valRes := s.engine.Validate(entity, merged); !valRes.Valid {
+		writeValidationProblem(w, valRes)
+		return
+	}
+
 	updated, err := s.store.Update(r.Context(), entity, id, patch, tenantID)
 	if err != nil {
 		writeProblem(w, http.StatusNotFound, "Not Found", err.Error())
@@ -175,6 +193,9 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, ok := s.doc.Entities[entity]; !ok {
 		writeProblem(w, http.StatusNotFound, "Entity Not Found", fmt.Sprintf("Unknown entity '%s'", entity))
+		return
+	}
+	if !s.authorize(w, r, entity, "delete") {
 		return
 	}
 
@@ -204,19 +225,14 @@ func (s *Server) handleTransition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse actor roles from header
-	var actorRoles []string
-	if rolesHeader := r.Header.Get("X-Actor-Roles"); rolesHeader != "" {
-		for _, r := range strings.Split(rolesHeader, ",") {
-			actorRoles = append(actorRoles, strings.TrimSpace(r))
-		}
-	}
-
-	result, err := s.engine.Transition(entity, existing, transition, actorRoles)
+	result, err := s.engine.Transition(entity, existing, transition, actorRoles(r))
 	if err != nil || !result.OK {
 		status := http.StatusUnprocessableEntity
-		if result.Error == "PERMISSION_DENIED" {
+		switch result.Error {
+		case "PERMISSION_DENIED":
 			status = http.StatusForbidden
+		case "GUARD_UNSUPPORTED":
+			status = http.StatusNotImplemented
 		}
 		writeProblem(w, status, "Transition Failed", result.Message)
 		return
@@ -231,6 +247,66 @@ func (s *Server) handleTransition(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"record": result.Record,
 		"events": result.Events,
+	})
+}
+
+// actorRoles reads the caller's roles from X-Actor-Roles, as the TypeScript adapter does.
+func actorRoles(r *http.Request) []string {
+	var roles []string
+	if header := r.Header.Get("X-Actor-Roles"); header != "" {
+		for _, role := range strings.Split(header, ",") {
+			if role = strings.TrimSpace(role); role != "" {
+				roles = append(roles, role)
+			}
+		}
+	}
+	return roles
+}
+
+// authorize writes the refusal and returns false when the caller may not perform the
+// operation: 403 when it is denied, 501 when deciding needs what this engine cannot do yet.
+func (s *Server) authorize(w http.ResponseWriter, r *http.Request, entity, operation string) bool {
+	decision := s.engine.Authorize(entity, operation, actorRoles(r))
+	if decision.Allowed {
+		return true
+	}
+	if decision.Code == "UNSUPPORTED" {
+		writeProblem(w, http.StatusNotImplemented, "Not Supported By This Engine", decision.Reason)
+		return false
+	}
+	writeProblem(w, http.StatusForbidden, "Permission Denied", decision.Reason)
+	return false
+}
+
+// authorizeRead adds the read filter to the read permission: a filter this engine cannot apply
+// refuses the read, because skipping it would return every row (ADR-0040).
+func (s *Server) authorizeRead(w http.ResponseWriter, r *http.Request, entity string) bool {
+	if !s.authorize(w, r, entity, "read") {
+		return false
+	}
+	if s.engine.HasReadFilter(entity) {
+		writeProblem(w, http.StatusNotImplemented, "Not Supported By This Engine",
+			fmt.Sprintf("'%s' declares a readFilter, which this engine cannot apply yet", entity))
+		return false
+	}
+	return true
+}
+
+func writeValidationProblem(w http.ResponseWriter, valRes engine.ValidationResult) {
+	invalidParams := make([]map[string]any, len(valRes.Errors))
+	for i, e := range valRes.Errors {
+		invalidParams[i] = map[string]any{
+			"name":   e.Field,
+			"reason": e.Message,
+			"code":   e.Code,
+		}
+	}
+	writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+		"type":           "https://kerangka.dev/errors/validation-error",
+		"title":          "Validation Failed",
+		"status":         http.StatusUnprocessableEntity,
+		"detail":         "One or more validation constraints were violated",
+		"invalid-params": invalidParams,
 	})
 }
 

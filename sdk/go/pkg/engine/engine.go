@@ -31,6 +31,15 @@ type ExecutionResult struct {
 	Events  []map[string]any
 }
 
+// Decision is the outcome of an authorization check.
+type Decision struct {
+	Allowed bool
+	// Code is PERMISSION_DENIED, or UNSUPPORTED when deciding needs something this engine
+	// cannot do yet (evaluating a condition); the caller must refuse either way.
+	Code   string
+	Reason string
+}
+
 // ReferenceEngine is the Go implementation of the pure engine.
 type ReferenceEngine struct {
 	doc *kir.Document
@@ -147,6 +156,68 @@ func (e *ReferenceEngine) Validate(entityName string, record map[string]any) Val
 	return ValidationResult{Valid: len(errs) == 0, Errors: errs}
 }
 
+// Authorize decides whether actor roles may perform a CRUD operation on an entity
+// (ADR-0044). An operation the model does not mention is open. A role list grants the roles
+// it names, and an empty list grants no one. A role map grants roles mapped to true; a role
+// mapped to a condition cannot be decided here, because this engine has no expression
+// evaluator yet, so it is refused as UNSUPPORTED rather than guessed (ADR-0008).
+func (e *ReferenceEngine) Authorize(entityName, operation string, roles []string) Decision {
+	entity, ok := e.doc.Entities[entityName]
+	if !ok {
+		return Decision{Code: "UNKNOWN_ENTITY", Reason: fmt.Sprintf("unknown entity '%s'", entityName)}
+	}
+	declared, mentioned := entity.Permissions[operation]
+	if !mentioned {
+		return Decision{Allowed: true}
+	}
+	has := func(role string) bool {
+		for _, r := range roles {
+			if r == role {
+				return true
+			}
+		}
+		return false
+	}
+	switch grant := declared.(type) {
+	case []any:
+		for _, r := range grant {
+			if role, ok := r.(string); ok && has(role) {
+				return Decision{Allowed: true}
+			}
+		}
+		if len(grant) == 0 {
+			return Decision{Code: "PERMISSION_DENIED", Reason: fmt.Sprintf("'%s' on '%s' is granted to no role", operation, entityName)}
+		}
+		return Decision{Code: "PERMISSION_DENIED", Reason: fmt.Sprintf("'%s' on '%s' requires one of %v", operation, entityName, grant)}
+	case map[string]any:
+		conditional := false
+		for role, value := range grant {
+			if !has(role) {
+				continue
+			}
+			if value == true {
+				return Decision{Allowed: true}
+			}
+			if _, ok := value.(string); ok {
+				conditional = true
+			}
+		}
+		if conditional {
+			return Decision{Code: "UNSUPPORTED", Reason: fmt.Sprintf("'%s' on '%s' is granted to this actor only under a condition, which this engine cannot evaluate yet", operation, entityName)}
+		}
+		return Decision{Code: "PERMISSION_DENIED", Reason: fmt.Sprintf("'%s' on '%s' is not granted to this actor", operation, entityName)}
+	default:
+		return Decision{Code: "PERMISSION_DENIED", Reason: fmt.Sprintf("'%s' on '%s' has a permission this engine cannot read", operation, entityName)}
+	}
+}
+
+// HasReadFilter reports whether reads of the entity are filtered per record (ADR-0040), which
+// this engine cannot apply yet, so a server must refuse the read instead of skipping the filter.
+func (e *ReferenceEngine) HasReadFilter(entityName string) bool {
+	entity, ok := e.doc.Entities[entityName]
+	return ok && entity.ReadFilter != nil
+}
+
 // Transition executes a state transition deterministically.
 func (e *ReferenceEngine) Transition(
 	entityName string,
@@ -222,6 +293,16 @@ func (e *ReferenceEngine) Transition(
 			OK:      false,
 			Error:   "INVALID_STATE_TRANSITION",
 			Message: fmt.Sprintf("cannot transition '%s' from state '%s'", transitionName, currentStatus),
+		}, nil
+	}
+
+	// A guard this engine cannot evaluate refuses the transition rather than skipping it:
+	// skipping runs a transition the model forbids (ADR-0008).
+	if when, ok := tr["when"]; ok && when != nil {
+		return ExecutionResult{
+			OK:      false,
+			Error:   "GUARD_UNSUPPORTED",
+			Message: fmt.Sprintf("transition '%s' has a guard, which this engine cannot evaluate yet; run it through the reference engine", transitionName),
 		}, nil
 	}
 

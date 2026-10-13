@@ -29,6 +29,7 @@ type Entity struct {
 	Rules       []any          `json:"rules,omitempty"`
 	Invariants  []any          `json:"invariants,omitempty"`
 	Permissions map[string]any `json:"permissions,omitempty"`
+	ReadFilter  any            `json:"readFilter,omitempty"`
 	Workflow    map[string]any `json:"workflow,omitempty"`
 	Actions     map[string]any `json:"actions,omitempty"`
 }
