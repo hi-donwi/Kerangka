@@ -98,26 +98,52 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestFailClosed(unittest.TestCase):
-    """This engine has no expression evaluator yet; a guard it cannot evaluate must refuse the
-    transition rather than skip it, or it runs a transition the model forbids (ADR-0008)."""
+def _guarded(when):
+    return {
+        "kir": "0.1",
+        "app": "guards",
+        "entities": {
+            "Invoice": {
+                "fields": {"status": {"type": "enum", "values": ["draft", "sent"]}},
+                "workflow": {
+                    "field": "status",
+                    "transitions": {"send": {"from": "draft", "to": "sent", "when": when}},
+                },
+            }
+        },
+    }
 
-    def test_a_guarded_transition_is_refused_not_skipped(self):
-        doc = {
-            "kir": "0.1",
-            "app": "guards",
-            "entities": {
-                "Invoice": {
-                    "fields": {"status": {"type": "enum", "values": ["draft", "sent"]}},
-                    "workflow": {
-                        "field": "status",
-                        "transitions": {
-                            "send": {"from": "draft", "to": "sent", "when": {"$expr": ">", "args": []}}
-                        },
-                    },
-                }
-            },
-        }
-        result = ReferenceEngine(doc).transition("Invoice", {"status": "draft"}, "send")
+
+class TestFailClosed(unittest.TestCase):
+    """A guard this subset cannot evaluate must refuse the transition rather than skip it
+    (ADR-0008). A comparison it can evaluate must be true before the transition runs."""
+
+    def test_an_unsupported_guard_is_refused_not_skipped(self):
+        result = ReferenceEngine(_guarded({"$expr": "today", "args": []})).transition(
+            "Invoice", {"status": "draft"}, "send"
+        )
         self.assertFalse(result.ok)
         self.assertEqual(result.error, "GUARD_UNSUPPORTED")
+
+    def test_a_true_comparison_guard_allows_the_transition(self):
+        when = {"$expr": "==", "args": [{"$bind": "status"}, {"literal": "draft"}]}
+        result = ReferenceEngine(_guarded(when)).transition("Invoice", {"status": "draft"}, "send")
+        self.assertTrue(result.ok)
+        self.assertEqual(result.record["status"], "sent")
+
+    def test_a_conjunction_guard_allows_the_transition(self):
+        when = {
+            "$expr": "&&",
+            "args": [
+                {"$expr": "==", "args": [{"$bind": "status"}, {"literal": "draft"}]},
+                {"$expr": "!=", "args": [{"$bind": "status"}, {"literal": "sent"}]},
+            ],
+        }
+        result = ReferenceEngine(_guarded(when)).transition("Invoice", {"status": "draft"}, "send")
+        self.assertTrue(result.ok)
+
+    def test_a_false_comparison_guard_does_not_run_the_transition(self):
+        when = {"$expr": "==", "args": [{"$bind": "status"}, {"literal": "sent"}]}
+        result = ReferenceEngine(_guarded(when)).transition("Invoice", {"status": "draft"}, "send")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "GUARD_FAILED")

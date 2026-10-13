@@ -35,7 +35,7 @@ func guardedDocument() *kir.Document {
 				Workflow: map[string]any{
 					"field": "status",
 					"transitions": map[string]any{
-						"send": map[string]any{"from": "draft", "to": "sent", "when": map[string]any{"$expr": ">", "args": []any{}}},
+						"send": map[string]any{"from": "draft", "to": "sent", "when": map[string]any{"$expr": "today", "args": []any{}}},
 					},
 				},
 			},

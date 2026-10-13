@@ -131,32 +131,76 @@ void main() {
     });
   });
 
-  // This engine has no expression evaluator yet; a guard it cannot evaluate must refuse the
-  // transition rather than skip it, or it runs a transition the model forbids (ADR-0008).
-  test('a guarded transition is refused, not skipped', () {
-    final engine = ReferenceEngine({
-      'kir': '0.1',
-      'app': 'guards',
-      'entities': {
-        'Invoice': {
-          'fields': {
-            'status': {'type': 'enum', 'values': ['draft', 'sent']},
-          },
-          'workflow': {
-            'field': 'status',
-            'transitions': {
-              'send': {
-                'from': 'draft',
-                'to': 'sent',
-                'when': {'\$expr': '>', 'args': []},
+  Map<String, dynamic> guarded(Object when) => {
+        'kir': '0.1',
+        'app': 'guards',
+        'entities': {
+          'Invoice': {
+            'fields': {
+              'status': {'type': 'enum', 'values': ['draft', 'sent']},
+            },
+            'workflow': {
+              'field': 'status',
+              'transitions': {
+                'send': {'from': 'draft', 'to': 'sent', 'when': when},
               },
             },
           },
         },
-      },
-    });
-    final result = engine.transition('Invoice', {'status': 'draft'}, 'send');
+      };
+
+  // An operator outside the subset must refuse the transition rather than skip it (ADR-0008).
+  test('an unsupported guard is refused, not skipped', () {
+    final result = ReferenceEngine(guarded({r'$expr': 'today', 'args': []}))
+        .transition('Invoice', {'status': 'draft'}, 'send');
     expect(result.ok, isFalse);
     expect(result.error, equals('GUARD_UNSUPPORTED'));
+  });
+
+  test('a true comparison guard allows the transition', () {
+    final result = ReferenceEngine(guarded({
+      r'$expr': '==',
+      'args': [
+        {r'$bind': 'status'},
+        {'literal': 'draft'},
+      ],
+    })).transition('Invoice', {'status': 'draft'}, 'send');
+    expect(result.ok, isTrue);
+    expect(result.record?['status'], equals('sent'));
+  });
+
+  test('a conjunction guard allows the transition', () {
+    final result = ReferenceEngine(guarded({
+      r'$expr': '&&',
+      'args': [
+        {
+          r'$expr': '==',
+          'args': [
+            {r'$bind': 'status'},
+            {'literal': 'draft'},
+          ],
+        },
+        {
+          r'$expr': '!=',
+          'args': [
+            {r'$bind': 'status'},
+            {'literal': 'sent'},
+          ],
+        },
+      ],
+    })).transition('Invoice', {'status': 'draft'}, 'send');
+    expect(result.ok, isTrue);
+  });
+
+  test('a false comparison guard does not run the transition', () {
+    final result = ReferenceEngine(guarded({
+      r'$expr': '==',
+      'args': [
+        {r'$bind': 'status'},
+        {'literal': 'sent'},
+      ],
+    })).transition('Invoice', {'status': 'draft'}, 'send');
+    expect(result.ok, isFalse);
+    expect(result.error, equals('GUARD_FAILED'));
   });
 }

@@ -296,14 +296,17 @@ func (e *ReferenceEngine) Transition(
 		}, nil
 	}
 
-	// A guard this engine cannot evaluate refuses the transition rather than skipping it:
-	// skipping runs a transition the model forbids (ADR-0008).
+	// A guard this subset cannot evaluate refuses the transition rather than skipping it.
+	// A guard it can evaluate must be true; false is GUARD_FAILED, not a skipped check (ADR-0008).
 	if when, ok := tr["when"]; ok && when != nil {
-		return ExecutionResult{
-			OK:      false,
-			Error:   "GUARD_UNSUPPORTED",
-			Message: fmt.Sprintf("transition '%s' has a guard, which this engine cannot evaluate yet; run it through the reference engine", transitionName),
-		}, nil
+		allowed, code := guardAllows(when, record)
+		if !allowed {
+			message := fmt.Sprintf("transition '%s' guard evaluated to false", transitionName)
+			if code == "GUARD_UNSUPPORTED" {
+				message = fmt.Sprintf("transition '%s' has a guard this engine cannot evaluate yet; run it through the reference engine", transitionName)
+			}
+			return ExecutionResult{OK: false, Error: code, Message: message}, nil
+		}
 	}
 
 	nextRecord := e.Compute(entityName, record)

@@ -9,6 +9,8 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 import datetime
 
+from .eval import guard_allows
+
 
 @dataclass
 class ValidationErrorItem:
@@ -151,15 +153,19 @@ class ReferenceEngine:
                 message=f"Cannot transition '{transition_name}' from state '{current_state}'"
             )
 
-        # A guard this engine cannot evaluate refuses the transition rather than skipping it:
-        # skipping runs a transition the model forbids (ADR-0008).
-        if transition_def.get("when") is not None:
-            return ExecutionResult(
-                ok=False,
-                error="GUARD_UNSUPPORTED",
-                message=f"Transition '{transition_name}' has a guard, which this engine cannot evaluate yet; "
-                "run it through the reference engine",
-            )
+        # A guard this subset cannot evaluate refuses the transition. One it can evaluate
+        # must be true; false is GUARD_FAILED, not a skipped check (ADR-0008).
+        when = transition_def.get("when")
+        if when is not None:
+            allowed, code = guard_allows(when, record)
+            if not allowed:
+                message = f"Transition '{transition_name}' guard evaluated to false"
+                if code == "GUARD_UNSUPPORTED":
+                    message = (
+                        f"Transition '{transition_name}' has a guard this engine cannot evaluate yet; "
+                        "run it through the reference engine"
+                    )
+                return ExecutionResult(ok=False, error=code, message=message)
 
         # Apply state transition
         next_record = self.compute(entity_name, dict(record))

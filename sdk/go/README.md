@@ -17,16 +17,19 @@ The Kerangka Go SDK provides high-performance, idiomatic Go bindings for executi
 
 ## What this engine does not do yet
 
-There is no expression evaluator in this SDK yet. Anything that needs one is refused rather
-than skipped, because skipping would grant what the model forbids (ADR-0008, ADR-0044):
+The expression evaluator covers the comparisons and boolean connectives a guard is written
+in (`==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `!`, and field binds). Anything outside that
+subset is refused rather than skipped, because skipping would grant what the model forbids
+(ADR-0008, ADR-0044):
 
 | Model declares | This SDK |
 |---|---|
-| A transition guard (`when`) | `GUARD_UNSUPPORTED`; the server answers 501 |
+| A transition guard in the comparison subset | Evaluated. False is `GUARD_FAILED` (422), not a skipped check |
+| A transition guard outside that subset (`today()`, `sum`, a call) | `GUARD_UNSUPPORTED`; the server answers 501 |
 | A role-map permission with a condition (`"billing": "status == 'draft'"`) | 501 for that caller; roles mapped to `true` and role lists are enforced |
 | A `readFilter` | Reads of that entity answer 501 |
 
-Run those models through the reference engine (`kerangka serve`) until the evaluator lands.
+Run models that need the rest through the reference engine (`kerangka serve`) until it lands.
 
 ## Usage
 

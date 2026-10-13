@@ -3,6 +3,8 @@
 /// Status: Draft
 /// License: Apache-2.0
 
+import 'eval.dart';
+
 class ValidationErrorItem {
   final String message;
   final String? field;
@@ -224,15 +226,18 @@ class ReferenceEngine {
       );
     }
 
-    // A guard this engine cannot evaluate refuses the transition rather than skipping it:
-    // skipping runs a transition the model forbids (ADR-0008).
-    if (transitionDef['when'] != null) {
-      return ExecutionResult(
-        ok: false,
-        error: 'GUARD_UNSUPPORTED',
-        message: "Transition '$transitionName' has a guard, which this engine cannot evaluate yet; "
-            'run it through the reference engine',
-      );
+    // A guard this subset cannot evaluate refuses the transition. One it can evaluate
+    // must be true; false is GUARD_FAILED, not a skipped check (ADR-0008).
+    final when = transitionDef['when'];
+    if (when != null) {
+      final decision = guardAllows(when, record);
+      if (!decision.$1) {
+        final message = decision.$2 == 'GUARD_UNSUPPORTED'
+            ? "Transition '$transitionName' has a guard this engine cannot evaluate yet; "
+                'run it through the reference engine'
+            : "Transition '$transitionName' guard evaluated to false";
+        return ExecutionResult(ok: false, error: decision.$2, message: message);
+      }
     }
 
     // Apply state transition
