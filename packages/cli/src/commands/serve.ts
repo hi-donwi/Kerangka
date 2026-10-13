@@ -64,6 +64,9 @@ export async function serveCommand(filePath: string, options: ServeOptions = {})
       host: options.host || "0.0.0.0",
       store: new MemoryStore(),
       quiet: options.quiet ?? false,
+      // No devActor: a deployed server takes the actor from each request (X-Actor-Id,
+      // X-Actor-Roles), set by the host's authentication in front of it, and a request that
+      // names no one holds no role.
     });
 
     await server.start();

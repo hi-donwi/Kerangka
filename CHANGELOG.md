@@ -51,6 +51,11 @@ All notable changes to this project are documented here. The format follows
 - `kerangka expand` prints `{ "entities", "views" }`, so an expanded view template is visible.
 
 ### Fixed
+- **`kerangka serve` enforced no authorization** (ADR-0044 amendment). `KerangkaServer` checked no
+  entity permission on REST or MCP, ignored read filters, let MCP create and update store
+  unvalidated records, and ran an action from a caller with no actor as admin (or as any roles
+  its body named). It now authorizes every path as the Hono adapter does; a request that names no
+  actor holds no role, and acting without one is the `devActor` option `kerangka dev` sets.
 - The Go, Python, and Dart engines fail closed where they used to fail open. None of them has an
   expression evaluator yet, so a transition with a guard ran as if the guard passed; it is now
   refused with `GUARD_UNSUPPORTED`. The Go REST server enforced no entity permissions, skipped

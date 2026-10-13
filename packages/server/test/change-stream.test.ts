@@ -13,6 +13,15 @@ import { compile } from "@kerangka/compiler";
 import { MemoryStore } from "@kerangka/ports";
 import { KerangkaServer, type ChangeEvent } from "../src/index.js";
 
+/**
+ * These suites test what the server does for an authorized caller, so they run it as the dev
+ * server does: a request with no actor acts as one holding every role the model declares.
+ * `authorization.test.ts` covers the server with no dev actor.
+ */
+function devActorFor(model: { roles?: string[] }) {
+  return { id: "dev-user", roles: model.roles ?? [] };
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const invoicingPath = path.resolve(here, "../../../examples/invoicing.kerangka.json");
 
@@ -84,7 +93,7 @@ describe("KerangkaServer change stream", () => {
 
   beforeAll(async () => {
     const kir = compile(fs.readFileSync(invoicingPath, "utf-8"));
-    server = new KerangkaServer(kir, { port, store: new MemoryStore(), quiet: true });
+    server = new KerangkaServer(kir, { devActor: devActorFor(kir), port, store: new MemoryStore(), quiet: true });
     await server.start();
   });
 

@@ -5,6 +5,15 @@ import { MemoryScheduler, MemoryStore } from "@kerangka/ports";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+/**
+ * These suites test what the server does for an authorized caller, so they run it as the dev
+ * server does: a request with no actor acts as one holding every role the model declares.
+ * `authorization.test.ts` covers the server with no dev actor.
+ */
+function devActorFor(model: { roles?: string[] }) {
+  return { id: "dev-user", roles: model.roles ?? [] };
+}
+
 describe("SchedulerRunner and Server Timer Execution", () => {
   it("polls and executes due transition timers as system actor", async () => {
     const rawJson = readFileSync(
@@ -16,6 +25,7 @@ describe("SchedulerRunner and Server Timer Execution", () => {
     const scheduler = new MemoryScheduler();
 
     const server = new KerangkaServer(kir, {
+      devActor: devActorFor(kir),
       store,
       scheduler,
       quiet: true,
@@ -68,6 +78,7 @@ describe("SchedulerRunner and Server Timer Execution", () => {
     const scheduler = new MemoryScheduler();
 
     const server = new KerangkaServer(kir, {
+      devActor: devActorFor(kir),
       store,
       scheduler,
       quiet: true,

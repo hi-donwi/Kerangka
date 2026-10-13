@@ -26,7 +26,8 @@ import {
   StoreScheduler,
   ScheduledJob,
 } from "@kerangka/ports";
-import { CloudEvent, Effect, Engine } from "@kerangka/engine-ts";
+import { CloudEvent, Effect, Engine, type ActorContext } from "@kerangka/engine-ts";
+import { equalityConstraints, evaluateWhereInMemory } from "@kerangka/adapter-hono";
 import { SchedulerRunner } from "./scheduler-runner.js";
 import { SessionStoreLike } from "./session-store.js";
 import type { HostEffectEntry, OutboxEntry } from "./session-store.js";
@@ -60,6 +61,15 @@ export interface ServerOptions {
   enableSchedulerRunner?: boolean;
   runnerPollIntervalMs?: number;
   quiet?: boolean;
+  /**
+   * The actor a request acts as when it carries none (`X-Actor-*` headers, MCP `roles`).
+   *
+   * For a local playground only: `kerangka dev` sets it so the page can drive guarded actions
+   * without a login. A deployed server leaves it unset, and a request with no actor holds no
+   * role. It used to be implicit — every anonymous action ran as `admin` and `billing`, or as
+   * whatever roles its body named.
+   */
+  devActor?: ActorContext;
 }
 
 /**
@@ -222,6 +232,9 @@ export class KerangkaServer {
    */
   private changeStreams = new Map<string, Set<ChangeSubscriber>>();
 
+  /** See `ServerOptions.devActor`. */
+  private readonly devActor?: ActorContext;
+
 
   constructor(kir: KIRDocument, options: ServerOptions = {}) {
     this.kir = kir;
@@ -233,6 +246,7 @@ export class KerangkaServer {
     this.connectors = options.connectors || new DefaultConnectors();
     this.scheduler = options.scheduler || new StoreScheduler(this.store);
     this.session = options.session ?? null;
+    this.devActor = options.devActor;
     this.engine = new Engine(kir);
 
     this.runner = new SchedulerRunner({
@@ -395,20 +409,53 @@ export class KerangkaServer {
     const actorId = req.headers["x-actor-id"] as string | undefined;
     const rolesHeader = req.headers["x-actor-roles"] as string | undefined;
     const actorRoles = rolesHeader ? rolesHeader.split(",").map((r) => r.trim()).filter(Boolean) : undefined;
-    const actor = actorId || actorRoles || tenantId ? { id: actorId, roles: actorRoles ?? [], tenantId } : undefined;
+    // A request that names no one (no id, no roles) acts as the dev actor when a playground set
+    // one, in the tenant it asked for; otherwise it holds no role.
+    const namesSomeone = Boolean(actorId || actorRoles);
+    const actor: ActorContext | undefined = namesSomeone
+      ? { id: actorId, roles: actorRoles ?? [], tenantId }
+      : this.devActor
+        ? { ...this.devActor, ...(tenantId ? { tenantId } : {}) }
+        : tenantId
+          ? { roles: [], tenantId }
+          : undefined;
 
     // Collection endpoint: /api/{entity}
     if (parts.length === 1) {
       if (method === "GET") {
+        if (!this.authorize(res, entityName, "read", actor, undefined, { listing: true })) return;
+        const readScope = this.engine.authorizeRead(entityName, actor);
+        if (!readScope.allowed) {
+          this.sendProblem(res, 403, "Forbidden", readScope.reason ?? "Read denied.", readScope.code ?? "PERMISSION_DENIED");
+          return;
+        }
+
         const limit = parseInt(url.searchParams.get("limit") || "50", 10);
         const offset = parseInt(url.searchParams.get("offset") || "0", 10);
         const sort = parseSortParam(url.searchParams.get("sort"));
         const where = parseWhereParam(url.searchParams.get("where"));
         const search = url.searchParams.get("search") || undefined;
-        const filter: Record<string, string> = {};
+        const filter: Record<string, unknown> = {};
         for (const [key, value] of url.searchParams.entries()) {
           if (!["limit", "offset", "sort", "tenantId", "where", "search"].includes(key)) filter[key] = value;
         }
+
+        if (readScope.where) {
+          // The read filter references the actor, which a storage adapter has no context for:
+          // push down only its equalities, then evaluate it here before paging (ADR-0040).
+          const pushdown = { ...equalityConstraints(readScope.where, actor), ...filter };
+          const found = await this.store.find(entityName, Object.keys(pushdown).length > 0 ? pushdown : undefined, {
+            tenantId,
+            sort,
+            where,
+            search,
+          });
+          const visible = evaluateWhereInMemory(found.items as Record<string, unknown>[], readScope.where, actor);
+          res.setHeader("X-Total-Count", String(visible.length));
+          this.sendJson(res, 200, visible.slice(offset, offset + limit));
+          return;
+        }
+
         const queryResult = await this.store.find(entityName, Object.keys(filter).length > 0 ? filter : undefined, {
           limit,
           offset,
@@ -424,6 +471,7 @@ export class KerangkaServer {
 
       if (method === "POST") {
         const body = await this.readJsonBody(req);
+        if (!this.authorize(res, entityName, "create", actor, body)) return;
 
         // Validation
         const bodyWithDefaults = this.engine.applyDefaults(entityName, body, actor, new Date());
@@ -484,11 +532,12 @@ export class KerangkaServer {
       const id = parts[1] || "";
 
       if (method === "GET") {
-        const item = await this.store.get(entityName, id, { tenantId });
+        const item = await this.store.get<Record<string, unknown>>(entityName, id, { tenantId });
         if (!item) {
           this.sendProblem(res, 404, "Not Found", `${entityName} with id '${id}' not found.`, "NOT_FOUND");
           return;
         }
+        if (!this.authorizeRecordRead(res, entityName, actor, item)) return;
         this.sendJson(res, 200, item);
         return;
       }
@@ -500,6 +549,8 @@ export class KerangkaServer {
           this.sendProblem(res, 404, "Not Found", `${entityName} with id '${id}' not found.`, "NOT_FOUND");
           return;
         }
+        // Decided against the record as stored, before the change, so a body cannot grant itself.
+        if (!this.authorize(res, entityName, "update", actor, existing)) return;
 
         const rawExpectedVersion = (req.headers["if-match"] as string) || (req.headers["x-expected-version"] as string);
         const expectedVersion = rawExpectedVersion ? parseInt(rawExpectedVersion.replace(/"/g, ""), 10) : undefined;
@@ -544,6 +595,12 @@ export class KerangkaServer {
       }
 
       if (method === "DELETE") {
+        const existing = await this.store.get<Record<string, unknown>>(entityName, id, { tenantId });
+        if (!existing) {
+          this.sendProblem(res, 404, "Not Found", `${entityName} with id '${id}' not found.`, "NOT_FOUND");
+          return;
+        }
+        if (!this.authorize(res, entityName, "delete", actor, existing)) return;
         const soft = url.searchParams.get("soft") === "true";
         await this.store.delete(entityName, id, {
           tenantId,
@@ -570,7 +627,8 @@ export class KerangkaServer {
           return;
         }
 
-        const actionActor = actor ?? { id: "dev-user", roles: body.roles || ["admin", "billing"] };
+        // The actor is the request's, or the dev actor a playground opted into; never the body's.
+        const actionActor = actor;
 
         // Check if transition or custom action
         const entityDef = this.kir.entities[entityName];
@@ -645,21 +703,119 @@ export class KerangkaServer {
     this.sendProblem(res, 404, "Not Found", `No matching route for ${pathname}`, "NOT_FOUND");
   }
 
+  /**
+   * Writes the refusal and returns false when `actor` may not perform `operation` (ADR-0044).
+   * A grant that depends on the record is decided against `record`; a list has no record to
+   * decide it against without reading rows the actor may not see, so it is refused with the
+   * advice to declare the condition as a readFilter (ADR-0040).
+   */
+  private authorize(
+    res: http.ServerResponse,
+    entityName: string,
+    operation: string,
+    actor: ActorContext | undefined,
+    record?: Record<string, unknown>,
+    options: { listing?: boolean } = {}
+  ): boolean {
+    const decision = this.permit(entityName, operation, actor, record, options);
+    if (decision.allowed) return true;
+    this.sendProblem(res, 403, "Forbidden", decision.reason, decision.code);
+    return false;
+  }
+
+  /** The authorization decision itself, shared by REST and MCP. */
+  private permit(
+    entityName: string,
+    operation: string,
+    actor: ActorContext | undefined,
+    record?: Record<string, unknown>,
+    options: { listing?: boolean } = {}
+  ): { allowed: true } | { allowed: false; code: string; reason: string } {
+    const decision = this.engine.canOperate(entityName, operation, actor, record);
+    if (decision.allowed) return { allowed: true };
+    const reason =
+      decision.code === "PERMISSION_NEEDS_RECORD" && options.listing
+        ? `${decision.reason}; a list cannot apply a per-record read condition, so declare it as the entity's readFilter instead`
+        : decision.reason ?? "Permission denied.";
+    return { allowed: false, code: decision.code ?? "PERMISSION_DENIED", reason };
+  }
+
+  /** Whether `actor` may read this one record: its read permission, then its read filter. */
+  private canReadRecord(
+    entityName: string,
+    actor: ActorContext | undefined,
+    record: Record<string, unknown>
+  ): { allowed: true } | { allowed: false; code: string; reason: string } {
+    const permitted = this.permit(entityName, "read", actor, record);
+    if (!permitted.allowed) return permitted;
+    const scope = this.engine.authorizeRead(entityName, actor);
+    if (!scope.allowed) {
+      return { allowed: false, code: scope.code ?? "PERMISSION_DENIED", reason: scope.reason ?? "Read denied." };
+    }
+    if (scope.where && evaluateWhereInMemory([record], scope.where, actor).length === 0) {
+      return { allowed: false, code: "PERMISSION_DENIED", reason: `Access to '${entityName}' is denied by its read filter.` };
+    }
+    return { allowed: true };
+  }
+
+  private authorizeRecordRead(
+    res: http.ServerResponse,
+    entityName: string,
+    actor: ActorContext | undefined,
+    record: Record<string, unknown>
+  ): boolean {
+    const decision = this.canReadRecord(entityName, actor, record);
+    if (decision.allowed) return true;
+    this.sendProblem(res, 403, "Forbidden", decision.reason, decision.code);
+    return false;
+  }
+
+  /**
+   * The actor an MCP call names in its arguments (`actorId`, `roles`, `tenantId`), or the dev
+   * actor, or none. Never a default role: a tool call with no actor holds no role.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private mcpActor(args: any): ActorContext | undefined {
+    const roles = Array.isArray(args.roles) ? args.roles.filter((r: unknown): r is string => typeof r === "string") : undefined;
+    const id = typeof args.actorId === "string" ? args.actorId : undefined;
+    const tenantId = typeof args.tenantId === "string" ? args.tenantId : undefined;
+    if (roles || id || tenantId) return { id, roles: roles ?? [], tenantId };
+    return this.devActor;
+  }
+
+  /** Throws the refusal for an MCP tool, which reports it as `isError`. */
+  private mcpRequire(decision: { allowed: true } | { allowed: false; code: string; reason: string }): void {
+    if (!decision.allowed) throw new Error(`${decision.code}: ${decision.reason}`);
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async handleMcpCall(body: any): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
     const { name, arguments: args = {} } = body;
+    const actor = this.mcpActor(args);
     try {
       if (name.startsWith("list_")) {
         const entityKey = name.replace("list_", "");
         const entityName = Object.keys(this.kir.entities).find((k) => k.toLowerCase() === entityKey);
         if (!entityName) throw new Error(`Unknown entity for list tool: ${entityKey}`);
 
-        const results = await this.store.find(entityName, args.filter, {
-          limit: args.limit || 50,
-          offset: args.offset || 0,
-        });
+        this.mcpRequire(this.permit(entityName, "read", actor, undefined, { listing: true }));
+        const scope = this.engine.authorizeRead(entityName, actor);
+        if (!scope.allowed) throw new Error(`${scope.code ?? "PERMISSION_DENIED"}: ${scope.reason ?? "Read denied."}`);
+
+        const limit = args.limit || 50;
+        const offset = args.offset || 0;
+        let items: unknown[];
+        if (scope.where) {
+          const pushdown = { ...equalityConstraints(scope.where, actor), ...(args.filter ?? {}) };
+          const found = await this.store.find(entityName, Object.keys(pushdown).length > 0 ? pushdown : undefined, {
+            tenantId: actor?.tenantId,
+          });
+          items = evaluateWhereInMemory(found.items as Record<string, unknown>[], scope.where, actor).slice(offset, offset + limit);
+        } else {
+          items = (await this.store.find(entityName, args.filter, { limit, offset, tenantId: actor?.tenantId })).items;
+        }
         return {
-          content: [{ type: "text", text: JSON.stringify(results.items, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify(items, null, 2) }],
         };
       }
 
@@ -668,8 +824,9 @@ export class KerangkaServer {
         const entityName = Object.keys(this.kir.entities).find((k) => k.toLowerCase() === entityKey);
         if (!entityName) throw new Error(`Unknown entity for get tool: ${entityKey}`);
 
-        const item = await this.store.get(entityName, args.id);
+        const item = await this.store.get<Record<string, unknown>>(entityName, args.id, { tenantId: actor?.tenantId });
         if (!item) throw new Error(`${entityName} with id '${args.id}' not found.`);
+        this.mcpRequire(this.canReadRecord(entityName, actor, item));
         return {
           content: [{ type: "text", text: JSON.stringify(item, null, 2) }],
         };
@@ -682,9 +839,17 @@ export class KerangkaServer {
 
         const entityDef = this.kir.entities[entityName];
         const keyField = entityDef?.key || "id";
-        const id = args[keyField] || `${entityName.toLowerCase()}_${Date.now()}`;
-        const record = this.engine.compute(entityName, { ...args, [keyField]: id });
-        const created = await this.store.create(entityName, record);
+        const { roles: _roles, actorId: _actorId, tenantId: _tenantId, ...data } = args;
+        const id = data[keyField] || `${entityName.toLowerCase()}_${Date.now()}`;
+        this.mcpRequire(this.permit(entityName, "create", actor, { ...data, [keyField]: id }));
+        // Held to the same rules as a REST create; this path used to store whatever it was given.
+        const withDefaults = this.engine.applyDefaults(entityName, { ...data, [keyField]: id }, actor, new Date());
+        const validation = this.engine.validate(entityName, withDefaults);
+        if (!validation.valid) {
+          throw new Error(`INPUT_INVALID: ${validation.errors.map((e) => `${e.field ?? ""} ${e.message}`.trim()).join("; ")}`);
+        }
+        const record = this.engine.compute(entityName, withDefaults);
+        const created = await this.store.create(entityName, record, { tenantId: actor?.tenantId });
         return {
           content: [
             {
@@ -700,11 +865,17 @@ export class KerangkaServer {
         const entityName = Object.keys(this.kir.entities).find((k) => k.toLowerCase() === entityKey);
         if (!entityName) throw new Error(`Unknown entity for update tool: ${entityKey}`);
 
-        const existing = await this.store.get(entityName, args.id);
+        const existing = await this.store.get<Record<string, unknown>>(entityName, args.id, { tenantId: actor?.tenantId });
         if (!existing) throw new Error(`${entityName} with id '${args.id}' not found.`);
+        this.mcpRequire(this.permit(entityName, "update", actor, existing));
 
-        const updatedWithCompute = this.engine.compute(entityName, { ...existing, ...(args.patch || {}) });
-        const updated = await this.store.update(entityName, args.id, updatedWithCompute);
+        const merged = { ...existing, ...(args.patch || {}) };
+        const validation = this.engine.validate(entityName, merged);
+        if (!validation.valid) {
+          throw new Error(`INPUT_INVALID: ${validation.errors.map((e) => `${e.field ?? ""} ${e.message}`.trim()).join("; ")}`);
+        }
+        const updatedWithCompute = this.engine.compute(entityName, merged);
+        const updated = await this.store.update(entityName, args.id, updatedWithCompute, { tenantId: actor?.tenantId });
         return {
           content: [
             {
@@ -725,7 +896,8 @@ export class KerangkaServer {
         const item = await this.store.get(entityName, args.id);
         if (!item) throw new Error(`${entityName} with id '${args.id}' not found.`);
 
-        const result = this.engine.run(entityName, actionName, item as Record<string, unknown>, args);
+        const { id: _id, roles: _r, actorId: _a, tenantId: _t, ...input } = args;
+        const result = this.engine.run(entityName, actionName, item as Record<string, unknown>, input, actor);
         if (!result.ok) {
           return {
             isError: true,
@@ -764,11 +936,9 @@ export class KerangkaServer {
         // body. A hardcoded `["admin"]` meant an MCP tool could not drive any action the
         // model guards by role — and because the guard rejected it first, the run emitted
         // nothing, which is part of why its events going missing went unnoticed for so long.
-        const { roles, actorId, ...transitionArgs } = args as Record<string, unknown>;
-        const actor = {
-          id: typeof actorId === "string" ? actorId : "mcp-user",
-          roles: Array.isArray(roles) ? roles.filter((r): r is string => typeof r === "string") : ["admin"]
-        };
+        // A call that names no actor holds no role (the dev actor aside); this used to default
+        // to admin, so any MCP client could drive any guarded transition.
+        const { roles: _roles, actorId: _actorId, ...transitionArgs } = args as Record<string, unknown>;
         const result = this.engine.transition(
           entityName,
           item as Record<string, unknown>,

@@ -22,7 +22,11 @@ describe("UIDL bridge against a live Kerangka server", () => {
   const baseUrl = `http://localhost:${port}`;
   let server: KerangkaServer;
 
-  const adapter = createKerangkaDataAdapter({ baseUrl });
+  // A host's authentication sets the actor on every request; the server takes it from there.
+  const adapter = createKerangkaDataAdapter({
+    baseUrl,
+    headers: { "X-Actor-Id": "u-billing", "X-Actor-Roles": "admin,billing" },
+  });
   const handler = createKerangkaMutationHandler({ adapter });
 
   beforeAll(async () => {

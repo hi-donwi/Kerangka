@@ -8,6 +8,15 @@ import { SessionStore, OPERATIONAL_ROUTES, matchRoute, servedRoutes } from "../s
 import type { ConnectorsPort } from "@kerangka/ports";
 import { KerangkaServer } from "../src/index.js";
 
+/**
+ * These suites test what the server does for an authorized caller, so they run it as the dev
+ * server does: a request with no actor acts as one holding every role the model declares.
+ * `authorization.test.ts` covers the server with no dev actor.
+ */
+function devActorFor(model: { roles?: string[] }) {
+  return { id: "dev-user", roles: model.roles ?? [] };
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const invoicingPath = path.resolve(__dirname, "../../../examples/invoicing.kerangka.json");
 const invoicingSource = fs.readFileSync(invoicingPath, "utf-8");
@@ -20,6 +29,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
 
   beforeAll(async () => {
     server = new KerangkaServer(kir, {
+      devActor: devActorFor(kir),
       port,
       store: new MemoryStore(),
       quiet: true
@@ -377,6 +387,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
       // deployment that never registered it, and a caller retrying needs to tell them apart.
       const port = 3988;
       const failing = new KerangkaServer(kir, {
+        devActor: devActorFor(kir),
         port,
         quiet: true,
         store: new MemoryStore(),
@@ -409,6 +420,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
       // carry an endpoint, a host, or a response body.
       const port = 3989;
       const failing = new KerangkaServer(kir, {
+        devActor: devActorFor(kir),
         port,
         quiet: true,
         store: new MemoryStore(),
@@ -451,6 +463,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     const drainServer = async (port: number, call: ConnectorsPort["call"]) => {
       const session = new SessionStore();
       const server = new KerangkaServer(kir, {
+        devActor: devActorFor(kir),
         port,
         quiet: true,
         store: new MemoryStore(),
@@ -575,7 +588,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
       const harness = await drainServer(3996, alwaysFails);
       await harness.stop();
 
-      const plain = new KerangkaServer(kir, { port: 3997, quiet: true, store: new MemoryStore() });
+      const plain = new KerangkaServer(kir, { devActor: devActorFor(kir), port: 3997, quiet: true, store: new MemoryStore() });
       await plain.start();
       try {
         const res = await fetch("http://localhost:3997/api/effects");
@@ -619,6 +632,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     const mcpServer = async (port: number) => {
       const session = new SessionStore();
       const server = new KerangkaServer(kir, {
+        devActor: devActorFor(kir),
         port,
         quiet: true,
         store: new MemoryStore(),
@@ -759,6 +773,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
       const session = new SessionStore();
       const port = 4010;
       const server = new KerangkaServer(kir, {
+        devActor: devActorFor(kir),
         port,
         quiet: true,
         store: new MemoryStore(),
@@ -824,7 +839,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
         return originalEnqueue(...args);
       };
 
-      const server = new KerangkaServer(kir, { port, quiet: true, store, session });
+      const server = new KerangkaServer(kir, { devActor: devActorFor(kir), port, quiet: true, store, session });
       await server.start();
       const base = `http://localhost:${port}`;
       try {
@@ -856,6 +871,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     const outboxServer = async (port: number) => {
       const session = new SessionStore();
       const server = new KerangkaServer(kir, {
+        devActor: devActorFor(kir),
         port,
         quiet: true,
         store: new MemoryStore(),
@@ -991,7 +1007,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     });
 
     it("answers 501 rather than an empty outbox when there is no session", async () => {
-      const plain = new KerangkaServer(kir, { port: 4004, quiet: true, store: new MemoryStore() });
+      const plain = new KerangkaServer(kir, { devActor: devActorFor(kir), port: 4004, quiet: true, store: new MemoryStore() });
       await plain.start();
       try {
         const res = await fetch("http://localhost:4004/api/events");
@@ -1037,6 +1053,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     it("includes the queue routes and their schemas when a session is configured", async () => {
       const port = 4006;
       const server = new KerangkaServer(kir, {
+        devActor: devActorFor(kir),
         port,
         quiet: true,
         store: new MemoryStore(),
@@ -1068,6 +1085,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     it("declares the 404 a host gets for an id that is not queued", async () => {
       const port = 4007;
       const server = new KerangkaServer(kir, {
+        devActor: devActorFor(kir),
         port,
         quiet: true,
         store: new MemoryStore(),
@@ -1229,6 +1247,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     it("actually serves every operational route it documents", async () => {
       const port = 4009;
       const server = new KerangkaServer(kir, {
+        devActor: devActorFor(kir),
         port,
         quiet: true,
         store: new MemoryStore(),
@@ -1279,6 +1298,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     it("resolves every $ref in the document, operational routes included", async () => {
       const port = 4008;
       const server = new KerangkaServer(kir, {
+        devActor: devActorFor(kir),
         port,
         quiet: true,
         store: new MemoryStore(),

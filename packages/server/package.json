@@ -16,10 +16,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@kerangka/adapter-hono": "*",
+    "@kerangka/adapter-sqlite": "*",
     "@kerangka/compiler": "*",
     "@kerangka/engine-ts": "*",
-    "@kerangka/ports": "*",
-    "@kerangka/adapter-sqlite": "*"
+    "@kerangka/ports": "*"
   },
   "license": "Apache-2.0"
 }

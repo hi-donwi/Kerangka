@@ -71,6 +71,23 @@ for guards and permissions; this was the exception nobody had tested.
   a guarded transition with `GUARD_UNSUPPORTED`. Evaluating conditions there is part of the
   Tier 1 engine work.
 
+## Amendment (2026-10-13): the server `kerangka serve` and `kerangka dev` run
+
+The Hono adapter was fixed first, but `KerangkaServer` (what `kerangka serve` and
+`kerangka dev` start) implements REST and MCP on its own, and it enforced none of this: no
+entity permissions on any CRUD path, no read filter on a list or a single read (ADR-0040), MCP
+`create`/`update` stored records without validation, and a request with no actor ran an action
+as `{ roles: body.roles || ["admin", "billing"] }` and an MCP transition as `admin`.
+
+- REST and MCP now authorize exactly as the Hono adapter does, using the same read-filter
+  evaluation (`evaluateWhereInMemory`, `equalityConstraints` from `@kerangka/adapter-hono`).
+  MCP tools take their actor from `actorId`, `roles`, and `tenantId` in their arguments, and
+  MCP create and update validate what they would store.
+- A request that names no actor holds **no role**. The convenience of acting without one is
+  the explicit `devActor` server option: `kerangka dev` sets it to a user holding every role the
+  model declares, so its playground still drives guarded actions; `kerangka serve` never does,
+  and a deployed host sets `X-Actor-Id`/`X-Actor-Roles` from its own authentication.
+
 ## Alternatives Considered
 
 | Option | Why rejected |

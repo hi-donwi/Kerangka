@@ -30,7 +30,10 @@ export async function devCommand(filePath: string, options: DevOptions = {}): Pr
     const server = new KerangkaServer(kir, {
       port: options.port || 3000,
       host: options.host || "localhost",
-      store: new MemoryStore()
+      store: new MemoryStore(),
+      // A local playground drives guarded actions without a login: a request that names no
+      // actor acts as one holding every role the model declares. `kerangka serve` never does.
+      devActor: { id: "dev-user", roles: kir.roles ?? [] },
     });
 
     await server.start();
