@@ -130,4 +130,33 @@ void main() {
       expect(illegalRes.error, equals('INVALID_STATE_TRANSITION'));
     });
   });
+
+  // This engine has no expression evaluator yet; a guard it cannot evaluate must refuse the
+  // transition rather than skip it, or it runs a transition the model forbids (ADR-0008).
+  test('a guarded transition is refused, not skipped', () {
+    final engine = ReferenceEngine({
+      'kir': '0.1',
+      'app': 'guards',
+      'entities': {
+        'Invoice': {
+          'fields': {
+            'status': {'type': 'enum', 'values': ['draft', 'sent']},
+          },
+          'workflow': {
+            'field': 'status',
+            'transitions': {
+              'send': {
+                'from': 'draft',
+                'to': 'sent',
+                'when': {'\$expr': '>', 'args': []},
+              },
+            },
+          },
+        },
+      },
+    });
+    final result = engine.transition('Invoice', {'status': 'draft'}, 'send');
+    expect(result.ok, isFalse);
+    expect(result.error, equals('GUARD_UNSUPPORTED'));
+  });
 }

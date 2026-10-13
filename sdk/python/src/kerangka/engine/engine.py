@@ -151,6 +151,16 @@ class ReferenceEngine:
                 message=f"Cannot transition '{transition_name}' from state '{current_state}'"
             )
 
+        # A guard this engine cannot evaluate refuses the transition rather than skipping it:
+        # skipping runs a transition the model forbids (ADR-0008).
+        if transition_def.get("when") is not None:
+            return ExecutionResult(
+                ok=False,
+                error="GUARD_UNSUPPORTED",
+                message=f"Transition '{transition_name}' has a guard, which this engine cannot evaluate yet; "
+                "run it through the reference engine",
+            )
+
         # Apply state transition
         next_record = self.compute(entity_name, dict(record))
         target_state = transition_def.get("to")

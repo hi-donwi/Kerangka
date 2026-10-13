@@ -96,3 +96,28 @@ class TestPythonEngine(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFailClosed(unittest.TestCase):
+    """This engine has no expression evaluator yet; a guard it cannot evaluate must refuse the
+    transition rather than skip it, or it runs a transition the model forbids (ADR-0008)."""
+
+    def test_a_guarded_transition_is_refused_not_skipped(self):
+        doc = {
+            "kir": "0.1",
+            "app": "guards",
+            "entities": {
+                "Invoice": {
+                    "fields": {"status": {"type": "enum", "values": ["draft", "sent"]}},
+                    "workflow": {
+                        "field": "status",
+                        "transitions": {
+                            "send": {"from": "draft", "to": "sent", "when": {"$expr": ">", "args": []}}
+                        },
+                    },
+                }
+            },
+        }
+        result = ReferenceEngine(doc).transition("Invoice", {"status": "draft"}, "send")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error, "GUARD_UNSUPPORTED")

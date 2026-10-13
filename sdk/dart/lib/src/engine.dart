@@ -224,6 +224,17 @@ class ReferenceEngine {
       );
     }
 
+    // A guard this engine cannot evaluate refuses the transition rather than skipping it:
+    // skipping runs a transition the model forbids (ADR-0008).
+    if (transitionDef['when'] != null) {
+      return ExecutionResult(
+        ok: false,
+        error: 'GUARD_UNSUPPORTED',
+        message: "Transition '$transitionName' has a guard, which this engine cannot evaluate yet; "
+            'run it through the reference engine',
+      );
+    }
+
     // Apply state transition
     final nextRecord = compute(entityName, record);
     final targetState = transitionDef['to'];
