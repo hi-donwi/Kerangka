@@ -44,7 +44,7 @@ describe("screens compiled per request", () => {
 
   it("lists every list and form screen", async () => {
     const body = (await (await get("/screens")).json()) as { screens: Array<{ id: string; kind: string }> };
-    expect(body.screens.map((s) => `${s.kind}:${s.id}`)).toEqual(["list:invoices", "form:invoice", "list:customer-list", "form:customer-form"]);
+    expect(body.screens.map((s) => `${s.kind}:${s.id}`)).toEqual(["dashboard:home", "list:invoices", "form:invoice", "list:customer-list", "form:customer-form"]);
   });
 
   it("compiles a list screen for an actor who may read the entity", async () => {
@@ -110,5 +110,107 @@ describe("a record screen under a read filter", () => {
   it("embeds a record only for an actor its read filter admits", async () => {
     expect((await fetch(`${base}/screens/note-form/n-1`, { headers: as("", "u-1") })).status).toBe(200);
     expect((await fetch(`${base}/screens/note-form/n-2`, { headers: as("", "u-1") })).status).toBe(403);
+  });
+});
+
+/**
+ * A KPI is an aggregate over every record the caller may read. The generator's dashboard summed
+ * the first row of a page and counted every invoice for "Overdue", because it dropped a `where`
+ * it could not lower; and it showed the same numbers to every caller.
+ */
+describe("a dashboard screen", () => {
+  const port = 3985;
+  const base = `http://localhost:${port}`;
+  const sales = compile({
+    kerangka: "0.1",
+    app: "sales",
+    roles: ["manager", "rep"],
+    entities: {
+      Deal: {
+        fields: { amount: "decimal(12,2)!", stage: "enum(open, won, lost) = open", ownerId: "string!" },
+        permissions: { read: ["manager", "rep"], create: ["manager", "rep"] },
+        readFilter: "ownerId == actor.id",
+      },
+      Salary: {
+        fields: { amount: "decimal(12,2)!" },
+        permissions: { read: ["manager"], create: ["manager"] },
+      },
+    },
+    views: {
+      home: {
+        dashboard: [
+          { kpi: "Won", sum: "Deal.amount", where: "stage == 'won'" },
+          { kpi: "Open deals", count: "Deal", where: "stage == 'open'" },
+          { kpi: "Payroll", sum: "Salary.amount" },
+          { kpi: "Broken", count: "Deal", where: "stage ==" },
+        ],
+      },
+    },
+  } as never);
+  const server = new KerangkaServer(sales, { port, store: new MemoryStore(), quiet: true });
+
+  /** Label to printed value, for each KPI the screen shows. */
+  const kpisOf = async (headers: Record<string, string>) => {
+    const res = await fetch(`${base}/screens/home`, { headers });
+    expect(res.status).toBe(200);
+    const doc = await res.json();
+    expect(DocumentSchema.safeParse(doc).success).toBe(true);
+    const shown: Record<string, unknown> = {};
+    const walk = (n: { id: string; props?: Record<string, unknown>; children?: unknown[] }) => {
+      if (/-kpi-\d+$/.test(n.id)) {
+        const [label, value] = n.children as Array<{ props: Record<string, unknown> }>;
+        shown[String(label!.props.value)] = value!.props.value;
+      }
+      (n.children as typeof n[] | undefined)?.forEach(walk);
+    };
+    walk(doc.root);
+    return shown;
+  };
+
+  beforeAll(async () => {
+    await server.start();
+    const deals = [
+      ["d-1", "100.10", "won", "u-1"],
+      ["d-2", "50.00", "open", "u-1"],
+      ["d-3", "999.00", "won", "u-2"],
+      ["d-4", "200.20", "won", "u-1"],
+    ];
+    for (const [id, amount, stage, ownerId] of deals) {
+      const res = await fetch(`${base}/api/Deal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...as("rep", ownerId) },
+        body: JSON.stringify({ id, amount, stage, ownerId }),
+      });
+      expect(res.status).toBe(201);
+    }
+    const res = await fetch(`${base}/api/Salary`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...as("manager", "m-1") },
+      body: JSON.stringify({ id: "s-1", amount: "4000.00" }),
+    });
+    expect(res.status).toBe(201);
+  });
+  afterAll(async () => {
+    await server.stop();
+  });
+
+  it("aggregates every record the caller may read, under the KPI's where", async () => {
+    const shown = await kpisOf(as("rep", "u-1"));
+    // u-2's 999.00 is behind the read filter; d-2 is open.
+    expect(shown.Won).toBe("300.3");
+    expect(shown["Open deals"]).toBe("1");
+  });
+
+  it("leaves out a KPI over an entity the caller may not read", async () => {
+    expect(await kpisOf(as("rep", "u-1"))).not.toHaveProperty("Payroll");
+    expect((await kpisOf(as("manager", "m-1"))).Payroll).toBe("4000");
+  });
+
+  it("shows no number for a KPI that cannot be evaluated", async () => {
+    expect((await kpisOf(as("rep", "u-1"))).Broken).toBe("\u2014");
+  });
+
+  it("shows a caller with no role no figures at all", async () => {
+    expect(await kpisOf({})).toEqual({});
   });
 });

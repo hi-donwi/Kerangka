@@ -28,7 +28,7 @@ import {
 } from "@kerangka/ports";
 import { CloudEvent, Effect, Engine, type ActorContext } from "@kerangka/engine-ts";
 import { equalityConstraints, evaluateWhereInMemory } from "@kerangka/adapter-hono";
-import { RecipeProjector } from "@kerangka/uidl-projector";
+import { RecipeProjector, type KpiResult } from "@kerangka/uidl-projector";
 import { SchedulerRunner } from "./scheduler-runner.js";
 import { SessionStoreLike } from "./session-store.js";
 import type { HostEffectEntry, OutboxEntry } from "./session-store.js";
@@ -1052,8 +1052,11 @@ export class KerangkaServer {
     owner.sendJson(res, 200, { screens: owner.screens.views() });
   }
 
-  /** A list screen, or a form view's create form, for an actor who may read or create. */
-  private handleScreen({ req, res, server, params, url }: OperationalContext): void {
+  /**
+   * A dashboard with the caller's figures, a list screen for an actor who may read, or a form
+   * view's create form for an actor who may create.
+   */
+  private async handleScreen({ req, res, server, params, url }: OperationalContext): Promise<void> {
     const owner = server as KerangkaServer;
     const viewId = decodeURIComponent(params[0] ?? "");
     const view = owner.screens.view(viewId);
@@ -1062,6 +1065,10 @@ export class KerangkaServer {
       return;
     }
     const actor = owner.actorOf(req, url);
+    if (view.kind === "dashboard") {
+      owner.sendJson(res, 200, await owner.dashboardScreen(viewId, actor, owner.tenantOf(req, url)));
+      return;
+    }
     if (view.kind === "list") {
       if (!owner.authorize(res, view.entity, "read", actor, undefined, { listing: true })) return;
       owner.sendJson(res, 200, owner.screens.list(viewId));
@@ -1074,6 +1081,46 @@ export class KerangkaServer {
       return;
     }
     owner.sendJson(res, 200, owner.screens.form(viewId));
+  }
+
+  /**
+   * Each KPI is computed over the records this actor may read: its read permission, per record,
+   * and its read filter (ADR-0040, ADR-0044). A KPI over an entity the actor may not read at all
+   * is left out rather than shown as zero, and one the engine cannot evaluate shows no number.
+   * Records are read once per entity; the scan is in memory, as a read filter's already is.
+   */
+  private async dashboardScreen(viewId: string, actor: ActorContext | undefined, tenantId: string | undefined) {
+    const readable = new Map<string, Record<string, unknown>[] | undefined>();
+    const results: KpiResult[] = [];
+    for (const kpi of this.screens.kpis(viewId)) {
+      const source = this.engine.kpiSource(kpi);
+      if (!source) {
+        results.push({ error: `KPI '${kpi.kpi ?? ""}' names no count, sum, or avg of a numeric field` });
+        continue;
+      }
+      if (!readable.has(source.entity)) readable.set(source.entity, await this.readableRecords(source.entity, actor, tenantId));
+      const records = readable.get(source.entity);
+      if (!records) {
+        results.push({ withheld: true });
+        continue;
+      }
+      const outcome = this.engine.kpiValue(kpi, records, actor);
+      results.push(outcome.ok ? { value: outcome.value } : { error: outcome.reason });
+    }
+    return this.screens.dashboard(viewId, results);
+  }
+
+  /** Every record of an entity this actor may read, or nothing when it may read none. */
+  private async readableRecords(
+    entityName: string,
+    actor: ActorContext | undefined,
+    tenantId: string | undefined
+  ): Promise<Record<string, unknown>[] | undefined> {
+    const decision = this.permit(entityName, "read", actor);
+    if (!decision.allowed && decision.code !== "PERMISSION_NEEDS_RECORD") return undefined;
+    if (!this.engine.authorizeRead(entityName, actor).allowed) return undefined;
+    const found = await this.store.find(entityName, undefined, { tenantId });
+    return (found.items as Record<string, unknown>[]).filter((record) => this.canReadRecord(entityName, actor, record).allowed);
   }
 
   /** One record's edit form, with its data and version, for an actor who may read that record. */

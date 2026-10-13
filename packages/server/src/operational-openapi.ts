@@ -494,8 +494,8 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     tag: "uidl",
     summary: "List the screens compiled per request through UIDL page recipes",
     description:
-      "One list screen and one form screen per entity view (declared or scaffolded), compiled " +
-      "through uidl-runtime's recipes when asked for (ADR-0045). Dashboards stay under /uidl.",
+      "Each dashboard view, and one list screen and one form screen per entity view (declared or " +
+      "scaffolded), compiled through uidl-runtime's recipes when asked for (ADR-0045).",
     document: { included: true }
   },
   {
@@ -505,10 +505,12 @@ const ROUTE_SPECS: Array<Omit<OperationalRoute, "pattern">> = [
     handler: "handleScreen",
     operationId: "get_screen",
     tag: "uidl",
-    summary: "Compile a list screen, or the create form of a form view",
+    summary: "Compile a dashboard, a list screen, or the create form of a form view",
     description:
-      "A list view compiles to its list screen; a form view compiles to an empty create form. " +
-      "The caller must hold the read permission (list) or the create permission (form).",
+      "A dashboard view compiles with the caller's figures: each KPI aggregates the records the " +
+      "caller may read, and a KPI over an entity the caller may not read is left out. A list view " +
+      "compiles to its list screen; a form view compiles to an empty create form. The caller must " +
+      "hold the read permission (list) or the create permission (form).",
     errorResponses: { "403": "The actor may not read or create this entity.", "404": "No screen with that id." },
     document: { included: true }
   },
