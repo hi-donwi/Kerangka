@@ -11,8 +11,13 @@ All notable changes to this project are documented here. The format follows
   the caller's figures (ADR-0045 amendment). `Engine.kpiSource` and `Engine.kpiValue` compute a
   KPI with K1's own `count`, `sum`, and `avg` over the records its `where` admits; the server
   passes only the records the caller may read, leaves out a KPI over an entity the caller may not
-  read, and shows no number for a KPI that cannot be evaluated. `@kerangka/uidl-projector`
-  requires `uidl-runtime` 0.1.7 for the KPI `format`.
+  read, and shows no number for a KPI that cannot be evaluated.
+
+### Changed
+- `@kerangka/uidl-projector` requires `uidl-runtime` 0.1.8: the KPI `format` (0.1.7) and an
+  install without React (0.1.8), so a server that compiles screens no longer installs React.
+  The workspace keeps `react` and `react-dom` as development dependencies, for the tests that
+  validate screens with the renderer's `DocumentSchema`.
 - Screens compiled per request through UIDL recipes (ADR-0045). `@kerangka/uidl-projector` maps
   list and form views onto `uidl-runtime/recipes` (workflow transitions and input-free actions
   become buttons; `navigation` becomes a shell), and the server serves `GET /screens`,

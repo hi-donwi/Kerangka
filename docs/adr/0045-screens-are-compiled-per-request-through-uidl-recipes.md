@@ -112,6 +112,7 @@ Consequences:
   screen; binding to live data sources stays available to hosts that can aggregate server-side.
 - Computing a KPI reads every record of its entity the caller may read, in memory, as a read
   filter's list already does. A store-level aggregate is the optimisation when that is too slow.
-- `uidl-runtime@0.1.7` declares `react` and `react-dom` as optional peers but still lists them,
-  and `@dnd-kit/*` that requires React, as dependencies, so npm still installs React here. The
-  Negative consequence above stands until UIDL-Runtime moves them.
+- `uidl-runtime@0.1.7` declared `react` and `react-dom` as optional peers but still listed them,
+  and `@dnd-kit/*` that requires React, as dependencies, so npm still installed React.
+  `uidl-runtime@0.1.8` lists only `zod`, and the projector requires it: the Negative consequence
+  above about React is resolved.
