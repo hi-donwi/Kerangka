@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Screens compiled per request through UIDL recipes (ADR-0045). `@kerangka/uidl-projector` maps
+  list and form views onto `uidl-runtime/recipes` (workflow transitions and input-free actions
+  become buttons; `navigation` becomes a shell), and the server serves `GET /screens`,
+  `GET /screens/{viewId}`, and `GET /screens/{viewId}/{id}`. A record screen carries the record's
+  version and is served only when the actor may read that record.
 - Entity templates and official packs (ADR-0043 amendment): `{ "use": "identity:member" }` at an
   entry of `entities` places a pack's entity under the document's own name.
   `@kerangka/identity` (organization, member) and `@kerangka/admin` (an append-only audit entry)

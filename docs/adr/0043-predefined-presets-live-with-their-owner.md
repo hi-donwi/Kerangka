@@ -146,9 +146,9 @@ chooses, a template gained a fourth kind, **`entity`**, used at an entry of `ent
 - [x] `std:approval` and `std:masterDetail` in the document shape
 - [x] Starters under `packages/cli/starters/`, read by `kerangka init` and `kerangka scaffold`
 - [x] UIDL-Runtime: recipes exported without React (`uidl-runtime/recipes`); `compileAuthPage`,
-  `wrapInShell`, and `compileLandingPage` (UIDL-Runtime ADR-0010), not yet released to npm
+  `wrapInShell`, and `compileLandingPage` (UIDL-Runtime ADR-0010), released in 0.1.6
+- [x] UIDL-Builder reads its gallery from `uidl-runtime/catalog`
 - [x] `saas-auth` starter: the identity model, with credentials left to the host
 - [x] Packs `identity` and `admin` as entity templates in official packs (amendment above);
   `saas-auth` uses `@kerangka/identity`
-- [ ] The UIDL projector maps views onto UIDL recipes (own ADR)
-- [ ] UIDL-Builder reads its gallery from the catalogs
+- [x] Screens compiled per request through UIDL recipes (`@kerangka/uidl-projector`, `GET /screens`; ADR-0045)

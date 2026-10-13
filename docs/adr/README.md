@@ -48,3 +48,4 @@ This directory records all significant architectural, semantic, and structural d
 | [0042](0042-a-postgres-session-store-locks-rows-not-the-file.md) | A Postgres Session Store Locks Rows, Not the File | Accepted | 2026-10-04 |
 | [0043](0043-predefined-presets-live-with-their-owner.md) | Predefined Presets Live With Their Owner, and a Template Is Used With `use` | Accepted | 2026-10-12 |
 | [0044](0044-role-map-permissions-are-enforced.md) | Role-Map Permissions Are Enforced, and an Empty List Grants No One | Accepted | 2026-10-12 |
+| [0045](0045-screens-are-compiled-per-request-through-uidl-recipes.md) | Screens Are Compiled per Request Through UIDL Recipes | Accepted | 2026-10-13 |
