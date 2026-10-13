@@ -15,6 +15,9 @@ import {
 } from "@kerangka/k1";
 import {
   ActorContext,
+  KpiDefinition,
+  KpiOutcome,
+  KpiSource,
   ReadScope,
   AvailableOperation,
   CanResult,
@@ -1546,6 +1549,57 @@ export class Engine {
       effects: planResult.effects,
       trace,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dashboard KPIs
+  // ---------------------------------------------------------------------------
+
+  /**
+   * What a KPI aggregates, or nothing when it names no aggregate, more than one, an entity the
+   * model lacks, or a field that is not a number. `count` names an entity; `sum` and `avg` name
+   * `Entity.field`.
+   */
+  kpiSource(kpi: KpiDefinition): KpiSource | undefined {
+    const named = (["count", "sum", "avg"] as const).filter((aggregate) => typeof kpi[aggregate] === "string");
+    if (named.length !== 1) return undefined;
+    const aggregate = named[0]!;
+    const [entity, field, ...rest] = kpi[aggregate]!.split(".");
+    if (!entity || rest.length > 0 || !this.ir.entities?.[entity]) return undefined;
+    if (aggregate === "count") return field === undefined ? { aggregate, entity } : undefined;
+    const type = field ? fieldTypeName(this.ir.entities[entity].fields?.[field]) : undefined;
+    if (!type || !["decimal", "int", "integer", "float"].includes(type)) return undefined;
+    return { aggregate, entity, field };
+  }
+
+  /**
+   * A KPI's value over `records`, which the caller has already narrowed to what the actor may
+   * read. Each record is decoded, its `where` decides whether it counts, and K1's own `count`,
+   * `sum`, and `avg` aggregate the rest, so a KPI means what the same expression means anywhere
+   * else in the model. A KPI that cannot be evaluated is refused, never shown as a partial number.
+   */
+  kpiValue(kpi: KpiDefinition, records: Record<string, unknown>[], actor?: ActorContext): KpiOutcome {
+    const source = this.kpiSource(kpi);
+    const label = kpi.kpi ?? "KPI";
+    if (!source) {
+      return { ok: false, code: "KPI_INVALID", reason: `KPI '${label}' names no count, sum, or avg of a numeric field in the model` };
+    }
+    try {
+      const where = typeof kpi.where === "string" && kpi.where.trim() !== "" ? compileExpression(kpi.where) : undefined;
+      const rows: Record<string, unknown>[] = [];
+      for (const record of records) {
+        const decoded = this.decodeRecord(source.entity, record);
+        if (!where || evaluate(where, this.evalContext({ record: decoded, data: decoded, actor })) === true) rows.push(decoded);
+      }
+      const args: ExprNode[] = [{ $bind: "rows" }, ...(source.field ? [{ literal: source.field }] : [])];
+      const value = evaluate({ $expr: source.aggregate, args }, { rows });
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return { ok: false, code: "KPI_INVALID", reason: `KPI '${label}' did not evaluate to a number` };
+      }
+      return { ok: true, value };
+    } catch (error) {
+      return { ok: false, code: "KPI_INVALID", reason: `KPI '${label}' cannot be evaluated: ${(error as Error).message}` };
+    }
   }
 
   // ---------------------------------------------------------------------------

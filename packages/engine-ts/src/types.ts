@@ -85,6 +85,28 @@ export type ReadScope =
   | { allowed: true; where: ExprNode | null }
   | { allowed: false; code: string; reason: string };
 
+/**
+ * One entry of a dashboard view (`views.<id>.dashboard[]`): a label, exactly one aggregate
+ * (`count: "Invoice"`, `sum: "Invoice.total"`, `avg: "Invoice.total"`), and an optional K1
+ * predicate over each record.
+ */
+export interface KpiDefinition {
+  kpi?: string;
+  count?: string;
+  sum?: string;
+  avg?: string;
+  where?: string;
+}
+
+/** What a KPI aggregates: a count of an entity's records, or a numeric field of them. */
+export interface KpiSource {
+  aggregate: "count" | "sum" | "avg";
+  entity: string;
+  field?: string;
+}
+
+export type KpiOutcome = { ok: true; value: number } | { ok: false; code: "KPI_INVALID"; reason: string };
+
 export interface CanResult {
   allowed: boolean;
   reason?: string;
