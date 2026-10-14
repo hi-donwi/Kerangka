@@ -84,6 +84,46 @@ class ReadScope {
   String toString() => 'ReadScope(allowed: $allowed, code: $code, reason: $reason, where: $where)';
 }
 
+class DecisionResult {
+  final bool matched;
+  final int hitCount;
+  final dynamic outputs;
+  final String? error;
+  final String? code;
+
+  const DecisionResult({
+    required this.matched,
+    required this.hitCount,
+    this.outputs,
+    this.error,
+    this.code,
+  });
+
+  @override
+  String toString() =>
+      'DecisionResult(matched: $matched, hitCount: $hitCount, outputs: $outputs, code: $code, error: $error)';
+}
+
+final _decimalWire = RegExp(r'^-?\d+(\.\d+)?$');
+final _rangePattern = RegExp(r'^([\[(])\s*([0-9.]+)\s*\.\.\s*([0-9.]+)\s*([\])])$');
+
+String _fieldTypeName(dynamic defVal) {
+  if (defVal is String) {
+    final parts = defVal.trim().split(RegExp(r'\s+'));
+    if (parts.isNotEmpty) {
+      var clean = parts[0];
+      if (clean.endsWith('!')) clean = clean.substring(0, clean.length - 1);
+      final idx = clean.indexOf('(');
+      if (idx != -1) clean = clean.substring(0, idx);
+      return clean.toLowerCase();
+    }
+  } else if (defVal is Map) {
+    final t = defVal['type'];
+    if (t is String) return t.toLowerCase();
+  }
+  return '';
+}
+
 /// Pure in-memory reference execution engine for Kerangka models in Dart.
 class ReferenceEngine {
   final Map<String, dynamic> document;
@@ -93,6 +133,7 @@ class ReferenceEngine {
       : entities = (document['entities'] as Map<String, dynamic>?) ?? {};
 
   Decision canOperate(
+
     String entityName,
     String operation, {
     Map<String, dynamic>? actor,
@@ -280,8 +321,332 @@ class ReferenceEngine {
     return entity != null && entity['readFilter'] != null;
   }
 
+  Map<String, dynamic> decodeRecord(String entityName, Map<String, dynamic> record) {
+    final entity = entities[entityName] as Map<String, dynamic>?;
+    if (entity == null) return record;
+    final fields = (entity['fields'] as Map<String, dynamic>?) ?? {};
+    return _decodeFields(fields, record, 0);
+  }
+
+  Map<String, dynamic> _decodeFields(Map<String, dynamic> defs, Map<String, dynamic> record, int depth) {
+    if (depth > 16) return record;
+    final out = Map<String, dynamic>.from(record);
+    for (final entry in defs.entries) {
+      final name = entry.key;
+      final val = out[name];
+      if (val == null) continue;
+      out[name] = _decodeValue(entry.value, val, depth + 1);
+    }
+    return out;
+  }
+
+  dynamic _decodeValue(dynamic defVal, dynamic val, int depth) {
+    final tname = _fieldTypeName(defVal);
+    if (tname == 'decimal') {
+      if (val is String && _decimalWire.hasMatch(val.trim())) {
+        return num.tryParse(val.trim()) ?? val;
+      }
+      return val;
+    }
+    if (tname == 'list') {
+      if (val is List) {
+        final elemDef = defVal is Map ? defVal['element'] : null;
+        if (elemDef != null) {
+          return val.map((item) => _decodeValue(elemDef, item, depth + 1)).toList();
+        }
+      }
+      return val;
+    }
+
+    var target = tname;
+    if (defVal is Map && defVal['target'] is String) {
+      target = (defVal['target'] as String).toLowerCase();
+    }
+
+    if (target.isNotEmpty && val is Map) {
+      final targetEntity = entities[target] as Map<String, dynamic>?;
+      if (targetEntity != null && targetEntity['embedded'] == true) {
+        final targetFields = (targetEntity['fields'] as Map<String, dynamic>?) ?? {};
+        return _decodeFields(targetFields, Map<String, dynamic>.from(val), depth);
+      }
+    }
+
+    return val;
+  }
+
+  DecisionResult evaluateDecision(dynamic tableOrName, Map<String, dynamic> input) {
+    Map<String, dynamic>? tableDef;
+    String tableName = '';
+
+    if (tableOrName is String) {
+      tableName = tableOrName;
+      final decisions = document['decisions'];
+      if (decisions is Map) {
+        final raw = decisions[tableOrName];
+        if (raw is Map) {
+          tableDef = Map<String, dynamic>.from(raw);
+        }
+      }
+    } else if (tableOrName is Map) {
+      tableDef = Map<String, dynamic>.from(tableOrName);
+      tableName = (tableDef['name'] as String?) ?? '';
+    }
+
+    if (tableDef == null) {
+      final targetName = tableName.isNotEmpty ? tableName : '$tableOrName';
+      return DecisionResult(
+        matched: false,
+        hitCount: 0,
+        error: "Decision table '$targetName' not found",
+        code: 'TABLE_NOT_FOUND',
+      );
+    }
+
+    if (tableName.isEmpty) {
+      tableName = (tableDef['name'] as String?) ?? '';
+    }
+
+    final rawInputs = tableDef['inputs'] is List ? (tableDef['inputs'] as List) : const [];
+    final inputs = rawInputs.map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{}).toList();
+
+    final rawOutputs = tableDef['outputs'] is List ? (tableDef['outputs'] as List) : const [];
+    final outputs = rawOutputs.map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{}).toList();
+
+    final hitPolicy = ((tableDef['hitPolicy'] as String?) ?? 'first').toLowerCase();
+
+    final rules = _parseDecisionRules(tableDef, inputs, outputs);
+    final matchingOutputs = <Map<String, dynamic>>[];
+
+    for (final rule in rules) {
+      var ruleMatched = true;
+      final ruleInputs = rule['inputs'] is List ? (rule['inputs'] as List) : const [];
+
+      for (var i = 0; i < inputs.length; i++) {
+        final colName = inputs[i]['name'] as String?;
+        final cell = i < ruleInputs.length ? ruleInputs[i] : '-';
+        final val = colName != null ? input[colName] : null;
+
+        if (!_matchDecisionCell(cell, val)) {
+          ruleMatched = false;
+          break;
+        }
+      }
+
+      if (ruleMatched) {
+        final ruleOutputs = (rule['outputs'] as Map<String, dynamic>?) ?? {};
+        final resolved = _resolveDecisionOutputs(ruleOutputs, outputs, input);
+        matchingOutputs.add(resolved);
+        if (hitPolicy == 'first') {
+          break;
+        }
+      }
+    }
+
+    if (matchingOutputs.isEmpty) {
+      return DecisionResult(
+        matched: false,
+        hitCount: 0,
+        error: "Decision table '$tableName' matched no row",
+        code: 'DECISION_NO_MATCH',
+      );
+    }
+
+    if (hitPolicy == 'unique') {
+      if (matchingOutputs.length > 1) {
+        return DecisionResult(
+          matched: false,
+          hitCount: matchingOutputs.length,
+          error: "Unique hit policy violated: ${matchingOutputs.length} rules matched in '$tableName'",
+          code: 'UNIQUE_VIOLATION',
+        );
+      }
+      return DecisionResult(
+        matched: true,
+        hitCount: 1,
+        outputs: matchingOutputs[0],
+      );
+    }
+
+    if (hitPolicy == 'collect') {
+      return DecisionResult(
+        matched: true,
+        hitCount: matchingOutputs.length,
+        outputs: matchingOutputs,
+      );
+    }
+
+    return DecisionResult(
+      matched: true,
+      hitCount: matchingOutputs.length,
+      outputs: matchingOutputs[0],
+    );
+  }
+
+  DecisionResult decide(dynamic tableOrName, Map<String, dynamic> input) =>
+      evaluateDecision(tableOrName, input);
+
+  bool _matchDecisionCell(dynamic cell, dynamic val) {
+    if (cell == null || cell == '-') return true;
+
+    if (cell is String) {
+      final trimmed = cell.trim();
+      if (trimmed == '-' || trimmed.isEmpty) return true;
+
+      final isNum = val is num;
+      final valNum = isNum ? val : 0;
+
+      if (trimmed.startsWith('>=') && isNum) {
+        final target = num.tryParse(trimmed.substring(2).trim());
+        return target != null && valNum >= target;
+      }
+      if (trimmed.startsWith('>') && isNum) {
+        final target = num.tryParse(trimmed.substring(1).trim());
+        return target != null && valNum > target;
+      }
+      if (trimmed.startsWith('<=') && isNum) {
+        final target = num.tryParse(trimmed.substring(2).trim());
+        return target != null && valNum <= target;
+      }
+      if (trimmed.startsWith('<') && isNum) {
+        final target = num.tryParse(trimmed.substring(1).trim());
+        return target != null && valNum < target;
+      }
+
+      if ((trimmed.startsWith('[') || trimmed.startsWith('(')) && isNum) {
+        final m = _rangePattern.firstMatch(trimmed);
+        if (m != null) {
+          final leftBracket = m.group(1);
+          final minStr = m.group(2);
+          final maxStr = m.group(3);
+          final rightBracket = m.group(4);
+          final minVal = num.tryParse(minStr ?? '');
+          final maxVal = num.tryParse(maxStr ?? '');
+          if (minVal != null && maxVal != null) {
+            final minOk = leftBracket == '[' ? valNum >= minVal : valNum > minVal;
+            final maxOk = rightBracket == ']' ? valNum <= maxVal : valNum < maxVal;
+            return minOk && maxOk;
+          }
+        }
+      }
+
+      if (trimmed.contains(',')) {
+        final parts = trimmed.split(',').map((p) {
+          var s = p.trim();
+          if ((s.startsWith("'") && s.endsWith("'")) || (s.startsWith('"') && s.endsWith('"'))) {
+            s = s.substring(1, s.length - 1);
+          }
+          return s;
+        }).toList();
+        return parts.contains(val?.toString());
+      }
+
+      var clean = trimmed;
+      if ((clean.startsWith("'") && clean.endsWith("'")) || (clean.startsWith('"') && clean.endsWith('"'))) {
+        clean = clean.substring(1, clean.length - 1);
+      }
+      return val?.toString() == clean;
+    }
+
+    if (cell is num) {
+      if (val is num) return cell == val;
+      return false;
+    }
+
+    if (cell is bool) {
+      return val is bool && cell == val;
+    }
+
+    if (cell is Map) {
+      final res = evalNode(cell, {'cell': val, 'value': val, 'input': {}}, null);
+      return res.supported && truthy(res.value);
+    }
+
+    return false;
+  }
+
+  List<Map<String, dynamic>> _parseDecisionRules(
+    Map<String, dynamic> tableDef,
+    List<Map<String, dynamic>> inputs,
+    List<Map<String, dynamic>> outputs,
+  ) {
+    final rawRules = tableDef['rules'];
+    if (rawRules is List && rawRules.isNotEmpty) {
+      return rawRules.map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{}).toList();
+    }
+
+    final rows = tableDef['rows'];
+    if (rows is! List) return const [];
+
+    final rules = <Map<String, dynamic>>[];
+    for (var i = 0; i < rows.length; i++) {
+      final row = rows[i];
+      if (row is! Map) continue;
+      final rowMap = Map<String, dynamic>.from(row);
+
+      final rInputs = inputs.map((col) {
+        final name = col['name'] as String?;
+        return name != null && rowMap.containsKey(name) ? rowMap[name] : '-';
+      }).toList();
+
+      final rOutputs = <String, dynamic>{};
+      for (final out in outputs) {
+        final name = out['name'] as String?;
+        if (name != null && rowMap.containsKey(name)) {
+          rOutputs[name] = rowMap[name];
+        }
+      }
+
+      rules.add({
+        'id': 'row-${i + 1}',
+        'inputs': rInputs,
+        'outputs': rOutputs,
+      });
+    }
+
+    return rules;
+  }
+
+  Map<String, dynamic> _resolveDecisionOutputs(
+    Map<String, dynamic> ruleOutputs,
+    List<Map<String, dynamic>> columns,
+    Map<String, dynamic> inputData,
+  ) {
+    final resolved = <String, dynamic>{};
+    for (final col in columns) {
+      final name = col['name'] as String?;
+      if (name == null) continue;
+      final val = ruleOutputs[name];
+      final colType = (col['type'] as String? ?? '').toLowerCase();
+
+      if (val is String) {
+        var trimmed = val.trim();
+        if ((trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+            (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+          resolved[name] = trimmed.substring(1, trimmed.length - 1);
+        } else if ((colType.startsWith('int') || colType.startsWith('number') || colType.startsWith('decimal')) &&
+            _decimalWire.hasMatch(trimmed)) {
+          resolved[name] = num.tryParse(trimmed) ?? trimmed;
+        } else if (colType.startsWith('bool')) {
+          resolved[name] = trimmed.toLowerCase() == 'true';
+        } else {
+          resolved[name] = trimmed;
+        }
+      } else {
+        resolved[name] = val;
+      }
+    }
+
+    for (final entry in ruleOutputs.entries) {
+      if (!resolved.containsKey(entry.key)) {
+        resolved[entry.key] = entry.value;
+      }
+    }
+    return resolved;
+  }
+
   /// Materializes computed fields and default values on a record.
   Map<String, dynamic> compute(String entityName, Map<String, dynamic> record) {
+    record = decodeRecord(entityName, record);
     final entity = entities[entityName] as Map<String, dynamic>?;
     if (entity == null) {
       return Map<String, dynamic>.from(record);
@@ -292,19 +657,39 @@ class ReferenceEngine {
 
     for (final entry in fields.entries) {
       final fieldName = entry.key;
-      final fieldDef = entry.value;
+      final rawDef = entry.value;
+      final fieldDef = rawDef is Map<String, dynamic> ? rawDef : const <String, dynamic>{};
 
-      if (fieldDef is Map<String, dynamic>) {
-        // Set default if missing
-        if (!result.containsKey(fieldName) &&
-            fieldDef.containsKey('default') &&
-            fieldDef['default'] != null) {
-          result[fieldName] = fieldDef['default'];
-        }
+      // Set default if missing
+      if (!result.containsKey(fieldName) &&
+          fieldDef.containsKey('default') &&
+          fieldDef['default'] != null) {
+        result[fieldName] = fieldDef['default'];
+      }
 
-        // Aggregate compute simulation: sum(lines, qty * unitPrice)
-        final computeExpr = fieldDef['compute'];
-        if (computeExpr is Map<String, dynamic>) {
+      final computeExpr = fieldDef['compute'];
+      if (computeExpr != null) {
+        if (computeExpr is String && computeExpr.contains('(') && computeExpr.endsWith(')')) {
+          final openIdx = computeExpr.indexOf('(');
+          final funcName = computeExpr.substring(0, openIdx).trim();
+          final argsStr = computeExpr.substring(openIdx + 1, computeExpr.length - 1).trim();
+          final argNames = argsStr.isNotEmpty
+              ? argsStr.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toList()
+              : <String>[];
+          final inputMap = <String, dynamic>{};
+          for (final argName in argNames) {
+            inputMap[argName] = result[argName];
+          }
+          final res = evaluateDecision(funcName, inputMap);
+          if (res.matched) {
+            final outVal = res.outputs;
+            if (outVal is Map && outVal.length == 1) {
+              result[fieldName] = outVal.values.first;
+            } else {
+              result[fieldName] = outVal;
+            }
+          }
+        } else if (computeExpr is Map<String, dynamic>) {
           if (computeExpr['type'] == 'call' && computeExpr['func'] == 'sum') {
             final args = computeExpr['args'];
             if (args is List && args.isNotEmpty) {
@@ -325,6 +710,27 @@ class ReferenceEngine {
                     result[fieldName] = total;
                   }
                 }
+              }
+            }
+          } else if (computeExpr['type'] == 'call') {
+            final funcName = computeExpr['func'] as String?;
+            if (funcName != null) {
+              final inputMap = <String, dynamic>{};
+              final rawArgs = computeExpr['args'];
+              if (rawArgs is List) {
+                for (var i = 0; i < rawArgs.length; i++) {
+                  final arg = rawArgs[i];
+                  if (arg is Map && arg['type'] == 'ref') {
+                    final refName = arg['name'] as String?;
+                    if (refName != null) inputMap[refName] = result[refName];
+                  } else {
+                    inputMap['arg$i'] = arg;
+                  }
+                }
+              }
+              final res = evaluateDecision(funcName, inputMap);
+              if (res.matched) {
+                result[fieldName] = res.outputs;
               }
             }
           }
@@ -350,14 +756,14 @@ class ReferenceEngine {
       );
     }
 
+    record = decodeRecord(entityName, record);
     final errors = <ValidationErrorItem>[];
     final fields = (entity['fields'] as Map<String, dynamic>?) ?? {};
 
     for (final entry in fields.entries) {
       final fieldName = entry.key;
-      final fieldDef = entry.value;
-
-      if (fieldDef is! Map<String, dynamic>) continue;
+      final rawDef = entry.value;
+      final fieldDef = rawDef is Map<String, dynamic> ? rawDef : const <String, dynamic>{};
 
       final val = record[fieldName];
 
@@ -370,6 +776,19 @@ class ReferenceEngine {
           code: 'REQUIRED_FIELD',
         ));
         continue;
+      }
+
+      // Decimal wire validation check
+      final tname = _fieldTypeName(rawDef);
+      if (tname == 'decimal' && val != null) {
+        if (val is! num) {
+          errors.add(ValidationErrorItem(
+            field: fieldName,
+            message: "Field '$fieldName' must be a decimal number, such as \"12.50\"",
+            code: 'INVALID_DECIMAL',
+          ));
+          continue;
+        }
       }
 
       if (val != null) {
@@ -401,6 +820,8 @@ class ReferenceEngine {
     if (entity == null) {
       return const ExecutionResult(ok: false, error: 'UNKNOWN_ENTITY');
     }
+
+    record = decodeRecord(entityName, record);
 
     final workflow = entity['workflow'] as Map<String, dynamic>?;
     if (workflow == null) {
@@ -504,3 +925,4 @@ class ReferenceEngine {
     return 0;
   }
 }
+

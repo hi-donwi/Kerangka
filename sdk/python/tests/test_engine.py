@@ -300,3 +300,148 @@ class TestAuthorizeReadAndReadFilter(unittest.TestCase):
         self.assertFalse(self.engine.eval_filter(scope.where, {"tenantId": "tenant-b", "ownerId": "u-1"}, self.admin_tenant))
         self.assertFalse(self.engine.eval_filter(scope.where, {"tenantId": "tenant-a", "ownerId": "u-2"}, self.admin_tenant))
 
+
+class TestDecisionTables(unittest.TestCase):
+    def setUp(self):
+        self.doc = {
+            "kir": "0.1",
+            "app": "routing",
+            "decisions": {
+                "approverRouting": {
+                    "hitPolicy": "first",
+                    "inputs": [{"name": "days", "type": "int"}],
+                    "outputs": [{"name": "approverRole", "type": "string"}],
+                    "rows": [
+                        {"days": "<= 2", "approverRole": "team-lead"},
+                        {"days": "<= 5", "approverRole": "department-manager"},
+                        {"days": "> 5", "approverRole": "hr-director"},
+                    ],
+                },
+                "uniquePolicy": {
+                    "hitPolicy": "unique",
+                    "inputs": [{"name": "code", "type": "string"}],
+                    "outputs": [{"name": "label", "type": "string"}],
+                    "rules": [
+                        {"inputs": ["A"], "outputs": {"label": "Active"}},
+                        {"inputs": ["A"], "outputs": {"label": "Alternate"}},
+                    ],
+                },
+                "featureFlags": {
+                    "hitPolicy": "collect",
+                    "inputs": [{"name": "role", "type": "string"}],
+                    "outputs": [{"name": "feature", "type": "string"}],
+                    "rules": [
+                        {"inputs": ["admin"], "outputs": {"feature": "export_csv"}},
+                        {"inputs": ["admin"], "outputs": {"feature": "manage_users"}},
+                        {"inputs": ["user"], "outputs": {"feature": "read_only"}},
+                    ],
+                },
+            },
+            "entities": {
+                "LeaveRequest": {
+                    "key": "id",
+                    "fields": {
+                        "days": {"type": "int"},
+                        "approverRole": {
+                            "type": "string",
+                            "compute": "approverRouting(days)",
+                        },
+                    },
+                },
+            },
+        }
+        self.engine = ReferenceEngine(self.doc)
+
+    def test_first_hit_policy_with_canonical_rows(self):
+        short = self.engine.decide("approverRouting", {"days": 2})
+        self.assertTrue(short["matched"])
+        self.assertEqual(short["outputs"], {"approverRole": "team-lead"})
+
+        med = self.engine.decide("approverRouting", {"days": 4})
+        self.assertEqual(med["outputs"], {"approverRole": "department-manager"})
+
+        long_req = self.engine.decide("approverRouting", {"days": 9})
+        self.assertEqual(long_req["outputs"], {"approverRole": "hr-director"})
+
+    def test_compute_with_decision_table(self):
+        computed = self.engine.compute("LeaveRequest", {"days": 4})
+        self.assertEqual(computed["approverRole"], "department-manager")
+
+    def test_unique_hit_policy_violation(self):
+        res = self.engine.decide("uniquePolicy", {"code": "A"})
+        self.assertFalse(res["matched"])
+        self.assertEqual(res["code"], "UNIQUE_VIOLATION")
+
+    def test_collect_hit_policy(self):
+        res = self.engine.decide("featureFlags", {"role": "admin"})
+        self.assertTrue(res["matched"])
+        self.assertEqual(res["hit_count"], 2)
+        self.assertEqual(len(res["outputs"]), 2)
+
+    def test_no_match_fails_closed(self):
+        res = self.engine.decide("approverRouting", {"days": "invalid"})
+        self.assertFalse(res["matched"])
+        self.assertEqual(res["code"], "DECISION_NO_MATCH")
+
+    def test_table_not_found(self):
+        res = self.engine.decide("nonExistent", {})
+        self.assertFalse(res["matched"])
+        self.assertEqual(res["code"], "TABLE_NOT_FOUND")
+
+
+class TestDecimalWireDecoding(unittest.TestCase):
+    def setUp(self):
+        self.doc = {
+            "kir": "0.1",
+            "app": "store",
+            "entities": {
+                "Product": {
+                    "key": "sku",
+                    "fields": {
+                        "sku": {"type": "string"},
+                        "price": {"type": "decimal"},
+                    },
+                },
+            },
+        }
+        self.engine = ReferenceEngine(self.doc)
+
+    def test_decode_record_valid_decimal_wire(self):
+        decoded = self.engine.decode_record("Product", {"sku": "SKU-1", "price": "150.00"})
+        self.assertEqual(decoded["price"], 150.0)
+        self.assertIsInstance(decoded["price"], float)
+
+    def test_decode_record_negative_decimal(self):
+        decoded = self.engine.decode_record("Product", {"sku": "SKU-2", "price": "-5.50"})
+        self.assertEqual(decoded["price"], -5.5)
+
+    def test_validation_fails_on_invalid_decimal(self):
+        val_res = self.engine.validate("Product", {"sku": "SKU-3", "price": "not-a-decimal"})
+        self.assertFalse(val_res.valid)
+        self.assertTrue(any(e.code == "INVALID_DECIMAL" for e in val_res.errors))
+
+
+class TestBuiltInFunctions(unittest.TestCase):
+    def test_built_ins(self):
+        from kerangka.engine.eval import eval_node
+
+        def evaluate(tuple_val):
+            ok, val = eval_node(tuple_val)
+            self.assertTrue(ok)
+            return val
+
+        self.assertEqual(evaluate(["abs", -42.0]), 42.0)
+        self.assertEqual(evaluate(["round", 3.14159, 2]), 3.14)
+        self.assertEqual(evaluate(["min", 10.0, 20.0]), 10.0)
+        self.assertEqual(evaluate(["max", 10.0, 20.0]), 20.0)
+        self.assertEqual(evaluate(["lower", "HELLO"]), "hello")
+        self.assertEqual(evaluate(["upper", "world"]), "WORLD")
+        self.assertEqual(evaluate(["trim", "  hello  "]), "hello")
+        self.assertEqual(evaluate(["len", "hello"]), 5)
+        self.assertEqual(evaluate(["contains", "kerangka", "rang"]), True)
+        self.assertEqual(evaluate(["startsWith", "kerangka", "ker"]), True)
+        self.assertEqual(evaluate(["concat", "foo", "bar", "baz"]), "foobarbaz")
+        self.assertEqual(evaluate(["coalesce", None, None, "first"]), "first")
+
+
+

@@ -368,5 +368,186 @@ void main() {
       expect(engine.evalFilter(scope.where, {'tenantId': 'tenant-a', 'ownerId': 'u-2'}, adminTenant), isFalse);
     });
   });
+
+  group('Decision Tables', () {
+    final doc = {
+      'kir': '0.1',
+      'app': 'routing',
+      'decisions': {
+        'approverRouting': {
+          'hitPolicy': 'first',
+          'inputs': [
+            {'name': 'days', 'type': 'int'}
+          ],
+          'outputs': [
+            {'name': 'approverRole', 'type': 'string'}
+          ],
+          'rows': [
+            {'days': '<= 2', 'approverRole': 'team-lead'},
+            {'days': '<= 5', 'approverRole': 'department-manager'},
+            {'days': '> 5', 'approverRole': 'hr-director'},
+          ],
+        },
+        'uniquePolicy': {
+          'hitPolicy': 'unique',
+          'inputs': [
+            {'name': 'code', 'type': 'string'}
+          ],
+          'outputs': [
+            {'name': 'label', 'type': 'string'}
+          ],
+          'rules': [
+            {
+              'inputs': ['A'],
+              'outputs': {'label': 'Active'}
+            },
+            {
+              'inputs': ['A'],
+              'outputs': {'label': 'Alternate'}
+            },
+          ],
+        },
+        'featureFlags': {
+          'hitPolicy': 'collect',
+          'inputs': [
+            {'name': 'role', 'type': 'string'}
+          ],
+          'outputs': [
+            {'name': 'feature', 'type': 'string'}
+          ],
+          'rules': [
+            {
+              'inputs': ['admin'],
+              'outputs': {'feature': 'export_csv'}
+            },
+            {
+              'inputs': ['admin'],
+              'outputs': {'feature': 'manage_users'}
+            },
+            {
+              'inputs': ['user'],
+              'outputs': {'feature': 'read_only'}
+            },
+          ],
+        },
+      },
+      'entities': {
+        'LeaveRequest': {
+          'key': 'id',
+          'fields': {
+            'days': {'type': 'int'},
+            'approverRole': {
+              'type': 'string',
+              'compute': 'approverRouting(days)',
+            },
+          },
+        },
+      },
+    };
+
+    final engine = ReferenceEngine(doc);
+
+    test('first hit policy with canonical rows', () {
+      final short = engine.decide('approverRouting', {'days': 2});
+      expect(short.matched, isTrue);
+      expect(short.outputs, equals({'approverRole': 'team-lead'}));
+
+      final med = engine.decide('approverRouting', {'days': 4});
+      expect(med.outputs, equals({'approverRole': 'department-manager'}));
+
+      final longReq = engine.decide('approverRouting', {'days': 9});
+      expect(longReq.outputs, equals({'approverRole': 'hr-director'}));
+    });
+
+    test('compute with decision table', () {
+      final computed = engine.compute('LeaveRequest', {'days': 4});
+      expect(computed['approverRole'], equals('department-manager'));
+    });
+
+    test('unique hit policy violation', () {
+      final res = engine.decide('uniquePolicy', {'code': 'A'});
+      expect(res.matched, isFalse);
+      expect(res.code, equals('UNIQUE_VIOLATION'));
+    });
+
+    test('collect hit policy', () {
+      final res = engine.decide('featureFlags', {'role': 'admin'});
+      expect(res.matched, isTrue);
+      expect(res.hitCount, equals(2));
+      expect((res.outputs as List).length, equals(2));
+    });
+
+    test('no match fails closed', () {
+      final res = engine.decide('approverRouting', {'days': 'invalid'});
+      expect(res.matched, isFalse);
+      expect(res.code, equals('DECISION_NO_MATCH'));
+    });
+
+    test('table not found', () {
+      final res = engine.decide('nonExistent', {});
+      expect(res.matched, isFalse);
+      expect(res.code, equals('TABLE_NOT_FOUND'));
+    });
+  });
+
+  group('Decimal Wire Decoding', () {
+    final doc = {
+      'kir': '0.1',
+      'app': 'store',
+      'entities': {
+        'Product': {
+          'key': 'sku',
+          'fields': {
+            'sku': {'type': 'string'},
+            'price': {'type': 'decimal'},
+          },
+        },
+      },
+    };
+
+    final engine = ReferenceEngine(doc);
+
+    test('decodeRecord valid decimal string', () {
+      final decoded = engine.decodeRecord('Product', {'sku': 'SKU-1', 'price': '150.00'});
+      expect(decoded['price'], equals(150.0));
+      expect(decoded['price'] is num, isTrue);
+    });
+
+    test('decodeRecord negative decimal string', () {
+      final decoded = engine.decodeRecord('Product', {'sku': 'SKU-2', 'price': '-5.50'});
+      expect(decoded['price'], equals(-5.5));
+    });
+
+    test('validation fails on invalid decimal', () {
+      final valRes = engine.validate('Product', {'sku': 'SKU-3', 'price': 'not-a-decimal'});
+      expect(valRes.valid, isFalse);
+      expect(valRes.errors.any((e) => e.code == 'INVALID_DECIMAL'), isTrue);
+    });
+  });
+
+  group('Built-in Functions', () {
+    dynamic evaluate(List<dynamic> tuple) {
+      final res = evalNode(tuple);
+      expect(res.supported, isTrue);
+      return res.value;
+    }
+
+    test('evaluates built-in math, string, and utility functions', () {
+      expect(evaluate(['abs', -42.0]), equals(42.0));
+      expect(evaluate(['round', 3.14159, 2]), equals(3.14));
+      expect(evaluate(['min', 10.0, 20.0]), equals(10.0));
+      expect(evaluate(['max', 10.0, 20.0]), equals(20.0));
+      expect(evaluate(['lower', 'HELLO']), equals('hello'));
+      expect(evaluate(['upper', 'world']), equals('WORLD'));
+      expect(evaluate(['trim', '  hello  ']), equals('hello'));
+      expect(evaluate(['len', 'hello']), equals(5));
+      expect(evaluate(['contains', 'kerangka', 'rang']), isTrue);
+      expect(evaluate(['startsWith', 'kerangka', 'ker']), isTrue);
+      expect(evaluate(['concat', 'foo', 'bar', 'baz']), equals('foobarbaz'));
+      expect(evaluate(['coalesce', null, null, 'first']), equals('first'));
+    });
+  });
 }
+
+
 

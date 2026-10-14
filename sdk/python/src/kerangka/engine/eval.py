@@ -7,6 +7,7 @@ An operator or syntax outside that subset is unsupported: the caller must refuse
 (fail closed), not treat it as false or permissive and continue.
 """
 
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -85,7 +86,174 @@ def _call(
             return False, None
         return True, _compare(op, left, right)
 
+    if op == "abs":
+        if len(args) != 1:
+            return False, None
+        ok, val = eval_node(args[0], record, actor)
+        if not ok:
+            return False, None
+        if val is None:
+            return True, None
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return True, abs(val)
+        return False, None
+
+    if op == "round":
+        if len(args) < 1 or len(args) > 2:
+            return False, None
+        ok, val = eval_node(args[0], record, actor)
+        if not ok:
+            return False, None
+        if val is None:
+            return True, None
+        if not (isinstance(val, (int, float)) and not isinstance(val, bool)):
+            return False, None
+        decimals = 0
+        if len(args) == 2:
+            dok, dval = eval_node(args[1], record, actor)
+            if not dok:
+                return False, None
+            if isinstance(dval, (int, float)) and not isinstance(dval, bool):
+                decimals = int(dval)
+        return True, round(val, decimals)
+
+    if op in ("ceil", "floor"):
+        if len(args) != 1:
+            return False, None
+        ok, val = eval_node(args[0], record, actor)
+        if not ok:
+            return False, None
+        if val is None:
+            return True, None
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return True, math.ceil(val) if op == "ceil" else math.floor(val)
+        return False, None
+
+    if op in ("min", "max"):
+        if len(args) != 2:
+            return False, None
+        a_ok, a = eval_node(args[0], record, actor)
+        if not a_ok:
+            return False, None
+        b_ok, b = eval_node(args[1], record, actor)
+        if not b_ok:
+            return False, None
+        if a is None or b is None:
+            return True, None
+        if isinstance(a, (int, float)) and not isinstance(a, bool) and isinstance(b, (int, float)) and not isinstance(b, bool):
+            return True, min(a, b) if op == "min" else max(a, b)
+        return False, None
+
+    if op in ("lower", "upper", "trim"):
+        if len(args) != 1:
+            return False, None
+        ok, val = eval_node(args[0], record, actor)
+        if not ok:
+            return False, None
+        if val is None:
+            return True, None
+        s = str(val)
+        if op == "lower":
+            return True, s.lower()
+        if op == "upper":
+            return True, s.upper()
+        return True, s.strip()
+
+    if op == "len":
+        if len(args) != 1:
+            return False, None
+        ok, val = eval_node(args[0], record, actor)
+        if not ok:
+            return False, None
+        if val is None:
+            return True, 0
+        if isinstance(val, (str, list, dict)):
+            return True, len(val)
+        return True, 0
+
+    if op == "contains":
+        if len(args) != 2:
+            return False, None
+        h_ok, haystack = eval_node(args[0], record, actor)
+        if not h_ok:
+            return False, None
+        n_ok, needle = eval_node(args[1], record, actor)
+        if not n_ok:
+            return False, None
+        if haystack is None or needle is None:
+            return True, False
+        if isinstance(haystack, str):
+            return True, str(needle) in haystack
+        if isinstance(haystack, list):
+            return True, needle in haystack
+        return True, False
+
+    if op == "startsWith":
+        if len(args) != 2:
+            return False, None
+        s_ok, s = eval_node(args[0], record, actor)
+        if not s_ok:
+            return False, None
+        p_ok, p = eval_node(args[1], record, actor)
+        if not p_ok:
+            return False, None
+        if s is None or p is None:
+            return True, False
+        return True, str(s).startswith(str(p))
+
+    if op == "concat":
+        out = []
+        for arg in args:
+            ok, val = eval_node(arg, record, actor)
+            if not ok:
+                return False, None
+            if val is None:
+                return True, None
+            out.append(str(val))
+        return True, "".join(out)
+
+    if op == "coalesce":
+        for arg in args:
+            ok, val = eval_node(arg, record, actor)
+            if not ok:
+                return False, None
+            if val is not None:
+                return True, val
+        return True, None
+
+    if op == "in":
+        if len(args) != 2:
+            return False, None
+        i_ok, item = eval_node(args[0], record, actor)
+        if not i_ok:
+            return False, None
+        l_ok, lst = eval_node(args[1], record, actor)
+        if not l_ok:
+            return False, None
+        if item is None or lst is None:
+            return True, False
+        if isinstance(lst, list):
+            return True, item in lst
+        return True, False
+
+    if op == "isSet":
+        if len(args) != 1:
+            return False, None
+        ok, val = eval_node(args[0], record, actor)
+        if not ok:
+            return False, None
+        return True, val is not None
+
+    if op == "is_null":
+        if len(args) != 1:
+            return False, None
+        ok, val = eval_node(args[0], record, actor)
+        if not ok:
+            return False, None
+        return True, val is None
+
     return False, None
+
 
 
 def _eval_tuple(
@@ -164,7 +332,7 @@ def _eval_tuple(
             return False, None
         return True, _compare(op, left, right)
 
-    return False, None
+    return _call(op, tuple_node[1:], record, actor)
 
 
 def _resolve_path(

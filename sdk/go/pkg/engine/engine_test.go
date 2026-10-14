@@ -351,3 +351,225 @@ func TestAuthorizeReadAndEvalFilter(t *testing.T) {
 	}
 }
 
+func TestDecisionTables(t *testing.T) {
+	doc := &kir.Document{
+		KIR: "0.1",
+		App: "routing",
+		Decisions: map[string]any{
+			"approverRouting": map[string]any{
+				"hitPolicy": "first",
+				"inputs": []any{
+					map[string]any{"name": "days", "type": "int"},
+				},
+				"outputs": []any{
+					map[string]any{"name": "approverRole", "type": "string"},
+				},
+				"rows": []any{
+					map[string]any{"days": "<= 2", "approverRole": "team-lead"},
+					map[string]any{"days": "<= 5", "approverRole": "department-manager"},
+					map[string]any{"days": "> 5", "approverRole": "hr-director"},
+				},
+			},
+			"uniquePolicy": map[string]any{
+				"hitPolicy": "unique",
+				"inputs": []any{
+					map[string]any{"name": "code", "type": "string"},
+				},
+				"outputs": []any{
+					map[string]any{"name": "label", "type": "string"},
+				},
+				"rules": []any{
+					map[string]any{"inputs": []any{"A"}, "outputs": map[string]any{"label": "Active"}},
+					map[string]any{"inputs": []any{"A"}, "outputs": map[string]any{"label": "Alternate"}},
+				},
+			},
+			"featureFlags": map[string]any{
+				"hitPolicy": "collect",
+				"inputs": []any{
+					map[string]any{"name": "role", "type": "string"},
+				},
+				"outputs": []any{
+					map[string]any{"name": "feature", "type": "string"},
+				},
+				"rules": []any{
+					map[string]any{"inputs": []any{"admin"}, "outputs": map[string]any{"feature": "export_csv"}},
+					map[string]any{"inputs": []any{"admin"}, "outputs": map[string]any{"feature": "manage_users"}},
+					map[string]any{"inputs": []any{"user"}, "outputs": map[string]any{"feature": "read_only"}},
+				},
+			},
+		},
+		Entities: map[string]kir.Entity{
+			"LeaveRequest": {
+				Key: "id",
+				Fields: map[string]any{
+					"days": map[string]any{"type": "int"},
+					"approverRole": map[string]any{
+						"type":    "string",
+						"compute": "approverRouting(days)",
+					},
+				},
+			},
+		},
+	}
+
+	eng := New(doc)
+
+	// 1. Canonical rows with first hit policy
+	short := eng.Decide("approverRouting", map[string]any{"days": 2})
+	if !short.Matched {
+		t.Fatalf("expected short request to match: %+v", short)
+	}
+	shortOutputs, ok := short.Outputs.(map[string]any)
+	if !ok || shortOutputs["approverRole"] != "team-lead" {
+		t.Fatalf("expected team-lead, got: %v", short.Outputs)
+	}
+
+	med := eng.Decide("approverRouting", map[string]any{"days": 4})
+	if !med.Matched || med.Outputs.(map[string]any)["approverRole"] != "department-manager" {
+		t.Fatalf("expected department-manager, got: %v", med.Outputs)
+	}
+
+	long := eng.Decide("approverRouting", map[string]any{"days": 9})
+	if !long.Matched || long.Outputs.(map[string]any)["approverRole"] != "hr-director" {
+		t.Fatalf("expected hr-director, got: %v", long.Outputs)
+	}
+
+	// 2. Compute integration
+	computed := eng.Compute("LeaveRequest", map[string]any{"days": 4})
+	if computed["approverRole"] != "department-manager" {
+		t.Fatalf("expected computed approverRole department-manager, got: %v", computed["approverRole"])
+	}
+
+	// 3. Unique hit policy violation
+	uniqRes := eng.Decide("uniquePolicy", map[string]any{"code": "A"})
+	if uniqRes.Matched || uniqRes.Code != "UNIQUE_VIOLATION" {
+		t.Fatalf("expected UNIQUE_VIOLATION, got: %+v", uniqRes)
+	}
+
+	// 4. Collect hit policy
+	collectRes := eng.Decide("featureFlags", map[string]any{"role": "admin"})
+	if !collectRes.Matched || collectRes.HitCount != 2 {
+		t.Fatalf("expected 2 hits for collect hit policy, got: %+v", collectRes)
+	}
+	collectList, ok := collectRes.Outputs.([]map[string]any)
+	if !ok || len(collectList) != 2 {
+		t.Fatalf("expected slice of 2 outputs, got: %v", collectRes.Outputs)
+	}
+
+	// 5. No match
+	noMatch := eng.Decide("approverRouting", map[string]any{"days": "invalid"})
+	if noMatch.Matched || noMatch.Code != "DECISION_NO_MATCH" {
+		t.Fatalf("expected DECISION_NO_MATCH, got: %+v", noMatch)
+	}
+
+	// 6. Table not found
+	notFound := eng.Decide("nonExistent", map[string]any{})
+	if notFound.Matched || notFound.Code != "TABLE_NOT_FOUND" {
+		t.Fatalf("expected TABLE_NOT_FOUND, got: %+v", notFound)
+	}
+}
+
+func TestDecimalWireDecoding(t *testing.T) {
+	doc := &kir.Document{
+		KIR: "0.1",
+		App: "store",
+		Entities: map[string]kir.Entity{
+			"Product": {
+				Key: "sku",
+				Fields: map[string]any{
+					"sku":   map[string]any{"type": "string"},
+					"price": map[string]any{"type": "decimal"},
+				},
+			},
+		},
+	}
+
+	eng := New(doc)
+
+	// Valid decimal string decoded to float64
+	decoded := eng.DecodeRecord("Product", map[string]any{
+		"sku":   "SKU-1",
+		"price": "150.00",
+	})
+	if p, ok := decoded["price"].(float64); !ok || p != 150.0 {
+		t.Fatalf("expected price 150.0 float64, got %v (%T)", decoded["price"], decoded["price"])
+	}
+
+	// Negative decimal
+	negDecoded := eng.DecodeRecord("Product", map[string]any{
+		"sku":   "SKU-2",
+		"price": "-5.50",
+	})
+	if p, ok := negDecoded["price"].(float64); !ok || p != -5.5 {
+		t.Fatalf("expected price -5.5 float64, got %v", negDecoded["price"])
+	}
+
+	// Validation fails on non-numeric string for decimal field
+	valRes := eng.Validate("Product", map[string]any{
+		"sku":   "SKU-3",
+		"price": "not-a-decimal",
+	})
+	if valRes.Valid {
+		t.Fatalf("expected validation failure for invalid decimal")
+	}
+	foundInvalid := false
+	for _, e := range valRes.Errors {
+		if e.Code == "INVALID_DECIMAL" {
+			foundInvalid = true
+			break
+		}
+	}
+	if !foundInvalid {
+		t.Fatalf("expected INVALID_DECIMAL error code, got %+v", valRes.Errors)
+	}
+}
+
+func TestBuiltInFunctions(t *testing.T) {
+	eval := func(tuple []any) any {
+		res := evalTuple(tuple, nil, nil)
+		if !res.Supported {
+			t.Fatalf("expected supported outcome for %v", tuple)
+		}
+		return res.Value
+	}
+
+	if eval([]any{"abs", -42.0}) != 42.0 {
+		t.Fatalf("abs(-42) failed")
+	}
+	if eval([]any{"round", 3.14159, 2}) != 3.14 {
+		t.Fatalf("round(3.14159, 2) failed")
+	}
+	if eval([]any{"min", 10.0, 20.0}) != 10.0 {
+		t.Fatalf("min(10, 20) failed")
+	}
+	if eval([]any{"max", 10.0, 20.0}) != 20.0 {
+		t.Fatalf("max(10, 20) failed")
+	}
+	if eval([]any{"lower", "HELLO"}) != "hello" {
+		t.Fatalf("lower('HELLO') failed")
+	}
+	if eval([]any{"upper", "world"}) != "WORLD" {
+		t.Fatalf("upper('world') failed")
+	}
+	if eval([]any{"trim", "  hello  "}) != "hello" {
+		t.Fatalf("trim('  hello  ') failed")
+	}
+	if eval([]any{"len", "hello"}) != 5 {
+		t.Fatalf("len('hello') failed")
+	}
+	if eval([]any{"contains", "kerangka", "rang"}) != true {
+		t.Fatalf("contains('kerangka', 'rang') failed")
+	}
+	if eval([]any{"startsWith", "kerangka", "ker"}) != true {
+		t.Fatalf("startsWith('kerangka', 'ker') failed")
+	}
+	if eval([]any{"concat", "foo", "bar", "baz"}) != "foobarbaz" {
+		t.Fatalf("concat('foo', 'bar', 'baz') failed")
+	}
+	if eval([]any{"coalesce", nil, nil, "first"}) != "first" {
+		t.Fatalf("coalesce failed")
+	}
+}
+
+
+

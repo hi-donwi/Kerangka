@@ -2,6 +2,8 @@ package engine
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"unicode"
@@ -108,10 +110,307 @@ func evalCall(op string, args []any, record map[string]any, actor *ActorContext)
 			return right
 		}
 		return EvalOutcome{Supported: true, Value: compare(op, left.Value, right.Value)}
+
+	case "abs":
+		if len(args) != 1 {
+			return EvalOutcome{}
+		}
+		arg := evalNode(args[0], record, actor)
+		if !arg.Supported {
+			return arg
+		}
+		if arg.Value == nil {
+			return EvalOutcome{Supported: true, Value: nil}
+		}
+		if n, ok := toFloat(arg.Value); ok {
+			return EvalOutcome{Supported: true, Value: math.Abs(n)}
+		}
+		return EvalOutcome{}
+
+	case "round":
+		if len(args) < 1 || len(args) > 2 {
+			return EvalOutcome{}
+		}
+		arg := evalNode(args[0], record, actor)
+		if !arg.Supported {
+			return arg
+		}
+		if arg.Value == nil {
+			return EvalOutcome{Supported: true, Value: nil}
+		}
+		n, ok := toFloat(arg.Value)
+		if !ok {
+			return EvalOutcome{}
+		}
+		decimals := 0
+		if len(args) == 2 {
+			decArg := evalNode(args[1], record, actor)
+			if !decArg.Supported {
+				return decArg
+			}
+			if d, ok := toFloat(decArg.Value); ok {
+				decimals = int(d)
+			}
+		}
+		factor := math.Pow(10, float64(decimals))
+		return EvalOutcome{Supported: true, Value: math.Round(n*factor) / factor}
+
+	case "ceil":
+		if len(args) != 1 {
+			return EvalOutcome{}
+		}
+		arg := evalNode(args[0], record, actor)
+		if !arg.Supported {
+			return arg
+		}
+		if arg.Value == nil {
+			return EvalOutcome{Supported: true, Value: nil}
+		}
+		if n, ok := toFloat(arg.Value); ok {
+			return EvalOutcome{Supported: true, Value: math.Ceil(n)}
+		}
+		return EvalOutcome{}
+
+	case "floor":
+		if len(args) != 1 {
+			return EvalOutcome{}
+		}
+		arg := evalNode(args[0], record, actor)
+		if !arg.Supported {
+			return arg
+		}
+		if arg.Value == nil {
+			return EvalOutcome{Supported: true, Value: nil}
+		}
+		if n, ok := toFloat(arg.Value); ok {
+			return EvalOutcome{Supported: true, Value: math.Floor(n)}
+		}
+		return EvalOutcome{}
+
+	case "min":
+		if len(args) != 2 {
+			return EvalOutcome{}
+		}
+		a := evalNode(args[0], record, actor)
+		if !a.Supported {
+			return a
+		}
+		b := evalNode(args[1], record, actor)
+		if !b.Supported {
+			return b
+		}
+		if a.Value == nil || b.Value == nil {
+			return EvalOutcome{Supported: true, Value: nil}
+		}
+		aNum, okA := toFloat(a.Value)
+		bNum, okB := toFloat(b.Value)
+		if okA && okB {
+			return EvalOutcome{Supported: true, Value: math.Min(aNum, bNum)}
+		}
+		return EvalOutcome{}
+
+	case "max":
+		if len(args) != 2 {
+			return EvalOutcome{}
+		}
+		a := evalNode(args[0], record, actor)
+		if !a.Supported {
+			return a
+		}
+		b := evalNode(args[1], record, actor)
+		if !b.Supported {
+			return b
+		}
+		if a.Value == nil || b.Value == nil {
+			return EvalOutcome{Supported: true, Value: nil}
+		}
+		aNum, okA := toFloat(a.Value)
+		bNum, okB := toFloat(b.Value)
+		if okA && okB {
+			return EvalOutcome{Supported: true, Value: math.Max(aNum, bNum)}
+		}
+		return EvalOutcome{}
+
+	case "lower":
+		if len(args) != 1 {
+			return EvalOutcome{}
+		}
+		arg := evalNode(args[0], record, actor)
+		if !arg.Supported {
+			return arg
+		}
+		if arg.Value == nil {
+			return EvalOutcome{Supported: true, Value: nil}
+		}
+		return EvalOutcome{Supported: true, Value: strings.ToLower(fmt.Sprintf("%v", arg.Value))}
+
+	case "upper":
+		if len(args) != 1 {
+			return EvalOutcome{}
+		}
+		arg := evalNode(args[0], record, actor)
+		if !arg.Supported {
+			return arg
+		}
+		if arg.Value == nil {
+			return EvalOutcome{Supported: true, Value: nil}
+		}
+		return EvalOutcome{Supported: true, Value: strings.ToUpper(fmt.Sprintf("%v", arg.Value))}
+
+	case "trim":
+		if len(args) != 1 {
+			return EvalOutcome{}
+		}
+		arg := evalNode(args[0], record, actor)
+		if !arg.Supported {
+			return arg
+		}
+		if arg.Value == nil {
+			return EvalOutcome{Supported: true, Value: nil}
+		}
+		return EvalOutcome{Supported: true, Value: strings.TrimSpace(fmt.Sprintf("%v", arg.Value))}
+
+	case "len":
+		if len(args) != 1 {
+			return EvalOutcome{}
+		}
+		arg := evalNode(args[0], record, actor)
+		if !arg.Supported {
+			return arg
+		}
+		if arg.Value == nil {
+			return EvalOutcome{Supported: true, Value: 0}
+		}
+		switch v := arg.Value.(type) {
+		case string:
+			return EvalOutcome{Supported: true, Value: len(v)}
+		case []any:
+			return EvalOutcome{Supported: true, Value: len(v)}
+		default:
+			return EvalOutcome{Supported: true, Value: 0}
+		}
+
+	case "contains":
+		if len(args) != 2 {
+			return EvalOutcome{}
+		}
+		haystack := evalNode(args[0], record, actor)
+		if !haystack.Supported {
+			return haystack
+		}
+		needle := evalNode(args[1], record, actor)
+		if !needle.Supported {
+			return needle
+		}
+		if haystack.Value == nil || needle.Value == nil {
+			return EvalOutcome{Supported: true, Value: false}
+		}
+		switch h := haystack.Value.(type) {
+		case string:
+			return EvalOutcome{Supported: true, Value: strings.Contains(h, fmt.Sprintf("%v", needle.Value))}
+		case []any:
+			for _, item := range h {
+				if item == needle.Value {
+					return EvalOutcome{Supported: true, Value: true}
+				}
+			}
+			return EvalOutcome{Supported: true, Value: false}
+		default:
+			return EvalOutcome{Supported: true, Value: false}
+		}
+
+	case "startsWith":
+		if len(args) != 2 {
+			return EvalOutcome{}
+		}
+		str := evalNode(args[0], record, actor)
+		if !str.Supported {
+			return str
+		}
+		prefix := evalNode(args[1], record, actor)
+		if !prefix.Supported {
+			return prefix
+		}
+		if str.Value == nil || prefix.Value == nil {
+			return EvalOutcome{Supported: true, Value: false}
+		}
+		return EvalOutcome{Supported: true, Value: strings.HasPrefix(fmt.Sprintf("%v", str.Value), fmt.Sprintf("%v", prefix.Value))}
+
+	case "concat":
+		var b strings.Builder
+		for _, arg := range args {
+			res := evalNode(arg, record, actor)
+			if !res.Supported {
+				return res
+			}
+			if res.Value == nil {
+				return EvalOutcome{Supported: true, Value: nil}
+			}
+			b.WriteString(fmt.Sprintf("%v", res.Value))
+		}
+		return EvalOutcome{Supported: true, Value: b.String()}
+
+	case "coalesce":
+		for _, arg := range args {
+			res := evalNode(arg, record, actor)
+			if !res.Supported {
+				return res
+			}
+			if res.Value != nil {
+				return EvalOutcome{Supported: true, Value: res.Value}
+			}
+		}
+		return EvalOutcome{Supported: true, Value: nil}
+
+	case "in":
+		if len(args) != 2 {
+			return EvalOutcome{}
+		}
+		item := evalNode(args[0], record, actor)
+		if !item.Supported {
+			return item
+		}
+		list := evalNode(args[1], record, actor)
+		if !list.Supported {
+			return list
+		}
+		if item.Value == nil || list.Value == nil {
+			return EvalOutcome{Supported: true, Value: false}
+		}
+		if slice, ok := list.Value.([]any); ok {
+			for _, el := range slice {
+				if el == item.Value {
+					return EvalOutcome{Supported: true, Value: true}
+				}
+			}
+		}
+		return EvalOutcome{Supported: true, Value: false}
+
+	case "isSet":
+		if len(args) != 1 {
+			return EvalOutcome{}
+		}
+		arg := evalNode(args[0], record, actor)
+		if !arg.Supported {
+			return arg
+		}
+		return EvalOutcome{Supported: true, Value: arg.Value != nil}
+
+	case "is_null":
+		if len(args) != 1 {
+			return EvalOutcome{}
+		}
+		arg := evalNode(args[0], record, actor)
+		if !arg.Supported {
+			return arg
+		}
+		return EvalOutcome{Supported: true, Value: arg.Value == nil}
+
 	default:
 		return EvalOutcome{}
 	}
 }
+
 
 func evalTuple(tuple []any, record map[string]any, actor *ActorContext) EvalOutcome {
 	if len(tuple) == 0 {
@@ -213,7 +512,7 @@ func evalTuple(tuple []any, record map[string]any, actor *ActorContext) EvalOutc
 		return EvalOutcome{Supported: true, Value: compare(op, left.Value, right.Value)}
 
 	default:
-		return EvalOutcome{}
+		return evalCall(op, tuple[1:], record, actor)
 	}
 }
 

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 /// Subset of the K1 evaluator (spec/semantics/expressions.md, ADR-0008, ADR-0040, ADR-0044).
 ///
 /// Guards and read filters in a compiled model are AST nodes or lowered tuples.
@@ -98,6 +100,148 @@ EvalOutcome evalCall(
     if (!right.supported) return right;
     return EvalOutcome.supported(compare(op, left.value, right.value));
   }
+
+  if (op == 'abs') {
+    if (args.length != 1) return const EvalOutcome.unsupported();
+    final res = evalNode(args[0], record, actor);
+    if (!res.supported) return res;
+    if (res.value == null) return const EvalOutcome.supported(null);
+    if (res.value is num) return EvalOutcome.supported((res.value as num).abs());
+    return const EvalOutcome.unsupported();
+  }
+
+  if (op == 'round') {
+    if (args.isEmpty || args.length > 2) return const EvalOutcome.unsupported();
+    final res = evalNode(args[0], record, actor);
+    if (!res.supported) return res;
+    if (res.value == null) return const EvalOutcome.supported(null);
+    if (res.value is! num) return const EvalOutcome.unsupported();
+    var decimals = 0;
+    if (args.length == 2) {
+      final decRes = evalNode(args[1], record, actor);
+      if (!decRes.supported) return decRes;
+      if (decRes.value is num) decimals = (decRes.value as num).toInt();
+    }
+    final factor = math.pow(10, decimals);
+    return EvalOutcome.supported(((res.value as num) * factor).round() / factor);
+  }
+
+  if (op == 'ceil' || op == 'floor') {
+    if (args.length != 1) return const EvalOutcome.unsupported();
+    final res = evalNode(args[0], record, actor);
+    if (!res.supported) return res;
+    if (res.value == null) return const EvalOutcome.supported(null);
+    if (res.value is num) {
+      final n = res.value as num;
+      return EvalOutcome.supported(op == 'ceil' ? n.ceil() : n.floor());
+    }
+    return const EvalOutcome.unsupported();
+  }
+
+  if (op == 'min' || op == 'max') {
+    if (args.length != 2) return const EvalOutcome.unsupported();
+    final a = evalNode(args[0], record, actor);
+    if (!a.supported) return a;
+    final b = evalNode(args[1], record, actor);
+    if (!b.supported) return b;
+    if (a.value == null || b.value == null) return const EvalOutcome.supported(null);
+    if (a.value is num && b.value is num) {
+      final aNum = a.value as num;
+      final bNum = b.value as num;
+      return EvalOutcome.supported(op == 'min' ? math.min(aNum, bNum) : math.max(aNum, bNum));
+    }
+    return const EvalOutcome.unsupported();
+  }
+
+  if (op == 'lower' || op == 'upper' || op == 'trim') {
+    if (args.length != 1) return const EvalOutcome.unsupported();
+    final res = evalNode(args[0], record, actor);
+    if (!res.supported) return res;
+    if (res.value == null) return const EvalOutcome.supported(null);
+    final s = res.value.toString();
+    if (op == 'lower') return EvalOutcome.supported(s.toLowerCase());
+    if (op == 'upper') return EvalOutcome.supported(s.toUpperCase());
+    return EvalOutcome.supported(s.trim());
+  }
+
+  if (op == 'len') {
+    if (args.length != 1) return const EvalOutcome.unsupported();
+    final res = evalNode(args[0], record, actor);
+    if (!res.supported) return res;
+    if (res.value == null) return const EvalOutcome.supported(0);
+    if (res.value is String) return EvalOutcome.supported((res.value as String).length);
+    if (res.value is List) return EvalOutcome.supported((res.value as List).length);
+    if (res.value is Map) return EvalOutcome.supported((res.value as Map).length);
+    return const EvalOutcome.supported(0);
+  }
+
+  if (op == 'contains') {
+    if (args.length != 2) return const EvalOutcome.unsupported();
+    final h = evalNode(args[0], record, actor);
+    if (!h.supported) return h;
+    final n = evalNode(args[1], record, actor);
+    if (!n.supported) return n;
+    if (h.value == null || n.value == null) return const EvalOutcome.supported(false);
+    if (h.value is String) return EvalOutcome.supported((h.value as String).contains(n.value.toString()));
+    if (h.value is List) return EvalOutcome.supported((h.value as List).contains(n.value));
+    return const EvalOutcome.supported(false);
+  }
+
+  if (op == 'startsWith') {
+    if (args.length != 2) return const EvalOutcome.unsupported();
+    final s = evalNode(args[0], record, actor);
+    if (!s.supported) return s;
+    final p = evalNode(args[1], record, actor);
+    if (!p.supported) return p;
+    if (s.value == null || p.value == null) return const EvalOutcome.supported(false);
+    return EvalOutcome.supported(s.value.toString().startsWith(p.value.toString()));
+  }
+
+  if (op == 'concat') {
+    final sb = StringBuffer();
+    for (final arg in args) {
+      final res = evalNode(arg, record, actor);
+      if (!res.supported) return res;
+      if (res.value == null) return const EvalOutcome.supported(null);
+      sb.write(res.value.toString());
+    }
+    return EvalOutcome.supported(sb.toString());
+  }
+
+  if (op == 'coalesce') {
+    for (final arg in args) {
+      final res = evalNode(arg, record, actor);
+      if (!res.supported) return res;
+      if (res.value != null) return EvalOutcome.supported(res.value);
+    }
+    return const EvalOutcome.supported(null);
+  }
+
+  if (op == 'in') {
+    if (args.length != 2) return const EvalOutcome.unsupported();
+    final item = evalNode(args[0], record, actor);
+    if (!item.supported) return item;
+    final list = evalNode(args[1], record, actor);
+    if (!list.supported) return list;
+    if (item.value == null || list.value == null) return const EvalOutcome.supported(false);
+    if (list.value is List) return EvalOutcome.supported((list.value as List).contains(item.value));
+    return const EvalOutcome.supported(false);
+  }
+
+  if (op == 'isSet') {
+    if (args.length != 1) return const EvalOutcome.unsupported();
+    final res = evalNode(args[0], record, actor);
+    if (!res.supported) return res;
+    return EvalOutcome.supported(res.value != null);
+  }
+
+  if (op == 'is_null') {
+    if (args.length != 1) return const EvalOutcome.unsupported();
+    final res = evalNode(args[0], record, actor);
+    if (!res.supported) return res;
+    return EvalOutcome.supported(res.value == null);
+  }
+
   return const EvalOutcome.unsupported();
 }
 
@@ -184,7 +328,7 @@ EvalOutcome evalTuple(
     return EvalOutcome.supported(compare(op, left.value, right.value));
   }
 
-  return const EvalOutcome.unsupported();
+  return evalCall(op, tuple.skip(1).toList(), record, actor);
 }
 
 Object? resolvePath(

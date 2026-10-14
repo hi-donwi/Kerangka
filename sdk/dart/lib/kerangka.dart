@@ -5,3 +5,4 @@
 library kerangka;
 
 export 'src/engine.dart';
+export 'src/eval.dart';

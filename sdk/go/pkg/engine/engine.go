@@ -4,6 +4,8 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hi-donwi/kerangka/sdk/go/pkg/kir"
@@ -50,8 +52,109 @@ func New(doc *kir.Document) *ReferenceEngine {
 	return &ReferenceEngine{doc: doc}
 }
 
+// DecodeRecord decodes decimal wire strings to float64 recursively by declared field types.
+func (e *ReferenceEngine) DecodeRecord(entityName string, record map[string]any) map[string]any {
+	if record == nil {
+		return nil
+	}
+	entity, ok := e.doc.Entities[entityName]
+	if !ok {
+		return record
+	}
+	return e.decodeFields(entity.Fields, record, 0)
+}
+
+func (e *ReferenceEngine) decodeFields(defs map[string]any, record map[string]any, depth int) map[string]any {
+	if depth > 16 || record == nil {
+		return record
+	}
+	out := make(map[string]any, len(record))
+	for k, v := range record {
+		out[k] = v
+	}
+
+	for name, rawDef := range defs {
+		val, exists := out[name]
+		if !exists || val == nil {
+			continue
+		}
+		out[name] = e.decodeValue(rawDef, val, depth+1)
+	}
+	return out
+}
+
+func fieldTypeName(def any) string {
+	switch d := def.(type) {
+	case string:
+		fields := strings.Fields(d)
+		if len(fields) > 0 {
+			clean := strings.TrimRight(fields[0], "!")
+			if idx := strings.Index(clean, "("); idx != -1 {
+				clean = clean[:idx]
+			}
+			return clean
+		}
+	case map[string]any:
+		if t, ok := d["type"].(string); ok {
+			return t
+		}
+	}
+	return ""
+}
+
+func (e *ReferenceEngine) decodeValue(def any, val any, depth int) any {
+	typeName := strings.ToLower(fieldTypeName(def))
+	if typeName == "decimal" {
+		if s, ok := val.(string); ok {
+			trimmed := strings.TrimSpace(s)
+			if decimalWireRegex.MatchString(trimmed) {
+				if num, err := strconv.ParseFloat(trimmed, 64); err == nil {
+					return num
+				}
+			}
+		}
+		return val
+	}
+	if typeName == "list" {
+		if list, ok := val.([]any); ok {
+			var elemDef any
+			if m, ok := def.(map[string]any); ok {
+				elemDef = m["element"]
+			}
+			if elemDef != nil {
+				var decodedList []any
+				for _, item := range list {
+					decodedList = append(decodedList, e.decodeValue(elemDef, item, depth+1))
+				}
+				return decodedList
+			}
+		}
+		return val
+	}
+
+	target := typeName
+	if m, ok := def.(map[string]any); ok {
+		if targetStr, ok := m["target"].(string); ok && targetStr != "" {
+			target = targetStr
+		}
+	}
+
+	if target != "" {
+		if valMap, ok := val.(map[string]any); ok {
+			if targetEntity, exists := e.doc.Entities[target]; exists {
+				if targetEntity.Embedded {
+					return e.decodeFields(targetEntity.Fields, valMap, depth)
+				}
+			}
+		}
+	}
+
+	return val
+}
+
 // Compute materializes default values and computed fields on a record.
 func (e *ReferenceEngine) Compute(entityName string, record map[string]any) map[string]any {
+	record = e.DecodeRecord(entityName, record)
 	result := make(map[string]any, len(record))
 	for k, v := range record {
 		result[k] = v
@@ -63,8 +166,13 @@ func (e *ReferenceEngine) Compute(entityName string, record map[string]any) map[
 	}
 
 	for fieldName, rawDef := range entity.Fields {
-		fieldDef, ok := rawDef.(map[string]any)
-		if !ok {
+		var fieldDef map[string]any
+		switch d := rawDef.(type) {
+		case map[string]any:
+			fieldDef = d
+		}
+
+		if fieldDef == nil {
 			continue
 		}
 
@@ -75,22 +183,74 @@ func (e *ReferenceEngine) Compute(entityName string, record map[string]any) map[
 			}
 		}
 
-		// Simulate collection sum compute
-		if compute, hasCompute := fieldDef["compute"].(map[string]any); hasCompute {
-			if compute["type"] == "call" && compute["func"] == "sum" {
-				if args, ok := compute["args"].([]any); ok && len(args) >= 1 {
-					if refArg, ok := args[0].(map[string]any); ok && refArg["type"] == "ref" {
-						collectionKey, _ := refArg["name"].(string)
-						if lines, ok := result[collectionKey].([]any); ok {
-							var total float64
-							for _, line := range lines {
-								if lineMap, ok := line.(map[string]any); ok {
-									qty, _ := toFloat(lineMap["qty"])
-									price, _ := toFloat(lineMap["unitPrice"])
-									total += qty * price
+		// Check compute
+		if computeVal, hasCompute := fieldDef["compute"]; hasCompute && computeVal != nil {
+			switch c := computeVal.(type) {
+			case string:
+				// E.g. "approverRouting(days)" or "grade(score)"
+				if openIdx := strings.Index(c, "("); openIdx != -1 && strings.HasSuffix(c, ")") {
+					funcName := strings.TrimSpace(c[:openIdx])
+					argsStr := c[openIdx+1 : len(c)-1]
+					var argNames []string
+					if strings.TrimSpace(argsStr) != "" {
+						for _, p := range strings.Split(argsStr, ",") {
+							argNames = append(argNames, strings.TrimSpace(p))
+						}
+					}
+					inputMap := make(map[string]any)
+					for _, argName := range argNames {
+						inputMap[argName] = result[argName]
+					}
+					res := e.Decide(funcName, inputMap)
+					if res.Matched {
+						if m, ok := res.Outputs.(map[string]any); ok {
+							if len(m) == 1 {
+								for _, v := range m {
+									result[fieldName] = v
+									break
+								}
+							} else {
+								result[fieldName] = m
+							}
+						} else {
+							result[fieldName] = res.Outputs
+						}
+					}
+				}
+			case map[string]any:
+				if c["type"] == "call" && c["func"] == "sum" {
+					if args, ok := c["args"].([]any); ok && len(args) >= 1 {
+						if refArg, ok := args[0].(map[string]any); ok && refArg["type"] == "ref" {
+							collectionKey, _ := refArg["name"].(string)
+							if lines, ok := result[collectionKey].([]any); ok {
+								var total float64
+								for _, line := range lines {
+									if lineMap, ok := line.(map[string]any); ok {
+										qty, _ := toFloat(lineMap["qty"])
+										price, _ := toFloat(lineMap["unitPrice"])
+										total += qty * price
+									}
+								}
+								result[fieldName] = total
+							}
+						}
+					}
+				} else if c["type"] == "call" {
+					if funcName, ok := c["func"].(string); ok {
+						inputMap := make(map[string]any)
+						if args, ok := c["args"].([]any); ok {
+							for i, arg := range args {
+								if ref, ok := arg.(map[string]any); ok && ref["type"] == "ref" {
+									refName, _ := ref["name"].(string)
+									inputMap[refName] = result[refName]
+								} else {
+									inputMap[fmt.Sprintf("arg%d", i)] = arg
 								}
 							}
-							result[fieldName] = total
+						}
+						res := e.Decide(funcName, inputMap)
+						if res.Matched {
+							result[fieldName] = res.Outputs
 						}
 					}
 				}
@@ -113,25 +273,41 @@ func (e *ReferenceEngine) Validate(entityName string, record map[string]any) Val
 		}
 	}
 
+	record = e.DecodeRecord(entityName, record)
 	var errs []ValidationError
 	for fieldName, rawDef := range entity.Fields {
-		fieldDef, ok := rawDef.(map[string]any)
-		if !ok {
-			continue
+		var fieldDef map[string]any
+		switch d := rawDef.(type) {
+		case map[string]any:
+			fieldDef = d
 		}
 
 		val := record[fieldName]
-		req, _ := fieldDef["required"].(bool)
-		if req && (val == nil || val == "") {
-			errs = append(errs, ValidationError{
-				Field:   fieldName,
-				Message: fmt.Sprintf("field '%s' is required", fieldName),
-				Code:    "REQUIRED_FIELD",
-			})
-			continue
+		if fieldDef != nil {
+			req, _ := fieldDef["required"].(bool)
+			if req && (val == nil || val == "") {
+				errs = append(errs, ValidationError{
+					Field:   fieldName,
+					Message: fmt.Sprintf("field '%s' is required", fieldName),
+					Code:    "REQUIRED_FIELD",
+				})
+				continue
+			}
 		}
 
-		if val != nil {
+		tName := strings.ToLower(fieldTypeName(rawDef))
+		if tName == "decimal" && val != nil {
+			if _, ok := toFloat(val); !ok {
+				errs = append(errs, ValidationError{
+					Field:   fieldName,
+					Message: fmt.Sprintf("Field '%s' must be a decimal number, such as \"12.50\"", fieldName),
+					Code:    "INVALID_DECIMAL",
+				})
+				continue
+			}
+		}
+
+		if val != nil && fieldDef != nil {
 			if fieldDef["type"] == "enum" {
 				if values, ok := fieldDef["values"].([]any); ok {
 					found := false
@@ -155,6 +331,7 @@ func (e *ReferenceEngine) Validate(entityName string, record map[string]any) Val
 
 	return ValidationResult{Valid: len(errs) == 0, Errors: errs}
 }
+
 
 // ActorContext holds identity and tenant context for authorization decisions.
 type ActorContext struct {
@@ -414,8 +591,11 @@ func (e *ReferenceEngine) Transition(
 		return ExecutionResult{OK: false, Error: "UNKNOWN_ENTITY"}, errors.New("unknown entity")
 	}
 
+	record = e.DecodeRecord(entityName, record)
+
 	wf := entity.Workflow
 	if wf == nil {
+
 		return ExecutionResult{OK: false, Error: "NO_WORKFLOW"}, errors.New("no workflow defined")
 	}
 
