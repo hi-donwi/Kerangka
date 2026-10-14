@@ -12,6 +12,7 @@ import { jsonSchemaCommand, type JSONSchemaCommandOptions } from "./json-schema.
 import { graphqlCommand } from "./graphql.js";
 import { mcpCommand } from "./mcp.js";
 import { uidlCommand } from "./uidl.js";
+import { screensCommand } from "./screens.js";
 import { ddlCommand } from "./ddl.js";
 import { codegenCommand } from "./codegen.js";
 import type { TargetLanguage } from "@kerangka/compiler";
@@ -68,6 +69,9 @@ export function emitCommand(
     case "uidl":
       return uidlCommand(filePath, options.output);
 
+    case "screens":
+      return screensCommand(filePath, options.output);
+
     case "sql:postgres":
     case "postgres":
       return ddlCommand(filePath, {
@@ -100,9 +104,10 @@ export function emitCommand(
 
     default:
       console.error(
-        `Error: Unsupported emit target '${target}'. Supported targets: compose, openapi, asyncapi, json-schema, graphql, mcp, uidl, sql:postgres, sql:sqlite, types:ts, types:java, types:python, types:go, types:rust`
+        `Error: Unsupported emit target '${target}'. Supported targets: compose, openapi, asyncapi, json-schema, graphql, mcp, uidl, screens, sql:postgres, sql:sqlite, types:ts, types:java, types:python, types:go, types:rust`
       );
       return false;
   }
 }
+
 

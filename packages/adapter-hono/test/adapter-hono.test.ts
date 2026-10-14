@@ -546,4 +546,103 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
     const wrongEntity = await app.request("/api/widget/queries/expensive");
     expect(wrongEntity.status).toBe(404);
   });
+
+  it("mounts /screens and computes dynamic dashboard KPIs when screens projector is provided", async () => {
+    const doc = {
+      kerangka: "0.1",
+      app: "sales",
+      roles: ["manager", "rep"],
+      entities: {
+        Deal: {
+          fields: { amount: "decimal(12,2)!", stage: "enum(open, won, lost) = open", ownerId: "string!" },
+          permissions: { read: ["manager", "rep"], create: ["manager", "rep"] },
+          readFilter: "ownerId == actor.id",
+        },
+      },
+      views: {
+        home: {
+          dashboard: [
+            { kpi: "Won", sum: "Deal.amount", where: "stage == 'won'" },
+            { kpi: "Open deals", count: "Deal", where: "stage == 'open'" },
+          ],
+        },
+      },
+    };
+    const ckir = compile(JSON.stringify(doc));
+    const store = new MemoryStore();
+
+    // Fake screens projector adhering to ScreensProjectorLike
+    const fakeScreens = {
+      views: () => [
+        { id: "home", kind: "dashboard" as const, route: "/" },
+        { id: "deal-list", kind: "list" as const, entity: "Deal", route: "/deal-list" },
+        { id: "deal-form", kind: "form" as const, entity: "Deal", route: "/deal-form/:id" },
+      ],
+      view: (id: string) => {
+        if (id === "home") return { id: "home", kind: "dashboard" as const, route: "/" };
+        if (id === "deal-list") return { id: "deal-list", kind: "list" as const, entity: "Deal", route: "/deal-list" };
+        if (id === "deal-form") return { id: "deal-form", kind: "form" as const, entity: "Deal", route: "/deal-form/:id" };
+        return undefined;
+      },
+      list: (viewId: string) => ({ id: viewId, kind: "list", type: "Column" }),
+      form: (viewId: string, record?: { id: string; data: Record<string, unknown>; version?: number }) => ({
+        id: viewId,
+        kind: "form",
+        record,
+      }),
+      kpis: (viewId: string) => [
+        { kpi: "Won", sum: "Deal.amount", where: "stage == 'won'" },
+        { kpi: "Open deals", count: "Deal", where: "stage == 'open'" },
+      ],
+      dashboard: (viewId: string, results: Array<{ value: number } | { withheld: true } | { error: string }>) => ({
+        id: viewId,
+        kind: "dashboard",
+        results,
+      }),
+    };
+
+    const app = createKerangkaHonoApp(ckir, { store, screens: fakeScreens });
+
+    // Seed deals
+    await store.create("Deal", { id: "d-1", amount: 100.5, stage: "won", ownerId: "u-1" });
+    await store.create("Deal", { id: "d-2", amount: 50.0, stage: "open", ownerId: "u-1" });
+    await store.create("Deal", { id: "d-3", amount: 999.0, stage: "won", ownerId: "u-2" }); // different owner
+
+    // 1. List screens
+    const listScreensRes = await app.request("/screens");
+    expect(listScreensRes.status).toBe(200);
+    const screensList = await listScreensRes.json();
+    expect(screensList.screens).toHaveLength(3);
+
+    // 2. Dashboard screen with dynamic KPIs evaluated under actor context
+    const dashRes = await app.request("/screens/home", {
+      headers: { "X-Actor-Id": "u-1", "X-Actor-Roles": "rep" },
+    });
+    expect(dashRes.status).toBe(200);
+    const dashJson = await dashRes.json();
+    expect(dashJson.results).toEqual([
+      { value: 100.5 }, // u-2's 999 is filtered by readFilter
+      { value: 1 },     // d-2 is open
+    ]);
+
+    // 3. Form screen with existing record
+    const formRes = await app.request("/screens/deal-form/d-1", {
+      headers: { "X-Actor-Id": "u-1", "X-Actor-Roles": "rep" },
+    });
+    expect(formRes.status).toBe(200);
+    const formJson = await formRes.json();
+    expect(formJson.record.id).toBe("d-1");
+
+    // 4. Form screen for forbidden record (u-2's deal)
+    const forbiddenRes = await app.request("/screens/deal-form/d-3", {
+      headers: { "X-Actor-Id": "u-1", "X-Actor-Roles": "rep" },
+    });
+    expect(forbiddenRes.status).toBe(403);
+
+    // 5. 307 redirect from /uidl/home to /screens/home
+    const uidlRedirectRes = await app.request("/uidl/home");
+    expect(uidlRedirectRes.status).toBe(307);
+    expect(uidlRedirectRes.headers.get("Location")).toBe("/screens/home");
+  });
 });
+

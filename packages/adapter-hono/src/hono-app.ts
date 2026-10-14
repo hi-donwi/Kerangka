@@ -51,6 +51,15 @@ function parseWhereParam(value: string | undefined): unknown {
   }
 }
 
+export interface ScreensProjectorLike {
+  views(): Array<{ id: string; kind: "list" | "form" | "dashboard"; entity?: string; route: string }>;
+  view(id: string): { id: string; kind: "list" | "form" | "dashboard"; entity?: string; route: string } | undefined;
+  list(viewId: string): unknown;
+  form(viewId: string, record?: { id: string; data: Record<string, unknown>; version?: number }): unknown;
+  kpis(viewId: string): Array<{ kpi?: string; count?: string; sum?: string; avg?: string; where?: string }>;
+  dashboard(viewId: string, results: Array<{ value: number } | { withheld: true } | { error: string }>): unknown;
+}
+
 export interface KerangkaHonoOptions {
   store?: StorePort;
   engine?: Engine;
@@ -60,7 +69,9 @@ export interface KerangkaHonoOptions {
   idempotencyStore?: IdempotencyStore;
   serverUrl?: string;
   cors?: boolean;
+  screens?: ScreensProjectorLike;
 }
+
 
 /** `canOperate` asks for the record when only a condition on it could grant (PLAN.md §5.1). */
 const NEEDS_RECORD = "PERMISSION_NEEDS_RECORD";
@@ -305,12 +316,128 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     }
   });
 
+  function canReadRecord(
+    entityName: string,
+    actor: ActorContext | undefined,
+    record: Record<string, unknown>
+  ): { allowed: boolean; code?: string; reason?: string } {
+    const permitted = engine.canOperate(entityName, "read", actor, record);
+    if (!permitted.allowed) return permitted;
+    const scope = engine.authorizeRead(entityName, actor);
+    if (!scope.allowed) {
+      return { allowed: false, code: scope.code ?? "PERMISSION_DENIED", reason: scope.reason ?? "Read denied." };
+    }
+    if (scope.where && evaluateWhereInMemory([record], scope.where, actor).length === 0) {
+      return { allowed: false, code: "PERMISSION_DENIED", reason: `Access to '${entityName}' is denied by its read filter.` };
+    }
+    return { allowed: true };
+  }
+
+  async function readableRecords(
+    entityName: string,
+    actor: ActorContext | undefined,
+    tenantId: string | undefined
+  ): Promise<Record<string, unknown>[] | undefined> {
+    const decision = engine.canOperate(entityName, "read", actor);
+    if (!decision.allowed && decision.code !== "PERMISSION_NEEDS_RECORD") return undefined;
+    if (!engine.authorizeRead(entityName, actor).allowed) return undefined;
+    const found = await store.find(entityName, undefined, { tenantId });
+    return (found.items as Record<string, unknown>[]).filter((record) => canReadRecord(entityName, actor, record).allowed);
+  }
+
+  async function computeDashboardScreen(
+    screensProj: ScreensProjectorLike,
+    viewId: string,
+    actor: ActorContext | undefined,
+    tenantId: string | undefined
+  ) {
+    const readable = new Map<string, Record<string, unknown>[] | undefined>();
+    const results: Array<{ value: number } | { withheld: true } | { error: string }> = [];
+    for (const kpi of screensProj.kpis(viewId)) {
+      const source = engine.kpiSource(kpi);
+      if (!source) {
+        results.push({ error: `KPI '${kpi.kpi ?? ""}' names no count, sum, or avg of a numeric field` });
+        continue;
+      }
+      if (!readable.has(source.entity)) readable.set(source.entity, await readableRecords(source.entity, actor, tenantId));
+      const records = readable.get(source.entity);
+      if (!records) {
+        results.push({ withheld: true });
+        continue;
+      }
+      const outcome = engine.kpiValue(kpi, records, actor);
+      results.push(outcome.ok ? { value: outcome.value } : { error: outcome.reason });
+    }
+    return screensProj.dashboard(viewId, results);
+  }
+
+  const screens = options.screens;
+
+  if (screens) {
+    app.get("/screens", (c) => c.json({ screens: screens.views() }));
+
+    app.get("/screens/:viewId", async (c) => {
+      const viewId = c.req.param("viewId");
+      const view = screens.view(viewId);
+      if (!view) {
+        return sendProblem(c, 404, "SCREEN_NOT_FOUND", `No screen '${viewId}'.`);
+      }
+      const actor = getActorContext(c);
+      const tenantId = getTenantId(c);
+      if (view.kind === "dashboard") {
+        return c.json(await computeDashboardScreen(screens, viewId, actor, tenantId));
+      }
+      if (view.kind === "list") {
+        if (!view.entity) return c.json(screens.list(viewId));
+        const canRead = engine.canOperate(view.entity, "read", actor);
+        if (!canRead.allowed) {
+          return sendProblem(c, 403, canRead.code ?? "PERMISSION_DENIED", listDenial(canRead));
+        }
+        return c.json(screens.list(viewId));
+      }
+      if (view.entity) {
+        const decision = engine.canOperate(view.entity, "create", actor);
+        if (!decision.allowed && decision.code !== "PERMISSION_NEEDS_RECORD") {
+          return sendProblem(c, 403, decision.code ?? "PERMISSION_DENIED", decision.reason);
+        }
+      }
+      return c.json(screens.form(viewId));
+    });
+
+    app.get("/screens/:viewId/:id", async (c) => {
+      const viewId = c.req.param("viewId");
+      const id = c.req.param("id");
+      const view = screens.view(viewId);
+      if (!view || view.kind !== "form") {
+        return sendProblem(c, 404, "SCREEN_NOT_FOUND", `No form screen '${viewId}'.`);
+      }
+      const actor = getActorContext(c);
+      const tenantId = getTenantId(c);
+      const record = await store.get<Record<string, unknown>>(view.entity!, id, { tenantId });
+      if (!record) {
+        return sendProblem(c, 404, "NOT_FOUND", `${view.entity} with id '${id}' not found.`);
+      }
+      const readCheck = canReadRecord(view.entity!, actor, record);
+      if (!readCheck.allowed) {
+        return sendProblem(c, 403, readCheck.code ?? "PERMISSION_DENIED", readCheck.reason);
+      }
+      const version = typeof record.version === "number" ? record.version : 1;
+      return c.json(screens.form(viewId, { id, data: record, version }));
+    });
+  }
+
   app.get("/uidl", (c) => c.json({ documents: Object.keys(uidlDocs) }));
 
   app.get("/uidl/:docId", (c) => {
     const docId = c.req.param("docId");
     const doc = uidlDocs[docId];
     if (!doc) {
+      if (screens) {
+        const view = screens.view(docId);
+        if (view?.kind === "dashboard") {
+          return c.redirect(`/screens/${encodeURIComponent(docId)}`, 307);
+        }
+      }
       const refused = UIDLGenerator.refusedDashboards(kir).find((item) => item.viewId === docId);
       if (refused) {
         return sendProblem(c, 404, refused.code, refused.message);
@@ -319,6 +446,7 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     }
     return c.json(doc);
   });
+
 
   // ---------------------------------------------------------------------------
   // REST Collection Endpoints: /api/:entity

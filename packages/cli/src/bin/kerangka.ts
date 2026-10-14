@@ -20,6 +20,7 @@ import { openapiCommand } from "../commands/openapi.js";
 import { graphqlCommand } from "../commands/graphql.js";
 import { mcpCommand } from "../commands/mcp.js";
 import { uidlCommand } from "../commands/uidl.js";
+import { screensCommand } from "../commands/screens.js";
 import { devCommand } from "../commands/dev.js";
 import { codegenCommand } from "../commands/codegen.js";
 import { diffCommand } from "../commands/diff.js";
@@ -62,6 +63,7 @@ COMMANDS:
   graphql <file>          Generate GraphQL Schema Definition Language (SDL)
   mcp <file>              Generate Model Context Protocol (MCP) tool declarations
   uidl <file>             Generate UIDL screen documents for UIDL-Runtime
+  screens <file>          Generate UIDL screens via page recipes (ADR-0045)
   compose <file>          Generate production-ready Docker Compose infrastructure
   emit <target> <file>    Unified projector (compose, openapi, asyncapi, json-schema, graphql, mcp,
                            uidl, sql:*, types:*)
@@ -333,6 +335,9 @@ async function main(): Promise<void> {
         break;
       case "uidl":
         success = uidlCommand(file!, values.output);
+        break;
+      case "screens":
+        success = screensCommand(file!, values.output);
         break;
       case "compose":
         success = composeCommand(file!, { output: values.output });

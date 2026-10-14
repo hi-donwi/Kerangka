@@ -11,6 +11,7 @@ import {
   graphqlCommand,
   mcpCommand,
   uidlCommand,
+  screensCommand,
   codegenCommand,
   diffCommand,
   composeCommand,
@@ -100,6 +101,25 @@ describe("Kerangka CLI Commands", () => {
     expect(fs.existsSync(path.join(outUidlDir, "home.uidl.json"))).toBe(false);
     expect(errors.some((line) => line.includes("GET /screens/home"))).toBe(true);
   });
+
+  it("screensCommand generates UIDL screens via page recipes", () => {
+    const outScreensDir = path.join(tmpDir, "recipe-screens");
+    const success = screensCommand(examplePath, outScreensDir);
+    expect(success).toBe(true);
+    expect(fs.existsSync(outScreensDir)).toBe(true);
+    expect(fs.existsSync(path.join(outScreensDir, "invoices.screen.json"))).toBe(true);
+    expect(fs.existsSync(path.join(outScreensDir, "invoice.screen.json"))).toBe(true);
+    expect(fs.existsSync(path.join(outScreensDir, "home.screen.json"))).toBe(true);
+  });
+
+  it("emitCommand supports 'screens' target", () => {
+    const outEmitScreensDir = path.join(tmpDir, "emit-screens");
+    const success = emitCommand("screens", examplePath, { output: outEmitScreensDir });
+    expect(success).toBe(true);
+    expect(fs.existsSync(outEmitScreensDir)).toBe(true);
+    expect(fs.existsSync(path.join(outEmitScreensDir, "invoices.screen.json"))).toBe(true);
+  });
+
 
   it("codegenCommand generates TypeScript code", () => {
     const outTs = path.join(tmpDir, "models.ts");
