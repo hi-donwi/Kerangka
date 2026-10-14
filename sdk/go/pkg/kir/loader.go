@@ -26,6 +26,7 @@ type Entity struct {
 	Key         string         `json:"key"`
 	Embedded    bool           `json:"embedded"`
 	Fields      map[string]any `json:"fields"`
+	Traits      []string       `json:"traits,omitempty"`
 	Rules       []any          `json:"rules,omitempty"`
 	Invariants  []any          `json:"invariants,omitempty"`
 	Permissions map[string]any `json:"permissions,omitempty"`

@@ -203,4 +203,170 @@ void main() {
     expect(result.ok, isFalse);
     expect(result.error, equals('GUARD_FAILED'));
   });
+
+  group('Permissions and canOperate', () {
+    final doc = {
+      'kir': '0.1',
+      'app': 'perms-test',
+      'entities': {
+        'Invoice': {
+          'fields': {
+            'status': {'type': 'enum', 'values': ['draft', 'sent']},
+            'ownerId': {'type': 'string'},
+            'total': {'type': 'decimal'},
+          },
+          'permissions': {
+            'read': ['admin', 'billing', 'viewer'],
+            'create': ['admin', 'billing'],
+            'update': {
+              'admin': true,
+              'billing': "status == 'draft'",
+              'owner': 'ownerId == actor.id',
+              'viewer': false,
+            },
+            'delete': [],
+          },
+        },
+        'PublicDoc': {
+          'fields': {'id': {'type': 'string'}},
+        },
+      },
+    };
+    final engine = ReferenceEngine(doc);
+    final admin = {'id': 'u-admin', 'roles': ['admin']};
+    final billing = {'id': 'u-billing', 'roles': ['billing']};
+    final viewer = {'id': 'u-viewer', 'roles': ['viewer']};
+    final owner = {'id': 'u-owner-1', 'roles': ['owner']};
+
+    test('unlisted operation is open', () {
+      final dec = engine.canOperate('Invoice', 'archive', actor: viewer);
+      expect(dec.allowed, isTrue);
+    });
+
+    test('empty list grants no one', () {
+      final dec = engine.canOperate('Invoice', 'delete', actor: admin);
+      expect(dec.allowed, isFalse);
+      expect(dec.code, equals('PERMISSION_DENIED'));
+    });
+
+    test('unknown entity refused', () {
+      final dec = engine.canOperate('Unknown', 'read', actor: admin);
+      expect(dec.allowed, isFalse);
+      expect(dec.code, equals('UNKNOWN_ENTITY'));
+    });
+
+    test('role mapped to true allows with or without record', () {
+      final dec = engine.canOperate('Invoice', 'update', actor: admin);
+      expect(dec.allowed, isTrue);
+      final decRec = engine.canOperate('Invoice', 'update', actor: admin, record: {'status': 'sent'});
+      expect(decRec.allowed, isTrue);
+    });
+
+    test('role mapped to false refused', () {
+      final dec = engine.canOperate('Invoice', 'update', actor: viewer, record: {'status': 'draft'});
+      expect(dec.allowed, isFalse);
+      expect(dec.code, equals('PERMISSION_DENIED'));
+    });
+
+    test('conditional grant without record returns needs record', () {
+      final dec = engine.canOperate('Invoice', 'update', actor: billing);
+      expect(dec.allowed, isFalse);
+      expect(dec.code, equals('PERMISSION_NEEDS_RECORD'));
+    });
+
+    test('conditional grant with matching record allows', () {
+      final dec = engine.canOperate('Invoice', 'update', actor: billing, record: {'status': 'draft'});
+      expect(dec.allowed, isTrue);
+    });
+
+    test('conditional grant with non-matching record denies', () {
+      final dec = engine.canOperate('Invoice', 'update', actor: billing, record: {'status': 'sent'});
+      expect(dec.allowed, isFalse);
+      expect(dec.code, equals('PERMISSION_DENIED'));
+    });
+
+    test('actor context matching in condition', () {
+      final dec = engine.canOperate('Invoice', 'update', actor: owner, record: {'status': 'sent', 'ownerId': 'u-owner-1'});
+      expect(dec.allowed, isTrue);
+      final decOther = engine.canOperate('Invoice', 'update', actor: owner, record: {'status': 'sent', 'ownerId': 'u-other'});
+      expect(decOther.allowed, isFalse);
+      expect(decOther.code, equals('PERMISSION_DENIED'));
+    });
+  });
+
+  group('AuthorizeRead and ReadFilter', () {
+    final doc = {
+      'kir': '0.1',
+      'app': 'rf-test',
+      'entities': {
+        'Public': {
+          'fields': {'id': {'type': 'string'}},
+        },
+        'Scoped': {
+          'fields': {'tenantId': {'type': 'string'}},
+        },
+        'SoftDeleted': {
+          'fields': {'deleted': {'type': 'boolean'}},
+        },
+        'Doc': {
+          'fields': {'tenantId': {'type': 'string'}},
+          'readFilter': ['==', ['get', 'ownerId'], ['actor', 'id']],
+        },
+        'BrokenDoc': {
+          'fields': {'tenantId': {'type': 'string'}},
+          'readFilter': "status == 'draft'",
+        },
+      },
+    };
+    final engine = ReferenceEngine(doc);
+    final adminTenant = {'id': 'u-1', 'tenantId': 'tenant-a', 'roles': ['admin']};
+    final adminNoTenant = {'id': 'u-1', 'roles': ['admin']};
+
+    test('public entity allows without constraint', () {
+      final scope = engine.authorizeRead('Public');
+      expect(scope.allowed, isTrue);
+      expect(scope.where, isNull);
+    });
+
+    test('unknown entity refused', () {
+      final scope = engine.authorizeRead('Unknown');
+      expect(scope.allowed, isFalse);
+      expect(scope.code, equals('UNKNOWN_ENTITY'));
+    });
+
+    test('scoped without tenant denied', () {
+      final scope = engine.authorizeRead('Scoped', adminNoTenant);
+      expect(scope.allowed, isFalse);
+      expect(scope.code, equals('PERMISSION_DENIED'));
+    });
+
+    test('scoped with tenant allowed', () {
+      final scope = engine.authorizeRead('Scoped', adminTenant);
+      expect(scope.allowed, isTrue);
+      expect(scope.where, equals(['==', ['get', 'tenantId'], 'tenant-a']));
+    });
+
+    test('soft deleted adds condition', () {
+      final scope = engine.authorizeRead('SoftDeleted');
+      expect(scope.allowed, isTrue);
+      expect(scope.where, equals(['==', ['get', 'deleted'], false]));
+    });
+
+    test('uncompiled string readFilter refused', () {
+      final scope = engine.authorizeRead('BrokenDoc', adminTenant);
+      expect(scope.allowed, isFalse);
+      expect(scope.code, equals('READ_FILTER_NOT_COMPILED'));
+    });
+
+    test('combined readFilter and evalFilter', () {
+      final scope = engine.authorizeRead('Doc', adminTenant);
+      expect(scope.allowed, isTrue);
+      expect((scope.where as List)[0], equals('and'));
+
+      expect(engine.evalFilter(scope.where, {'tenantId': 'tenant-a', 'ownerId': 'u-1'}, adminTenant), isTrue);
+      expect(engine.evalFilter(scope.where, {'tenantId': 'tenant-b', 'ownerId': 'u-1'}, adminTenant), isFalse);
+      expect(engine.evalFilter(scope.where, {'tenantId': 'tenant-a', 'ownerId': 'u-2'}, adminTenant), isFalse);
+    });
+  });
 }
+

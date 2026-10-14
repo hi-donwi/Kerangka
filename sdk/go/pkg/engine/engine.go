@@ -156,19 +156,66 @@ func (e *ReferenceEngine) Validate(entityName string, record map[string]any) Val
 	return ValidationResult{Valid: len(errs) == 0, Errors: errs}
 }
 
-// Authorize decides whether actor roles may perform a CRUD operation on an entity
-// (ADR-0044). An operation the model does not mention is open. A role list grants the roles
-// it names, and an empty list grants no one. A role map grants roles mapped to true; a role
-// mapped to a condition cannot be decided here, because this engine has no expression
-// evaluator yet, so it is refused as UNSUPPORTED rather than guessed (ADR-0008).
-func (e *ReferenceEngine) Authorize(entityName, operation string, roles []string) Decision {
+// ActorContext holds identity and tenant context for authorization decisions.
+type ActorContext struct {
+	ID       string         `json:"id,omitempty"`
+	TenantID string         `json:"tenantId,omitempty"`
+	Roles    []string       `json:"roles,omitempty"`
+	Extra    map[string]any `json:"extra,omitempty"`
+}
+
+// Resolve resolves an actor attribute such as id, tenantId, roles, or a dotted extra field.
+func (a *ActorContext) Resolve(path string) any {
+	if a == nil {
+		return nil
+	}
+	switch path {
+	case "id":
+		return a.ID
+	case "tenantId":
+		return a.TenantID
+	case "roles":
+		return a.Roles
+	}
+	if a.Extra != nil {
+		return resolveBind(path, a.Extra)
+	}
+	return nil
+}
+
+// ReadScope is the outcome of a read authorization check (ADR-0040).
+type ReadScope struct {
+	Allowed bool   `json:"allowed"`
+	Code    string `json:"code,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Where   any    `json:"where,omitempty"`
+}
+
+// CanOperate decides whether an actor may perform a CRUD operation on an entity (ADR-0044).
+// An operation the model does not mention is open. A role list grants the roles it names,
+// and an empty list grants no one. A role map grants roles mapped to true; a role mapped to
+// a condition is evaluated against record and actor. If deciding requires a record and record
+// is nil, PERMISSION_NEEDS_RECORD is returned.
+func (e *ReferenceEngine) CanOperate(
+	entityName, operation string,
+	actor *ActorContext,
+	record map[string]any,
+) Decision {
 	entity, ok := e.doc.Entities[entityName]
 	if !ok {
 		return Decision{Code: "UNKNOWN_ENTITY", Reason: fmt.Sprintf("unknown entity '%s'", entityName)}
 	}
+	if entity.Permissions == nil {
+		return Decision{Allowed: true}
+	}
 	declared, mentioned := entity.Permissions[operation]
 	if !mentioned {
 		return Decision{Allowed: true}
+	}
+
+	var roles []string
+	if actor != nil {
+		roles = actor.Roles
 	}
 	has := func(role string) bool {
 		for _, r := range roles {
@@ -178,6 +225,7 @@ func (e *ReferenceEngine) Authorize(entityName, operation string, roles []string
 		}
 		return false
 	}
+
 	switch grant := declared.(type) {
 	case []any:
 		for _, r := range grant {
@@ -189,8 +237,9 @@ func (e *ReferenceEngine) Authorize(entityName, operation string, roles []string
 			return Decision{Code: "PERMISSION_DENIED", Reason: fmt.Sprintf("'%s' on '%s' is granted to no role", operation, entityName)}
 		}
 		return Decision{Code: "PERMISSION_DENIED", Reason: fmt.Sprintf("'%s' on '%s' requires one of %v", operation, entityName, grant)}
+
 	case map[string]any:
-		conditional := false
+		var conditions []any
 		for role, value := range grant {
 			if !has(role) {
 				continue
@@ -198,17 +247,152 @@ func (e *ReferenceEngine) Authorize(entityName, operation string, roles []string
 			if value == true {
 				return Decision{Allowed: true}
 			}
-			if _, ok := value.(string); ok {
-				conditional = true
+			if value == false {
+				continue
+			}
+			conditions = append(conditions, value)
+		}
+
+		if len(conditions) > 0 {
+			if record == nil {
+				return Decision{
+					Code:   "PERMISSION_NEEDS_RECORD",
+					Reason: fmt.Sprintf("'%s' on '%s' is granted to this actor only under a condition on the record", operation, entityName),
+				}
+			}
+			for _, cond := range conditions {
+				outcome := evalCondition(cond, record, actor)
+				if outcome.Supported && truthy(outcome.Value) {
+					return Decision{Allowed: true}
+				}
+			}
+			return Decision{
+				Code:   "PERMISSION_DENIED",
+				Reason: fmt.Sprintf("'%s' on '%s' condition evaluated to false or unsupported", operation, entityName),
 			}
 		}
-		if conditional {
-			return Decision{Code: "UNSUPPORTED", Reason: fmt.Sprintf("'%s' on '%s' is granted to this actor only under a condition, which this engine cannot evaluate yet", operation, entityName)}
-		}
+
 		return Decision{Code: "PERMISSION_DENIED", Reason: fmt.Sprintf("'%s' on '%s' is not granted to this actor", operation, entityName)}
+
 	default:
 		return Decision{Code: "PERMISSION_DENIED", Reason: fmt.Sprintf("'%s' on '%s' has a permission this engine cannot read", operation, entityName)}
 	}
+}
+
+// Authorize decides whether actor roles may perform a CRUD operation on an entity (ADR-0044).
+// Retained for backward compatibility. If a condition requires a record, it returns UNSUPPORTED.
+func (e *ReferenceEngine) Authorize(entityName, operation string, roles []string) Decision {
+	dec := e.CanOperate(entityName, operation, &ActorContext{Roles: roles}, nil)
+	if dec.Code == "PERMISSION_NEEDS_RECORD" {
+		return Decision{
+			Allowed: false,
+			Code:    "UNSUPPORTED",
+			Reason:  dec.Reason,
+		}
+	}
+	return dec
+}
+
+// AuthorizeRead determines the read predicate for an entity or refuses if unauthorized (ADR-0040).
+func (e *ReferenceEngine) AuthorizeRead(entityName string, actor *ActorContext) ReadScope {
+	entity, ok := e.doc.Entities[entityName]
+	if !ok {
+		return ReadScope{
+			Allowed: false,
+			Code:    "UNKNOWN_ENTITY",
+			Reason:  fmt.Sprintf("Entity '%s' is not in the model, so nothing is known about who may read it", entityName),
+		}
+	}
+
+	var conditions []any
+
+	// 1. Tenant scope
+	isTenantScoped := false
+	if entity.Fields != nil {
+		if _, hasTenant := entity.Fields["tenantId"]; hasTenant {
+			isTenantScoped = true
+		}
+	}
+	if e.doc.Multitenancy != nil {
+		isTenantScoped = true
+	}
+
+	if isTenantScoped {
+		if actor == nil || actor.TenantID == "" {
+			return ReadScope{
+				Allowed: false,
+				Code:    "PERMISSION_DENIED",
+				Reason:  fmt.Sprintf("'%s' is tenant-scoped and the request established no tenant. A tenant-scoped read with no caller is refused, not answered with every tenant's rows.", entityName),
+			}
+		}
+		conditions = append(conditions, []any{"==", []any{"get", "tenantId"}, actor.TenantID})
+	}
+
+	// 2. Soft delete
+	isSoftDelete := false
+	for _, tr := range entity.Traits {
+		if tr == "std:softDelete" {
+			isSoftDelete = true
+			break
+		}
+	}
+	if entity.Fields != nil {
+		if _, hasDel := entity.Fields["deleted"]; hasDel {
+			isSoftDelete = true
+		} else if _, hasDelAt := entity.Fields["deletedAt"]; hasDelAt {
+			isSoftDelete = true
+		}
+	}
+
+	if isSoftDelete && entity.Fields != nil {
+		if _, hasDel := entity.Fields["deleted"]; hasDel {
+			conditions = append(conditions, []any{"==", []any{"get", "deleted"}, false})
+		} else if _, hasDelAt := entity.Fields["deletedAt"]; hasDelAt {
+			conditions = append(conditions, []any{"is_null", []any{"get", "deletedAt"}})
+		}
+	}
+
+	// 3. The entity's declared readFilter
+	declared := entity.ReadFilter
+	if declaredStr, ok := declared.(string); ok && declaredStr != "" {
+		return ReadScope{
+			Allowed: false,
+			Code:    "READ_FILTER_NOT_COMPILED",
+			Reason:  fmt.Sprintf("The readFilter on '%s' is still a string, so it was never lowered and would be ignored. This is a compiler bypass, not a model error.", entityName),
+		}
+	}
+	if declaredArr, ok := declared.([]any); ok && len(declaredArr) > 0 {
+		conditions = append(conditions, declaredArr)
+	}
+
+	if len(conditions) == 0 {
+		return ReadScope{Allowed: true, Where: nil}
+	}
+	if len(conditions) == 1 {
+		return ReadScope{Allowed: true, Where: conditions[0]}
+	}
+	res := make([]any, 0, len(conditions)+1)
+	res = append(res, "and")
+	res = append(res, conditions...)
+	return ReadScope{Allowed: true, Where: res}
+}
+
+// ReadFilter returns the read predicate for an entity, or nil when unrestricted or denied.
+func (e *ReferenceEngine) ReadFilter(entityName string, actor *ActorContext) any {
+	scope := e.AuthorizeRead(entityName, actor)
+	if !scope.Allowed {
+		return nil
+	}
+	return scope.Where
+}
+
+// EvalFilter evaluates a predicate tuple against a record and actor context in memory.
+func (e *ReferenceEngine) EvalFilter(predicate any, record map[string]any, actor *ActorContext) bool {
+	if predicate == nil {
+		return true
+	}
+	outcome := evalNode(predicate, record, actor)
+	return outcome.Supported && truthy(outcome.Value)
 }
 
 // HasReadFilter reports whether reads of the entity are filtered per record (ADR-0040), which

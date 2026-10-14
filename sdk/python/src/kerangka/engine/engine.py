@@ -9,7 +9,22 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 import datetime
 
-from .eval import guard_allows
+from .eval import guard_allows, eval_condition, eval_node, _truthy
+
+
+@dataclass
+class Decision:
+    allowed: bool
+    code: Optional[str] = None
+    reason: Optional[str] = None
+
+
+@dataclass
+class ReadScope:
+    allowed: bool
+    code: Optional[str] = None
+    reason: Optional[str] = None
+    where: Optional[Any] = None
 
 
 @dataclass
@@ -40,6 +55,170 @@ class ReferenceEngine:
     def __init__(self, kir_document: Dict[str, Any]):
         self.doc = kir_document
         self.entities = kir_document.get("entities", {})
+
+    def can_operate(
+        self,
+        entity_name: str,
+        operation: str,
+        actor: Optional[Dict[str, Any]] = None,
+        record: Optional[Dict[str, Any]] = None,
+    ) -> Decision:
+        entity = self.entities.get(entity_name)
+        if not entity:
+            return Decision(allowed=False, code="UNKNOWN_ENTITY", reason=f"Unknown entity '{entity_name}'")
+
+        permissions = entity.get("permissions")
+        if not isinstance(permissions, dict) or operation not in permissions:
+            return Decision(allowed=True)
+
+        declared = permissions[operation]
+        roles = (actor or {}).get("roles", [])
+        if not isinstance(roles, list):
+            roles = []
+
+        if isinstance(declared, list):
+            if any(r in roles for r in declared):
+                return Decision(allowed=True)
+            if len(declared) == 0:
+                return Decision(
+                    allowed=False,
+                    code="PERMISSION_DENIED",
+                    reason=f"'{operation}' on '{entity_name}' is granted to no role",
+                )
+            return Decision(
+                allowed=False,
+                code="PERMISSION_DENIED",
+                reason=f"'{operation}' on '{entity_name}' requires one of {declared}",
+            )
+
+        if isinstance(declared, dict):
+            conditions = []
+            for role, value in declared.items():
+                if role not in roles:
+                    continue
+                if value is True:
+                    return Decision(allowed=True)
+                if value is False:
+                    continue
+                conditions.append(value)
+
+            if conditions:
+                if record is None:
+                    return Decision(
+                        allowed=False,
+                        code="PERMISSION_NEEDS_RECORD",
+                        reason=f"'{operation}' on '{entity_name}' is granted to this actor only under a condition on the record",
+                    )
+                for cond in conditions:
+                    ok, val = eval_condition(cond, record, actor)
+                    if ok and _truthy(val):
+                        return Decision(allowed=True)
+                return Decision(
+                    allowed=False,
+                    code="PERMISSION_DENIED",
+                    reason=f"'{operation}' on '{entity_name}' condition evaluated to false or unsupported",
+                )
+
+            return Decision(
+                allowed=False,
+                code="PERMISSION_DENIED",
+                reason=f"'{operation}' on '{entity_name}' is not granted to this actor",
+            )
+
+        return Decision(
+            allowed=False,
+            code="PERMISSION_DENIED",
+            reason=f"'{operation}' on '{entity_name}' has a permission this engine cannot read",
+        )
+
+    def authorize(
+        self,
+        entity_name: str,
+        operation: str,
+        roles: Optional[List[str]] = None,
+    ) -> Decision:
+        dec = self.can_operate(entity_name, operation, {"roles": roles or []}, None)
+        if dec.code == "PERMISSION_NEEDS_RECORD":
+            return Decision(allowed=False, code="UNSUPPORTED", reason=dec.reason)
+        return dec
+
+    def authorize_read(
+        self,
+        entity_name: str,
+        actor: Optional[Dict[str, Any]] = None,
+    ) -> ReadScope:
+        entity = self.entities.get(entity_name)
+        if not entity:
+            return ReadScope(
+                allowed=False,
+                code="UNKNOWN_ENTITY",
+                reason=f"Entity '{entity_name}' is not in the model, so nothing is known about who may read it",
+            )
+
+        conditions: List[Any] = []
+        fields = entity.get("fields", {})
+        multitenancy = self.doc.get("multitenancy")
+        is_tenant_scoped = ("tenantId" in fields) or (multitenancy is not None)
+
+        if is_tenant_scoped:
+            tenant_id = (actor or {}).get("tenantId")
+            if tenant_id is None:
+                return ReadScope(
+                    allowed=False,
+                    code="PERMISSION_DENIED",
+                    reason=f"'{entity_name}' is tenant-scoped and the request established no tenant.",
+                )
+            conditions.append(["==", ["get", "tenantId"], tenant_id])
+
+        traits = entity.get("traits", [])
+        is_soft_delete = (
+            "std:softDelete" in traits
+            or "deleted" in fields
+            or "deletedAt" in fields
+        )
+        if is_soft_delete:
+            if "deleted" in fields:
+                conditions.append(["==", ["get", "deleted"], False])
+            elif "deletedAt" in fields:
+                conditions.append(["is_null", ["get", "deletedAt"]])
+
+        declared = entity.get("readFilter")
+        if isinstance(declared, str) and declared:
+            return ReadScope(
+                allowed=False,
+                code="READ_FILTER_NOT_COMPILED",
+                reason=f"The readFilter on '{entity_name}' is still a string, so it was never lowered and would be ignored.",
+            )
+        if isinstance(declared, list) and declared:
+            conditions.append(declared)
+
+        if not conditions:
+            return ReadScope(allowed=True, where=None)
+        if len(conditions) == 1:
+            return ReadScope(allowed=True, where=conditions[0])
+        return ReadScope(allowed=True, where=["and"] + conditions)
+
+    def read_filter(
+        self,
+        entity_name: str,
+        actor: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Any]:
+        scope = self.authorize_read(entity_name, actor)
+        return scope.where if scope.allowed else None
+
+    def eval_filter(
+        self,
+        predicate: Any,
+        record: Optional[Dict[str, Any]],
+        actor: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        if predicate is None:
+            return True
+        ok, val = eval_node(predicate, record, actor)
+        return ok and _truthy(val)
+
+    def has_read_filter(self, entity_name: str) -> bool:
+        return self.entities.get(entity_name, {}).get("readFilter") is not None
 
     def compute(self, entity_name: str, record: Dict[str, Any]) -> Dict[str, Any]:
         """Materializes computed fields and default values on a record."""

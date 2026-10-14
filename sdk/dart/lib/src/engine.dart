@@ -52,6 +52,38 @@ class ExecutionResult {
   String toString() => 'ExecutionResult(ok: $ok, error: $error, message: $message, events: $events)';
 }
 
+class Decision {
+  final bool allowed;
+  final String? code;
+  final String? reason;
+
+  const Decision({
+    required this.allowed,
+    this.code,
+    this.reason,
+  });
+
+  @override
+  String toString() => 'Decision(allowed: $allowed, code: $code, reason: $reason)';
+}
+
+class ReadScope {
+  final bool allowed;
+  final String? code;
+  final String? reason;
+  final Object? where;
+
+  const ReadScope({
+    required this.allowed,
+    this.code,
+    this.reason,
+    this.where,
+  });
+
+  @override
+  String toString() => 'ReadScope(allowed: $allowed, code: $code, reason: $reason, where: $where)';
+}
+
 /// Pure in-memory reference execution engine for Kerangka models in Dart.
 class ReferenceEngine {
   final Map<String, dynamic> document;
@@ -59,6 +91,194 @@ class ReferenceEngine {
 
   ReferenceEngine(this.document)
       : entities = (document['entities'] as Map<String, dynamic>?) ?? {};
+
+  Decision canOperate(
+    String entityName,
+    String operation, {
+    Map<String, dynamic>? actor,
+    Map<String, dynamic>? record,
+  }) {
+    final entity = entities[entityName] as Map<String, dynamic>?;
+    if (entity == null) {
+      return Decision(
+        allowed: false,
+        code: 'UNKNOWN_ENTITY',
+        reason: "Unknown entity '$entityName'",
+      );
+    }
+
+    final permissions = entity['permissions'];
+    if (permissions is! Map || !permissions.containsKey(operation)) {
+      return const Decision(allowed: true);
+    }
+
+    final declared = permissions[operation];
+    final rawRoles = actor?['roles'];
+    final roles = rawRoles is List ? rawRoles.map((e) => e.toString()).toList() : const <String>[];
+
+    if (declared is List) {
+      if (declared.any((r) => roles.contains(r))) {
+        return const Decision(allowed: true);
+      }
+      if (declared.isEmpty) {
+        return Decision(
+          allowed: false,
+          code: 'PERMISSION_DENIED',
+          reason: "'$operation' on '$entityName' is granted to no role",
+        );
+      }
+      return Decision(
+        allowed: false,
+        code: 'PERMISSION_DENIED',
+        reason: "'$operation' on '$entityName' requires one of $declared",
+      );
+    }
+
+    if (declared is Map) {
+      final conditions = <dynamic>[];
+      for (final entry in declared.entries) {
+        final role = entry.key.toString();
+        if (!roles.contains(role)) continue;
+        if (entry.value == true) {
+          return const Decision(allowed: true);
+        }
+        if (entry.value == false) continue;
+        conditions.add(entry.value);
+      }
+
+      if (conditions.isNotEmpty) {
+        if (record == null) {
+          return Decision(
+            allowed: false,
+            code: 'PERMISSION_NEEDS_RECORD',
+            reason: "'$operation' on '$entityName' is granted to this actor only under a condition on the record",
+          );
+        }
+        for (final cond in conditions) {
+          final outcome = evalCondition(cond, record, actor);
+          if (outcome.supported && truthy(outcome.value)) {
+            return const Decision(allowed: true);
+          }
+        }
+        return Decision(
+          allowed: false,
+          code: 'PERMISSION_DENIED',
+          reason: "'$operation' on '$entityName' condition evaluated to false or unsupported",
+        );
+      }
+
+      return Decision(
+        allowed: false,
+        code: 'PERMISSION_DENIED',
+        reason: "'$operation' on '$entityName' is not granted to this actor",
+      );
+    }
+
+    return Decision(
+      allowed: false,
+      code: 'PERMISSION_DENIED',
+      reason: "'$operation' on '$entityName' has a permission this engine cannot read",
+    );
+  }
+
+  Decision authorize(
+    String entityName,
+    String operation, {
+    List<String>? roles,
+  }) {
+    final dec = canOperate(entityName, operation, actor: {'roles': roles ?? const []});
+    if (dec.code == 'PERMISSION_NEEDS_RECORD') {
+      return Decision(allowed: false, code: 'UNSUPPORTED', reason: dec.reason);
+    }
+    return dec;
+  }
+
+  ReadScope authorizeRead(
+    String entityName, [
+    Map<String, dynamic>? actor,
+  ]) {
+    final entity = entities[entityName] as Map<String, dynamic>?;
+    if (entity == null) {
+      return ReadScope(
+        allowed: false,
+        code: 'UNKNOWN_ENTITY',
+        reason: "Entity '$entityName' is not in the model, so nothing is known about who may read it",
+      );
+    }
+
+    final conditions = <dynamic>[];
+    final fields = (entity['fields'] as Map<String, dynamic>?) ?? {};
+    final multitenancy = document['multitenancy'];
+    final isTenantScoped = fields.containsKey('tenantId') || multitenancy != null;
+
+    if (isTenantScoped) {
+      final tenantId = actor?['tenantId'];
+      if (tenantId == null) {
+        return ReadScope(
+          allowed: false,
+          code: 'PERMISSION_DENIED',
+          reason: "'$entityName' is tenant-scoped and the request established no tenant.",
+        );
+      }
+      conditions.add(['==', ['get', 'tenantId'], tenantId]);
+    }
+
+    final traits = (entity['traits'] as List?) ?? const [];
+    final isSoftDelete = traits.contains('std:softDelete') ||
+        fields.containsKey('deleted') ||
+        fields.containsKey('deletedAt');
+
+    if (isSoftDelete) {
+      if (fields.containsKey('deleted')) {
+        conditions.add(['==', ['get', 'deleted'], false]);
+      } else if (fields.containsKey('deletedAt')) {
+        conditions.add(['is_null', ['get', 'deletedAt']]);
+      }
+    }
+
+    final declared = entity['readFilter'];
+    if (declared is String && declared.isNotEmpty) {
+      return ReadScope(
+        allowed: false,
+        code: 'READ_FILTER_NOT_COMPILED',
+        reason: "The readFilter on '$entityName' is still a string, so it was never lowered and would be ignored.",
+      );
+    }
+    if (declared is List && declared.isNotEmpty) {
+      conditions.add(declared);
+    }
+
+    if (conditions.isEmpty) {
+      return const ReadScope(allowed: true, where: null);
+    }
+    if (conditions.length == 1) {
+      return ReadScope(allowed: true, where: conditions[0]);
+    }
+    return ReadScope(allowed: true, where: ['and', ...conditions]);
+  }
+
+  Object? readFilter(
+    String entityName, [
+    Map<String, dynamic>? actor,
+  ]) {
+    final scope = authorizeRead(entityName, actor);
+    return scope.allowed ? scope.where : null;
+  }
+
+  bool evalFilter(
+    Object? predicate, [
+    Map<String, dynamic>? record,
+    Map<String, dynamic>? actor,
+  ]) {
+    if (predicate == null) return true;
+    final outcome = evalNode(predicate, record, actor);
+    return outcome.supported && truthy(outcome.value);
+  }
+
+  bool hasReadFilter(String entityName) {
+    final entity = entities[entityName] as Map<String, dynamic>?;
+    return entity != null && entity['readFilter'] != null;
+  }
 
   /// Materializes computed fields and default values on a record.
   Map<String, dynamic> compute(String entityName, Map<String, dynamic> record) {
