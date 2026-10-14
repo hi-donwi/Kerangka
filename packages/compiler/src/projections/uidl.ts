@@ -349,6 +349,19 @@ export class UIDLGenerator {
                 id: `${viewId}-fields`,
                 type: "Form" as const,
                 children: sectionNodes,
+                // Submitting the form sends the whole editable form state as the command
+                // payload — a bridge command, not a datasource mutation, so bidirectional
+                // bridges keep owning the write path and record queries stay read-only.
+                events: {
+                  onSubmit: [
+                    {
+                      command: {
+                        name: `${entityName.toLowerCase()}.save`,
+                        payload: { form: { $expr: { path: "state.form" } } },
+                      },
+                    },
+                  ],
+                },
               },
             ],
           },
