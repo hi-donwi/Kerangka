@@ -524,6 +524,49 @@ func TestDecimalWireDecoding(t *testing.T) {
 	}
 }
 
+func TestDecimalWireEncoding(t *testing.T) {
+	doc := &kir.Document{
+		KIR: "0.1",
+		App: "store",
+		Entities: map[string]kir.Entity{
+			"Order": {
+				Key: "id",
+				Fields: map[string]any{
+					"id":    map[string]any{"type": "string"},
+					"total": map[string]any{"type": "decimal", "scale": float64(2)},
+					"rate":  map[string]any{"type": "decimal"},
+					"lines": map[string]any{"type": "list", "element": "decimal(12,2)"},
+				},
+			},
+		},
+	}
+
+	eng := New(doc)
+	encoded := eng.EncodeRecord("Order", map[string]any{
+		"id":    "O-1",
+		"total": 300.0,
+		"rate":  0.5,
+		"lines": []any{10.0, 5.5},
+	})
+
+	if encoded["total"] != "300.00" {
+		t.Fatalf("expected total \"300.00\", got %v (%T)", encoded["total"], encoded["total"])
+	}
+	if encoded["rate"] != "0.5" {
+		t.Fatalf("expected rate \"0.5\", got %v (%T)", encoded["rate"], encoded["rate"])
+	}
+	lines, _ := encoded["lines"].([]any)
+	if len(lines) != 2 || lines[0] != "10.00" || lines[1] != "5.50" {
+		t.Fatalf("expected lines [\"10.00\" \"5.50\"], got %v", encoded["lines"])
+	}
+
+	// A decimal already in wire form is left exactly as it is.
+	kept := eng.EncodeRecord("Order", map[string]any{"total": "300.00"})
+	if kept["total"] != "300.00" {
+		t.Fatalf("expected wire string preserved, got %v", kept["total"])
+	}
+}
+
 func TestBuiltInFunctions(t *testing.T) {
 	eval := func(tuple []any) any {
 		res := evalTuple(tuple, nil, nil)
@@ -570,6 +613,3 @@ func TestBuiltInFunctions(t *testing.T) {
 		t.Fatalf("coalesce failed")
 	}
 }
-
-
-

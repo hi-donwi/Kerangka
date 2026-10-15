@@ -152,7 +152,114 @@ func (e *ReferenceEngine) decodeValue(def any, val any, depth int) any {
 	return val
 }
 
-// Compute materializes default values and computed fields on a record.
+// EncodeRecord is the inverse of DecodeRecord: a decimal field becomes its wire string at the
+// declared scale (spec/semantics/numbers.md §2.1), so a value never leaves the engine as a binary
+// float. It belongs at the output boundary, not inside Compute, which guards still read as numbers.
+func (e *ReferenceEngine) EncodeRecord(entityName string, record map[string]any) map[string]any {
+	if record == nil {
+		return nil
+	}
+	entity, ok := e.doc.Entities[entityName]
+	if !ok {
+		return record
+	}
+	return e.encodeFields(entity.Fields, record, 0)
+}
+
+func (e *ReferenceEngine) encodeFields(defs map[string]any, record map[string]any, depth int) map[string]any {
+	if depth > 16 || record == nil {
+		return record
+	}
+	out := make(map[string]any, len(record))
+	for k, v := range record {
+		out[k] = v
+	}
+	for name, rawDef := range defs {
+		val, exists := out[name]
+		if !exists || val == nil {
+			continue
+		}
+		out[name] = e.encodeValue(rawDef, val, depth+1)
+	}
+	return out
+}
+
+func (e *ReferenceEngine) encodeValue(def any, val any, depth int) any {
+	typeName := strings.ToLower(fieldTypeName(def))
+	if typeName == "decimal" {
+		// A number becomes its wire string at the declared scale; a value that is already a
+		// wire string (or anything Validate would refuse) is left exactly as it is.
+		if num, ok := toFloat(val); ok {
+			return formatDecimal(num, decimalScale(def))
+		}
+		return val
+	}
+	if typeName == "list" {
+		if list, ok := val.([]any); ok {
+			var elemDef any
+			if m, ok := def.(map[string]any); ok {
+				elemDef = m["element"]
+			}
+			if elemDef != nil {
+				encoded := make([]any, 0, len(list))
+				for _, item := range list {
+					encoded = append(encoded, e.encodeValue(elemDef, item, depth+1))
+				}
+				return encoded
+			}
+		}
+		return val
+	}
+
+	target := typeName
+	if m, ok := def.(map[string]any); ok {
+		if targetStr, ok := m["target"].(string); ok && targetStr != "" {
+			target = targetStr
+		}
+	}
+	if target != "" {
+		if valMap, ok := val.(map[string]any); ok {
+			if targetEntity, exists := e.doc.Entities[target]; exists && targetEntity.Embedded {
+				return e.encodeFields(targetEntity.Fields, valMap, depth)
+			}
+		}
+	}
+
+	return val
+}
+
+// decimalScale reads the scale of a decimal field from a compiled field or a shorthand string.
+func decimalScale(def any) int {
+	scale := -1
+	switch d := def.(type) {
+	case map[string]any:
+		switch s := d["scale"].(type) {
+		case float64:
+			scale = int(s)
+		case int:
+			scale = s
+		}
+	case string:
+		if open := strings.Index(d, "("); open != -1 {
+			if close := strings.Index(d, ")"); close > open {
+				parts := strings.Split(d[open+1:close], ",")
+				if len(parts) == 2 {
+					if s, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+						scale = s
+					}
+				}
+			}
+		}
+	}
+	return scale
+}
+
+func formatDecimal(num float64, scale int) string {
+	if scale < 0 {
+		return strconv.FormatFloat(num, 'f', -1, 64)
+	}
+	return strconv.FormatFloat(num, 'f', scale, 64)
+}
 func (e *ReferenceEngine) Compute(entityName string, record map[string]any) map[string]any {
 	record = e.DecodeRecord(entityName, record)
 	result := make(map[string]any, len(record))
@@ -331,7 +438,6 @@ func (e *ReferenceEngine) Validate(entityName string, record map[string]any) Val
 
 	return ValidationResult{Valid: len(errs) == 0, Errors: errs}
 }
-
 
 // ActorContext holds identity and tenant context for authorization decisions.
 type ActorContext struct {

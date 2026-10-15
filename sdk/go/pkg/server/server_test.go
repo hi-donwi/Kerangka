@@ -51,6 +51,21 @@ func sampleDocument() *kir.Document {
 	}
 }
 
+func pricedDocument() *kir.Document {
+	return &kir.Document{
+		KIR: "0.1",
+		App: "test-priced-app",
+		Entities: map[string]kir.Entity{
+			"Item": {
+				Fields: map[string]any{
+					"id":    map[string]any{"type": "string", "required": true},
+					"price": map[string]any{"type": "decimal", "scale": float64(2)},
+				},
+			},
+		},
+	}
+}
+
 func TestServerHealth(t *testing.T) {
 	doc := sampleDocument()
 	srv := server.New(doc, nil)
@@ -69,6 +84,40 @@ func TestServerHealth(t *testing.T) {
 	}
 	if res["app"] != "test-task-app" {
 		t.Fatalf("expected app 'test-task-app', got '%v'", res["app"])
+	}
+}
+
+func TestServerEncodesDecimalWire(t *testing.T) {
+	srv := server.New(pricedDocument(), nil)
+
+	createReq := httptest.NewRequest("POST", "/api/Item", bytes.NewBufferString(`{"id":"i-1","price":12.5}`))
+	createW := httptest.NewRecorder()
+	srv.ServeHTTP(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", createW.Code, createW.Body.String())
+	}
+
+	var created map[string]any
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	// A decimal leaves the server as a JSON string at the declared scale, never a binary float.
+	if created["price"] != "12.50" {
+		t.Fatalf("expected price \"12.50\", got %v (%T)", created["price"], created["price"])
+	}
+
+	getReq := httptest.NewRequest("GET", "/api/Item/i-1", nil)
+	getW := httptest.NewRecorder()
+	srv.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", getW.Code)
+	}
+	var fetched map[string]any
+	if err := json.Unmarshal(getW.Body.Bytes(), &fetched); err != nil {
+		t.Fatal(err)
+	}
+	if fetched["price"] != "12.50" {
+		t.Fatalf("expected fetched price \"12.50\", got %v (%T)", fetched["price"], fetched["price"])
 	}
 }
 
