@@ -18,6 +18,9 @@ describe("Multi-Language Code Generation", () => {
     expect(tsCode).toContain("export interface Line {");
     expect(tsCode).toContain("export type InvoiceStatus = \"draft\" | \"sent\" | \"paid\" | \"void\";");
     expect(tsCode).toContain("lines?: Array<Line>;");
+    // A decimal is a JSON string on the wire (ADR-0004), not a `number`.
+    expect(tsCode).toContain("unitPrice: string;");
+    expect(tsCode).toContain("total?: string;");
   });
 
   it("generates valid Java 21 records", () => {
