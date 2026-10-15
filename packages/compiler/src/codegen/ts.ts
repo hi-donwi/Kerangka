@@ -73,8 +73,11 @@ export class TypeScriptCodegen {
       case "int":
       case "integer":
       case "float":
-      case "decimal":
         return "number";
+      case "decimal":
+        // A decimal is a JSON string on the wire (ADR-0004); a `number` would round-trip it
+        // through a binary float.
+        return "string";
       case "boolean":
       case "bool":
         return "boolean";

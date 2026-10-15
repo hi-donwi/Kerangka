@@ -32,6 +32,9 @@ describe("Dart Code Generation", () => {
     expect(dartCode).toContain("final Customer customer;");
     expect(dartCode).toContain("final InvoiceStatus? status;");
     expect(dartCode).toContain("final List<Line>? lines;");
+    // A decimal is a JSON string on the wire (ADR-0004), not a `double`.
+    expect(dartCode).toContain("final String unitPrice;");
+    expect(dartCode).toContain("unitPrice: json['unitPrice'] as String?,");
 
     // Serialization
     expect(dartCode).toContain("factory Invoice.fromJson(Map<String, dynamic> json)");

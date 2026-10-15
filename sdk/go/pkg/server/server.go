@@ -80,6 +80,9 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for i, item := range result.Items {
+		result.Items[i] = s.engine.EncodeRecord(entity, item)
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -101,7 +104,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, record)
+	writeJSON(w, http.StatusOK, s.engine.EncodeRecord(entity, record))
 }
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +139,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, created)
+	writeJSON(w, http.StatusCreated, s.engine.EncodeRecord(entity, created))
 }
 
 func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +188,7 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	computed := s.engine.Compute(entity, updated)
-	writeJSON(w, http.StatusOK, computed)
+	writeJSON(w, http.StatusOK, s.engine.EncodeRecord(entity, computed))
 }
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
@@ -245,7 +248,7 @@ func (s *Server) handleTransition(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"record": result.Record,
+		"record": s.engine.EncodeRecord(entity, result.Record),
 		"events": result.Events,
 	})
 }

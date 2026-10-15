@@ -22,6 +22,8 @@ describe("WebAssembly (Wasm) Code Generation", () => {
     expect(wasmCode).toContain("#[wasm_bindgen]");
     expect(wasmCode).toContain("#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]");
     expect(wasmCode).toContain("pub struct Invoice {");
+    // A decimal is a JSON string on the wire (ADR-0004), not an `f64`.
+    expect(wasmCode).toContain("unit_price: String,");
 
     // wasm-bindgen methods for JS interoperability
     expect(wasmCode).toContain("#[wasm_bindgen(js_name = fromJson)]");

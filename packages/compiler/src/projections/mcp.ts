@@ -183,8 +183,18 @@ export class McpGenerator {
         schema.type = "integer";
         break;
       case "float":
-      case "decimal":
         schema.type = "number";
+        break;
+      case "decimal":
+      case "numeric":
+      case "money":
+        // A decimal travels as a JSON string so it never passes through a binary float
+        // (spec/semantics/numbers.md §2.1).
+        schema.type = "string";
+        schema.pattern = "^-?\\d+(\\.\\d+)?$";
+        if (field.precision !== undefined && field.scale !== undefined) {
+          schema["x-kerangka-decimal"] = `decimal(${field.precision},${field.scale})`;
+        }
         break;
       case "boolean":
       case "bool":

@@ -38,6 +38,9 @@ describe("Rust Code Generation", () => {
     expect(rustCode).toContain("pub customer: Customer,");
     expect(rustCode).toContain("pub status: Option<InvoiceStatus>,");
     expect(rustCode).toContain("pub lines: Option<Vec<Line>>,");
+    // A decimal is a JSON string on the wire (ADR-0004), not an `f64`.
+    expect(rustCode).toContain("pub unit_price: String,");
+    expect(rustCode).toContain("pub total: Option<String>,");
 
   });
 

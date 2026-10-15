@@ -79,14 +79,19 @@ export function toJsonSchemaField(
     case "decimal":
     case "numeric":
     case "money":
-    case "number":
-    case "double":
-      schema.type = "number";
-      // JSON numbers are binary floats; the exactness of decimal(p,s) is the
-      // database's job, and saying so beats a precision no JSON reader can honour.
+      // A decimal travels as a JSON string so a value never passes through a binary
+      // float (spec/semantics/numbers.md §2.1). The pattern is the wire form; precision
+      // and scale are published as an annotation JSON Schema cannot otherwise state.
+      schema.type = "string";
+      schema.pattern = "^-?\\d+(\\.\\d+)?$";
       if (field.precision !== undefined && field.scale !== undefined) {
         schema["x-kerangka-decimal"] = `decimal(${field.precision},${field.scale})`;
       }
+      break;
+    case "number":
+    case "double":
+      // A binary float, distinct from the exact `decimal` above.
+      schema.type = "number";
       break;
     case "bool":
     case "boolean":

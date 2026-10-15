@@ -122,8 +122,10 @@ export class WasmCodegen {
       case "integer":
         return "i64";
       case "float":
-      case "decimal":
         return "f64";
+      case "decimal":
+        // A decimal is a JSON string on the wire (ADR-0004); `f64` would lose precision.
+        return "String";
       case "boolean":
       case "bool":
         return "bool";

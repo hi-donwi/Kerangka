@@ -70,6 +70,22 @@ interface StatementContext {
 /** The JSON string form of a decimal (spec/semantics/numbers.md §2.1). */
 const DECIMAL_WIRE = /^-?\d+(\.\d+)?$/;
 
+/** The declared scale of a decimal field, from a compiled field or a shorthand string. */
+function decimalScale(def: unknown): number | undefined {
+  if (isPlainRecord(def) && typeof def.scale === "number") return def.scale;
+  if (typeof def === "string") {
+    const match = /decimal\(\d+,(\d+)\)/.exec(def);
+    if (match) return parseInt(match[1]!, 10);
+  }
+  return undefined;
+}
+
+/** The wire string of a decimal value, at the declared scale (`300` at scale 2 → `"300.00"`). */
+function decimalWire(value: number, scale: number | undefined): string {
+  if (!Number.isFinite(value)) return String(value);
+  return scale !== undefined && Number.isInteger(scale) && scale >= 0 ? value.toFixed(scale) : String(value);
+}
+
 /** Embedded entities may nest; a self-referencing one must not recurse forever. */
 const MAX_DECODE_DEPTH = 16;
 
@@ -503,6 +519,50 @@ export class Engine {
     }
     const valueType = this.ir.types?.[target];
     return valueType?.fields ? this.decodeFields(valueType.fields, value, depth) : value;
+  }
+
+  /**
+   * The wire form of a record: a decimal field becomes a JSON string (spec/semantics/numbers.md
+   * §2.1), formatted at its declared scale. This is the inverse of `decodeRecord` and belongs at
+   * the output boundary — the caller's HTTP response — not inside `compute`, which guards and
+   * validation still read as numbers.
+   */
+  encodeRecord(entityName: string, record: Record<string, unknown>): Record<string, unknown> {
+    const fields = this.ir.entities?.[entityName]?.fields as Record<string, unknown> | undefined;
+    return fields ? this.encodeFields(fields, record, 0) : record;
+  }
+
+  private encodeFields(defs: Record<string, unknown>, value: Record<string, unknown>, depth: number): Record<string, unknown> {
+    if (depth > MAX_DECODE_DEPTH || !isPlainRecord(value)) return value;
+    const out: Record<string, unknown> = { ...value };
+    for (const [name, def] of Object.entries(defs)) {
+      if (out[name] === undefined || out[name] === null) continue;
+      out[name] = this.encodeValue(def, out[name], depth + 1);
+    }
+    return out;
+  }
+
+  private encodeValue(def: unknown, value: unknown, depth: number): unknown {
+    const type = fieldTypeName(def);
+    if (type === "decimal") {
+      // A number becomes its wire string at the declared scale; a value that is already a
+      // wire string (or anything validate would refuse) is left exactly as it is.
+      return typeof value === "number" ? decimalWire(value, decimalScale(def)) : value;
+    }
+    if (type === "list") {
+      const element = (def as { element?: unknown }).element;
+      return Array.isArray(value) && element !== undefined
+        ? value.map((entry) => this.encodeValue(element, entry, depth + 1))
+        : value;
+    }
+    const target = type === "ref" ? (def as { target?: string }).target : type;
+    if (!target || !isPlainRecord(value)) return value;
+    const entity = this.ir.entities?.[target];
+    if (entity) {
+      return entity.embedded ? this.encodeFields(entity.fields ?? {}, value, depth) : value;
+    }
+    const valueType = this.ir.types?.[target];
+    return valueType?.fields ? this.encodeFields(valueType.fields, value, depth) : value;
   }
 
   private normalizeArgs(args: unknown[]): NormalizedArgs {

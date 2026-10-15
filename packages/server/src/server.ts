@@ -444,7 +444,7 @@ export class KerangkaServer {
           });
           const visible = evaluateWhereInMemory(found.items as Record<string, unknown>[], readScope.where, actor);
           res.setHeader("X-Total-Count", String(visible.length));
-          this.sendJson(res, 200, visible.slice(offset, offset + limit));
+          this.sendJson(res, 200, visible.slice(offset, offset + limit).map((row) => this.engine.encodeRecord(entityName, row)));
           return;
         }
 
@@ -457,7 +457,7 @@ export class KerangkaServer {
           search,
         });
         res.setHeader("X-Total-Count", String(queryResult.total));
-        this.sendJson(res, 200, queryResult.items);
+        this.sendJson(res, 200, queryResult.items.map((row) => this.engine.encodeRecord(entityName, row as Record<string, unknown>)));
         return;
       }
 
@@ -488,13 +488,14 @@ export class KerangkaServer {
           tenantId,
           actor: actor?.id ? { id: actor.id } : undefined,
         });
+        const createdWire = this.engine.encodeRecord(entityName, created);
 
         if (idempotencyKey) {
-          this.idempotencyCache.set(idempotencyKey, { status: 201, body: created, headers: { "X-Idempotent-Replayed": "true" } });
+          this.idempotencyCache.set(idempotencyKey, { status: 201, body: createdWire, headers: { "X-Idempotent-Replayed": "true" } });
         }
 
         this.broadcastChange(entityName, { operation: "create", id, version: versionOf(created), tenantId });
-        this.sendJson(res, 201, created);
+        this.sendJson(res, 201, createdWire);
         return;
       }
     }
@@ -530,7 +531,7 @@ export class KerangkaServer {
           return;
         }
         if (!this.authorizeRecordRead(res, entityName, actor, item)) return;
-        this.sendJson(res, 200, item);
+        this.sendJson(res, 200, this.engine.encodeRecord(entityName, item));
         return;
       }
 
@@ -569,13 +570,14 @@ export class KerangkaServer {
             actor: actor?.id ? { id: actor.id } : undefined,
             expectedVersion: isNaN(expectedVersion as number) ? undefined : expectedVersion,
           });
+          const updatedWire = this.engine.encodeRecord(entityName, updated);
 
           if (idempotencyKey) {
-            this.idempotencyCache.set(idempotencyKey, { status: 200, body: updated, headers: { "X-Idempotent-Replayed": "true" } });
+            this.idempotencyCache.set(idempotencyKey, { status: 200, body: updatedWire, headers: { "X-Idempotent-Replayed": "true" } });
           }
 
           this.broadcastChange(entityName, { operation: "update", id, version: versionOf(updated), tenantId });
-          this.sendJson(res, 200, updated);
+          this.sendJson(res, 200, updatedWire);
           return;
         } catch (err: unknown) {
           if (err instanceof VersionConflictError) {
@@ -671,7 +673,7 @@ export class KerangkaServer {
         } = {
           ok: true,
           action: actionName,
-          record: updatedState,
+          record: this.engine.encodeRecord(entityName, updatedState),
           events: result.events,
         };
         if (effectsFailed.length > 0) resPayload.effectsFailed = effectsFailed;

@@ -60,6 +60,16 @@ describe("Kerangka Conformance Test Suite", () => {
               break;
             }
 
+            case "decimal-output": {
+              const kir = compile(tc.input.model);
+              const engine = loadEngine(kir);
+              const entityName = tc.input.entity ?? Object.keys(kir.entities)[0]!;
+
+              const res = engine.encodeRecord(entityName, tc.input.record);
+              expect(res).toEqual(tc.expect.record);
+              break;
+            }
+
             case "validation-rules": {
               const kir = compile(tc.input.model);
               const engine = loadEngine(kir);

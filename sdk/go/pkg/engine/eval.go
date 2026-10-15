@@ -411,7 +411,6 @@ func evalCall(op string, args []any, record map[string]any, actor *ActorContext)
 	}
 }
 
-
 func evalTuple(tuple []any, record map[string]any, actor *ActorContext) EvalOutcome {
 	if len(tuple) == 0 {
 		return EvalOutcome{}

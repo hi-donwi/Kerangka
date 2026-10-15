@@ -132,7 +132,7 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     });
     expect(invoiceRes.status).toBe(201);
     const invoice = await invoiceRes.json();
-    expect(invoice.total).toBe(1500);
+    expect(invoice.total).toBe("1500.00");
     expect(invoice.status).toBe("draft");
 
     // Send transition
@@ -144,6 +144,34 @@ describe("KerangkaServer (Dev Server & REST/MCP/UIDL Runtime)", () => {
     expect(sendRes.status).toBe(200);
     const sentResult = await sendRes.json();
     expect(sentResult.record.status).toBe("sent");
+  });
+
+  it("returns decimal fields as wire strings at the declared scale", async () => {
+    const createRes = await fetch(`${baseUrl}/api/invoice`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        number: "INV-DEC-1",
+        customer: "cust-1",
+        issuedOn: "2026-09-27",
+        dueDate: "2026-10-15",
+        status: "draft",
+        lines: [{ description: "Advisory", qty: 3, unitPrice: 10.5 }],
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+    // A decimal leaves the server as a JSON string, never a binary float (numbers.md §2.1).
+    expect(created.total).toBe("31.50");
+    expect(created.lines[0].unitPrice).toBe("10.50");
+
+    const getRes = await fetch(`${baseUrl}/api/invoice/INV-DEC-1`);
+    expect(getRes.status).toBe(200);
+    expect((await getRes.json()).total).toBe("31.50");
+
+    const list = await (await fetch(`${baseUrl}/api/invoice?number=INV-DEC-1`)).json();
+    const row = list.find((r: { id?: string; number?: string }) => (r.number ?? r.id) === "INV-DEC-1");
+    expect(row.total).toBe("31.50");
   });
 
   it("executes MCP tool calls via /api/mcp/call", async () => {

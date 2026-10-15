@@ -133,8 +133,10 @@ export class DartCodegen {
       case "integer":
         return "int";
       case "float":
-      case "decimal":
         return "double";
+      case "decimal":
+        // A decimal is a JSON string on the wire (ADR-0004); `double` would lose precision.
+        return "String";
       case "boolean":
       case "bool":
         return "bool";
@@ -173,8 +175,9 @@ export class DartCodegen {
       case "integer":
         return `${accessor} as int?`;
       case "float":
-      case "decimal":
         return `(${accessor} as num?)?.toDouble()`;
+      case "decimal":
+        return `${accessor} as String?`;
       case "boolean":
       case "bool":
         return `${accessor} as bool?`;

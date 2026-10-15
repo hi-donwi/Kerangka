@@ -83,7 +83,7 @@ describe("UIDL bridge against a live Kerangka server", () => {
         lines: [{ description: "Consulting", qty: 2, unitPrice: 10 }],
       },
     });
-    expect(invoice.record).toMatchObject({ id: "INV-1", status: "draft", total: 20 });
+    expect(invoice.record).toMatchObject({ id: "INV-1", status: "draft", total: "20.00" });
 
     // transition → POST /api/{collection}/{id}/actions/{transition}
     const sent = await handler({
