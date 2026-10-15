@@ -1,6 +1,6 @@
 {
   "name": "kerangka",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Kerangka CLI compiler, checker, and inspection tool",
   "type": "module",
   "bin": {
@@ -25,6 +25,5 @@
     "@kerangka/server": "*",
     "@kerangka/uidl-projector": "*"
   },
-
   "license": "Apache-2.0"
 }

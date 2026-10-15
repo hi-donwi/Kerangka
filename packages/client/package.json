@@ -1,6 +1,6 @@
 {
   "name": "@kerangka/client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Offline-first client runtime, mutation outbox, and action replay engine for Kerangka",
   "type": "module",
   "main": "./dist/index.js",
