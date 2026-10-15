@@ -106,3 +106,21 @@ describe("the engine reads the decimal wire encoding", () => {
     expect(record.lines[0]).toEqual({ qty: 2, price: "150.00" });
   });
 });
+
+describe("the engine writes the decimal wire encoding", () => {
+  it("encodes computed decimals to wire strings at the declared scale", () => {
+    const engine = invoicing();
+    const wire = engine.encodeRecord("Invoice", engine.compute("Invoice", draft({ discount: "20.50" })));
+    expect(wire.total).toBe("279.50");
+    expect((wire.lines as Array<Record<string, unknown>>)[0]!.price).toBe("150.00");
+  });
+
+  it("encodes a decimal nested in a value type", () => {
+    const engine = invoicing();
+    const wire = engine.encodeRecord(
+      "Invoice",
+      engine.compute("Invoice", draft({ fee: { amount: "2.50", currency: "USD" } })),
+    );
+    expect((wire.fee as Record<string, unknown>).amount).toBe("2.50");
+  });
+});
