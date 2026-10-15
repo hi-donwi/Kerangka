@@ -67,10 +67,13 @@ describe("JSON Schema document", () => {
     const customer = defs().Customer.properties;
 
     expect(customer.email).toMatchObject({ type: "string", format: "email" });
+    // A decimal is a JSON string on the wire, so a value never passes through a binary
+    // float; the wire pattern and the precision travel with it.
     expect(customer.creditLimit).toMatchObject({
-      type: "number",
-      minimum: 0,
+      type: "string",
+      pattern: "^-?\\d+(\\.\\d+)?$",
       default: 0,
+      "x-kerangka-min": 0,
       "x-kerangka-decimal": "decimal(12,2)"
     });
   });

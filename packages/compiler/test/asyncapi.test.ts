@@ -110,7 +110,7 @@ describe("AsyncAPI 3.0 projection", () => {
     expect(props.at).toMatchObject({ type: "string", format: "date-time" });
     expect(props.day).toMatchObject({ type: "string", format: "date" });
     expect(props.count).toMatchObject({ type: "integer" });
-    expect(props.amount).toMatchObject({ type: "number" });
+    expect(props.amount).toMatchObject({ type: "string", pattern: "^-?\\d+(\\.\\d+)?$" });
     expect(props.ok).toMatchObject({ type: "boolean" });
     expect(props.state).toMatchObject({ type: "string", enum: ["draft", "done"] });
     expect(props.thingId).toMatchObject({ type: "string", description: "Reference to Thing" });
