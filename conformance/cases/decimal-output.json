@@ -1,0 +1,122 @@
+{
+  "suite": "decimal-output",
+  "description": "The reference engine writes a decimal as its wire string at the declared scale (numbers.md §2.1); a decimal never leaves as a binary float",
+  "cases": [
+    {
+      "id": "out-decimal-scaled",
+      "description": "A decimal is formatted at its declared scale",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "decimal-output-test",
+          "entities": {
+            "Invoice": {
+              "fields": {
+                "total": "decimal(12,2)"
+              }
+            }
+          }
+        },
+        "entity": "Invoice",
+        "record": { "total": 300 }
+      },
+      "expect": {
+        "record": { "total": "300.00" }
+      }
+    },
+    {
+      "id": "out-decimal-no-scale",
+      "description": "A decimal with no declared scale keeps its natural string form",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "decimal-output-test",
+          "entities": {
+            "Rate": {
+              "fields": {
+                "rate": "decimal"
+              }
+            }
+          }
+        },
+        "entity": "Rate",
+        "record": { "rate": 0.5 }
+      },
+      "expect": {
+        "record": { "rate": "0.5" }
+      }
+    },
+    {
+      "id": "out-decimal-wire-string-passthrough",
+      "description": "A decimal already in wire form is left exactly as it is",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "decimal-output-test",
+          "entities": {
+            "Invoice": {
+              "fields": {
+                "total": "decimal(12,2)"
+              }
+            }
+          }
+        },
+        "entity": "Invoice",
+        "record": { "total": "300.00" }
+      },
+      "expect": {
+        "record": { "total": "300.00" }
+      }
+    },
+    {
+      "id": "out-decimal-list",
+      "description": "A decimal nested in a list is encoded element by element",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "decimal-output-test",
+          "entities": {
+            "Invoice": {
+              "fields": {
+                "amounts": "list(decimal)"
+              }
+            }
+          }
+        },
+        "entity": "Invoice",
+        "record": { "amounts": [10, 5.5] }
+      },
+      "expect": {
+        "record": { "amounts": ["10", "5.5"] }
+      }
+    },
+    {
+      "id": "out-decimal-embedded",
+      "description": "A decimal nested in an embedded entity is encoded",
+      "input": {
+        "model": {
+          "kerangka": "0.1",
+          "app": "decimal-output-test",
+          "entities": {
+            "Invoice": {
+              "fields": {
+                "fee": "ref(Fee)"
+              }
+            },
+            "Fee": {
+              "embedded": true,
+              "fields": {
+                "amount": "decimal(12,2)"
+              }
+            }
+          }
+        },
+        "entity": "Invoice",
+        "record": { "fee": { "amount": 2.5 } }
+      },
+      "expect": {
+        "record": { "fee": { "amount": "2.50" } }
+      }
+    }
+  ]
+}

@@ -19,7 +19,9 @@ conformance/
 │   ├── k1-expressions.json            # Infix syntax, AST output, and evaluation
 │   ├── shorthand-expansion.json       # Field shorthand to canonical definition
 │   ├── workflow-transitions.json      # State machines, roles, and guards
-│   └── validation-rules.json          # Field validation, rules, and invariants
+│   ├── validation-rules.json          # Field validation, rules, and invariants
+│   ├── decimal-output.json            # Decimals written as wire strings at the declared scale
+│   └── modules.json                   # Multi-file model composition
 └── conformance.test.ts                # TypeScript reference test runner
 ```
 
