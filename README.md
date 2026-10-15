@@ -156,3 +156,12 @@ Phase 0 (Foundations), Phase 1 (Spec & Core Engine), Phase 2 (Ports & Adapters),
 
 - Code: [Apache-2.0](LICENSE-APACHE)
 - Specifications: [CC BY 4.0](LICENSE-CC-BY)
+
+## Form presentation metadata
+
+Form views can add `sectionTitles` parallel to `sections`, for example
+`"sectionTitles": ["Identity", "Lifecycle"]`. Titles must be nonempty and unique
+after heading-id normalization. Both projection paths preserve these titles. Static
+forms also emit bounded field groups and runtime-owned `uidl-admin-*` layout hooks;
+use the matching UIDL Runtime stylesheet. See
+[ADR-0046](docs/adr/0046-static-form-presentation-hooks.md).
