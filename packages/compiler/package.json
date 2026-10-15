@@ -1,6 +1,6 @@
 {
   "name": "@kerangka/compiler",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Compiler pipeline transforming Kerangka models to canonical intermediate representation (KIR)",
   "type": "module",
   "main": "./dist/index.js",

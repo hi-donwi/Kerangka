@@ -262,6 +262,8 @@ export class UIDLGenerator {
     const entity = kir.entities[entityName];
     const actions = (viewDef.actions as string[]) || [];
     const sections = (viewDef.sections as string[][]) || [];
+    const sectionTitles = (viewDef.sectionTitles as string[] | undefined) ?? [];
+    const hasLineTable = sections.some(fields => fields.some(name => entity?.fields[name]?.type === "list"));
     const route = `/${viewId}/:id`;
 
     const actionButtons: UIDLNode[] = actions.map((actionName) => ({
@@ -300,14 +302,19 @@ export class UIDLGenerator {
           .map((fieldName) => UIDLGenerator.formFieldNode(entityName, fieldName, entity.fields[fieldName], kir))
           .filter((node): node is UIDLNode => node !== null);
 
-        // A section is a heading plus its fields; `Section` does not exist in the registry.
+        // Compose registered widgets; presentation hooks are owned by UIDL Runtime.
         sectionNodes.push(
           {
             id: `${viewId}-section-${sectionIndex}`,
-            type: "Text" as const,
-            props: { value: `Section ${sectionIndex + 1}`, heading: 2 },
+            type: "Column" as const,
+            props: { className: "uidl-admin-section" },
+            style: { ...COLUMN_STYLE, gap: "gap-4" },
+            children: [
+              { id: `${viewId}-section-${sectionIndex}-title`, type: "Text" as const,
+                props: { value: sectionTitles[sectionIndex]?.trim() ?? `Section ${sectionIndex + 1}`, heading: 2, className: "uidl-admin-section-title" } },
+              ...fieldNodes,
+            ],
           },
-          ...fieldNodes,
         );
       });
     }
@@ -342,12 +349,14 @@ export class UIDLGenerator {
           {
             id: `${viewId}-body`,
             type: "Column" as const,
-            style: { ...COLUMN_STYLE, padding: "p-4" },
+            style: { ...COLUMN_STYLE, gap: "gap-0", padding: "p-4" },
             children: [
               ...UIDLGenerator.formActionHeader(viewId, entityName, actionButtons),
               {
                 id: `${viewId}-fields`,
                 type: "Form" as const,
+                props: { className: hasLineTable ? "uidl-admin-form uidl-admin-form-wide" : "uidl-admin-form" },
+                style: { ...COLUMN_STYLE, gap: "gap-6", width: "w-full", maxWidth: hasLineTable ? "max-w-full" : "max-w-2xl" },
                 children: sectionNodes,
                 // Submitting the form sends the whole editable form state as the command
                 // payload — a bridge command, not a datasource mutation, so bidirectional
@@ -375,16 +384,18 @@ export class UIDLGenerator {
       {
         id: `${viewId}-header`,
         type: "Row" as const,
+        props: { className: "uidl-admin-header" },
         style: { ...ROW_STYLE, justifyContent: "space-between", alignItems: "center" },
         children: [
           {
             id: `${viewId}-title`,
             type: "Text" as const,
-            props: { value: `${entityName} Details`, heading: 1 },
+            props: { value: `${entityName} Details`, heading: 1, className: "uidl-admin-title" },
           },
           {
             id: `${viewId}-actions`,
             type: "Row" as const,
+            props: { className: "uidl-admin-actions" },
             style: ROW_STYLE,
             children: actionButtons,
           },

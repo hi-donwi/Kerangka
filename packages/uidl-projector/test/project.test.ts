@@ -60,6 +60,17 @@ describe("RecipeProjector.list", () => {
 });
 
 describe("RecipeProjector.form", () => {
+  it("preserves meaningful section titles in per-request recipes", () => {
+    const kir = compile(JSON.stringify({
+      kerangka: "0.1", app: "named-sections",
+      entities: { Record: { fields: { name: "string", status: "string" } } },
+      views: { record: { form: "Record", sections: [["name"], ["status"]], sectionTitles: ["Identity", "Lifecycle"] } },
+    }));
+    const screen = new RecipeProjector(kir).form("record");
+    expect(find(root(screen), node => node.props?.value === "Identity")).toBeDefined();
+    expect(find(root(screen), node => node.props?.value === "Lifecycle")).toBeDefined();
+  });
+
   const projector = new RecipeProjector(invoicing);
 
   it("edits the given record with its version, and offers the workflow from its state", () => {

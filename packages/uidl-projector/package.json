@@ -1,6 +1,6 @@
 {
   "name": "@kerangka/uidl-projector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Compiles a Kerangka model's views into UIDL screens per request, through uidl-runtime's page recipes",
   "type": "module",
   "main": "./dist/index.js",

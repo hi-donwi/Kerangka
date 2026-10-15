@@ -49,3 +49,4 @@ This directory records all significant architectural, semantic, and structural d
 | [0043](0043-predefined-presets-live-with-their-owner.md) | Predefined Presets Live With Their Owner, and a Template Is Used With `use` | Accepted | 2026-10-12 |
 | [0044](0044-role-map-permissions-are-enforced.md) | Role-Map Permissions Are Enforced, and an Empty List Grants No One | Accepted | 2026-10-12 |
 | [0045](0045-screens-are-compiled-per-request-through-uidl-recipes.md) | Screens Are Compiled per Request Through UIDL Recipes | Accepted | 2026-10-13 |
+| [0046](0046-static-form-presentation-hooks.md) | Static Form Presentation Hooks and Section Titles | Accepted | 2026-10-15 |

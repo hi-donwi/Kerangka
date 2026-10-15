@@ -6,7 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-15
+
 ### Added
+- Form views support validated `sectionTitles` in static and per-request screens. Static forms
+  group fields with bounded widths, wide line-table support, and UIDL Runtime presentation hooks.
 - Dashboards are served at `GET /screens/{viewId}` through UIDL-Runtime's dashboard recipe, with
   the caller's figures (ADR-0045 amendment). `Engine.kpiSource` and `Engine.kpiValue` compute a
   KPI with K1's own `count`, `sum`, and `avg` over the records its `where` admits; the server

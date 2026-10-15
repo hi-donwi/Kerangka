@@ -155,7 +155,7 @@ export const TEMPLATE_INSTANCE_KEYS = ["use", "with"] as const;
  * rest refine it. `filters` is declared by PLAN.md §5.1 and not read by the UIDL projector yet.
  */
 export const VIEW_KINDS = ["dashboard", "list", "form"] as const;
-export const VIEW_KEYS = [...VIEW_KINDS, "columns", "filters", "open", "actions", "sections"] as const;
+export const VIEW_KEYS = [...VIEW_KINDS, "columns", "filters", "open", "actions", "sections", "sectionTitles"] as const;
 
 /** The keys one rule may declare. */
 export const RULE_KEYS = ["id", "field", "message", "check", "versions", "effectiveDate"] as const;
@@ -371,6 +371,17 @@ class StructuralValidator {
       if (this.templateInstance(view, VIEW_KEYS, at, "view key")) continue;
 
       const kinds = VIEW_KINDS.filter((kind) => view[kind] !== undefined);
+      if (view.sectionTitles !== undefined) {
+        const titles = view.sectionTitles;
+        if (typeof view.form !== "string" || !Array.isArray(view.sections) || !Array.isArray(titles)
+          || titles.length !== view.sections.length
+          || titles.some(title => typeof title !== "string" || !title.trim())
+          || new Set(titles.map(title => typeof title === "string" ? title.trim().toLowerCase().replace(/\s+/g, "-") : title)).size !== titles.length) {
+          this.error("VIEW_SECTION_TITLES_INVALID",
+            "Form sectionTitles must contain one nonempty, unique title per section.",
+            at("sectionTitles"), "Match sectionTitles to sections in the same order.");
+        }
+      }
       const loose = typeof view.type === "string" && (VIEW_KINDS as readonly string[]).includes(view.type);
       for (const key of Object.keys(view)) {
         if ((VIEW_KEYS as readonly string[]).includes(key)) continue;
@@ -1192,7 +1203,13 @@ export function modelSchema(): Record<string, unknown> {
       decisions: mapOfObjects,
       schedules: mapOfObjects,
       extensions: mapOfObjects,
-      views: mapOfObjects,
+      views: {
+        type: "object",
+        additionalProperties: {
+          type: "object",
+          properties: { sectionTitles: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true } }
+        }
+      },
       navigation: { type: "array" },
       examples: { type: "array" },
       lint: { type: "object", additionalProperties: true },

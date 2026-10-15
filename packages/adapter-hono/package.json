@@ -1,6 +1,6 @@
 {
   "name": "@kerangka/adapter-hono",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Standard Hono HTTP adapter for Kerangka applications with RFC 9457 Problem Details and Idempotency-Key",
   "type": "module",
   "main": "./dist/index.js",

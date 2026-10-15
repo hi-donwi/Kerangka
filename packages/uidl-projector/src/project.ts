@@ -187,7 +187,7 @@ export class RecipeProjector {
     const entity = this.kir.entities[view.entity]!;
     const declared = (this.kir.views?.[viewId] ?? {}) as ViewDef;
     const sections = Array.isArray(declared.sections) ? (declared.sections as string[][]) : undefined;
-    const fields = this.fieldsOf(view.entity, sections);
+    const fields = this.fieldsOf(view.entity, sections, declared.sectionTitles as string[] | undefined);
     const meta: FormPageMeta = {
       name: view.entity,
       label: both(humanize(view.entity)),
@@ -286,10 +286,10 @@ export class RecipeProjector {
     return { collections, commands: [], transitions: [...transitions] };
   }
 
-  private fieldsOf(entityName: string, sections?: string[][]): FieldMeta[] {
+  private fieldsOf(entityName: string, sections?: string[][], sectionTitles?: string[]): FieldMeta[] {
     const entity = this.kir.entities[entityName]!;
     const sectionOf = new Map<string, string>();
-    sections?.forEach((names, index) => names.forEach((name) => sectionOf.set(name, `section-${index + 1}`)));
+    sections?.forEach((names, index) => names.forEach((name) => sectionOf.set(name, sectionTitles?.[index]?.trim() ?? `section-${index + 1}`)));
     const order = sections ? sections.flat() : Object.keys(entity.fields);
     const out: FieldMeta[] = [];
     for (const key of order) {
