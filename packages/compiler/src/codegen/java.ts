@@ -9,6 +9,12 @@ import { FieldDefinition, KIRDocument } from "../types.js";
 
 export class JavaCodegen {
   static generate(kir: KIRDocument, packageName: string = "com.kerangka.model"): string {
+    const usesDecimal = Object.values(kir.entities || {}).some((entity) =>
+      Object.values(entity.fields).some(
+        (field) => field.type === "decimal" || (field.type === "list" && field.element?.type === "decimal")
+      )
+    );
+
     const lines: string[] = [
       `package ${packageName};`,
       "",
@@ -17,6 +23,12 @@ export class JavaCodegen {
       "import java.time.Instant;",
       "import java.util.List;",
       "import java.util.Optional;",
+      ...(usesDecimal
+        ? [
+            "import com.fasterxml.jackson.databind.annotation.JsonSerialize;",
+            "import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;"
+          ]
+        : []),
       ""
     ];
 
@@ -44,7 +56,7 @@ export class JavaCodegen {
 
       for (const [fieldName, field] of Object.entries(entity.fields)) {
         const javaType = this.mapFieldToJavaType(entityName, fieldName, field);
-        recordFields.push(`    ${javaType} ${fieldName}`);
+        recordFields.push(`    ${this.wireAnnotation(field)}${javaType} ${fieldName}`);
       }
 
       lines.push(recordFields.join(",\n"));
@@ -88,6 +100,21 @@ export class JavaCodegen {
       default:
         return "Object";
     }
+  }
+
+  /**
+   * A decimal crosses the wire as a JSON string (spec/semantics/numbers.md), so
+   * Jackson must not write a BigDecimal as a number. Deserialization already
+   * accepts a string, so only the serializer needs an annotation.
+   */
+  private static wireAnnotation(field: FieldDefinition): string {
+    if (field.type === "decimal") {
+      return "@JsonSerialize(using = ToStringSerializer.class) ";
+    }
+    if (field.type === "list" && field.element?.type === "decimal") {
+      return "@JsonSerialize(contentUsing = ToStringSerializer.class) ";
+    }
+    return "";
   }
 
   private static capitalize(str: string): string {

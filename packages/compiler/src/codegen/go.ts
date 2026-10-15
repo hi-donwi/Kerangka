@@ -13,9 +13,27 @@ export class GoCodegen {
       `package ${packageName}`,
       "",
       "import (",
+      '\t"encoding/json"',
       '\t"time"',
+      "",
       '\t"github.com/shopspring/decimal"',
       ")",
+      "",
+      "// Decimal is a decimal.Decimal that crosses the wire as a JSON string",
+      "// (spec/semantics/numbers.md), never as a JSON number.",
+      "type Decimal struct {",
+      "\tdecimal.Decimal",
+      "}",
+      "",
+      "// MarshalJSON writes the wire string form; a decimal is never a number.",
+      "func (d Decimal) MarshalJSON() ([]byte, error) {",
+      "\treturn json.Marshal(d.String())",
+      "}",
+      "",
+      "// UnmarshalJSON accepts the wire string and, for tolerance, a JSON number.",
+      "func (d *Decimal) UnmarshalJSON(data []byte) error {",
+      "\treturn d.Decimal.UnmarshalJSON(data)",
+      "}",
       ""
     ];
 
@@ -67,7 +85,7 @@ export class GoCodegen {
       case "float":
         return field.required ? "float64" : "*float64";
       case "decimal":
-        return field.required ? "decimal.Decimal" : "*decimal.Decimal";
+        return field.required ? "Decimal" : "*Decimal";
       case "boolean":
       case "bool":
         return field.required ? "bool" : "*bool";
