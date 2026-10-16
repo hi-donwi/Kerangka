@@ -20,3 +20,4 @@ Draft → In Review (min. 14 days) → Accepted / Rejected → Implemented (in S
 | RFC | Title | Author | Status | Target Phase |
 |---|---|---|---|---|
 | [RFC-0000](0000-template.md) | RFC Process and Template | The Kerangka Authors | Active | Phase 0 |
+| [Draft](20261016-host-embedding-and-application-export.md) | Host embedding in multi-tenant platforms and standalone application export (KX-01 to KX-10) | The Kerangka Authors | Draft | 0.2 / 0.3 / Horizon 2 |
