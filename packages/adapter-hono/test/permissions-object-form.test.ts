@@ -31,7 +31,7 @@ const kir = compile({
 } as never);
 
 async function setup() {
-  const app = createKerangkaHonoApp(kir, { store: new MemoryStore() });
+  const app = createKerangkaHonoApp(kir, { store: new MemoryStore(), trustContextHeaders: true });
   const as = (roles: string, id = "u-1") => ({ "Content-Type": "application/json", "X-Actor-Roles": roles, "X-Actor-Id": id });
   for (const [id, status] of [["inv-draft", "draft"], ["inv-sent", "sent"]]) {
     const res = await app.request("/api/invoice", { method: "POST", headers: as("admin"), body: JSON.stringify({ id, number: id, status }) });

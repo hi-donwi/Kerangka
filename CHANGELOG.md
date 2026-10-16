@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Hono request context is host-owned (KX-01, ADR-0047).** `resolveContext(request)` provides the
+  verified actor and tenant once per data request. Context headers and `?tenantId=` are ignored
+  unless `trustContextHeaders: true` is explicitly set; a host denial never falls back to headers.
+  Multitenant data routes fail with `TENANT_REQUIRED` before accessing data when scope is missing.
+  Anonymous actions and MCP calls cannot promote body-supplied roles to a principal.
+- Hono item lookups are tenant-scoped at the store boundary (foreign items now answer 404, not
+  403), record mutations cannot change tenant ownership, and idempotency caches are isolated by
+  application and verified context. Existing raw-key entries are intentionally not replayed.
+  See `packages/adapter-hono/README.md` for migration. The separate Node sidecar and other
+  language adapters are unchanged by this Hono slice.
+
 ## [0.1.1] - 2026-10-15
 
 ### Added

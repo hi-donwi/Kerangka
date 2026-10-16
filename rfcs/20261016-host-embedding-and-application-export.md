@@ -30,7 +30,9 @@ A host platform needs to run Kerangka on behalf of many tenants, at the edge, fr
 
 ### KX-01 — Host-owned actor and tenant scope
 
-Adapters accept a host hook: `resolveContext(request) => Promise<ActorContext | null>`, where `ActorContext` is `{ actorId, roles, tenantId }`. When a hook is supplied, headers and query parameters are ignored. Header-derived context is available only with an explicit `trustContextHeaders: true` option, which `kerangka dev` sets and production adapters do not. A model with `multitenancy` and a run with no `tenantId` fails closed with `TENANT_REQUIRED` (ADR-0008).
+Adapters accept a host hook: `resolveContext(request) => Promise<ActorContext | null>`, where `ActorContext` uses the existing `{ id, roles, tenantId }` shape. When a hook is supplied, context headers and tenant query parameters are ignored. Header-derived context is available only with an explicit `trustContextHeaders: true` option, intended for development and not enabled by production adapters. A model with `multitenancy` and a run with no `tenantId` fails closed with `TENANT_REQUIRED` (ADR-0008).
+
+The Hono slice is specified in [ADR-0047](../docs/adr/0047-hono-context-is-owned-by-the-host.md), including context-scoped idempotency and tenant-scoped item lookups. The Node sidecar used by `kerangka dev` and other language adapters need separate migrations; this does not accept or implement the remaining RFC proposals.
 
 ### KX-02 — Edge SQL store adapter and store conformance kit
 

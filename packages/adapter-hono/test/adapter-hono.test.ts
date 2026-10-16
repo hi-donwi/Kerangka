@@ -217,7 +217,7 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
 
   it("enforces tenant isolation via X-Tenant-Id header", async () => {
     const store = new MemoryStore();
-    const app = createKerangkaHonoApp(kir, { store });
+    const app = createKerangkaHonoApp(kir, { store, trustContextHeaders: true });
 
     // Tenant Alpha creates todo
     await app.request("/api/todo", {
@@ -267,6 +267,7 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
     const app = createKerangkaHonoApp(invoicingKir, {
       store,
       connectors: mockConnectors,
+      trustContextHeaders: true,
     });
 
     // Create draft invoice
@@ -341,7 +342,8 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
     const { MemoryIdempotencyStore, computeRequestFingerprint } = await import("../src/index.js");
     const idem = new MemoryIdempotencyStore();
     const fingerprint = computeRequestFingerprint("POST", "/api/todo", { id: "td-flight" });
-    expect(idem.begin("flight-1", fingerprint).kind).toBe("new");
+    const scope = computeRequestFingerprint("CONTEXT", kir.app, { roles: [] });
+    expect(idem.begin(JSON.stringify([scope, "flight-1"]), fingerprint).kind).toBe("new");
 
     const app2 = createKerangkaHonoApp(kir, { store, idempotencyStore: idem });
     const dupRes = await app2.request("/api/todo", {
@@ -601,7 +603,7 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
       }),
     };
 
-    const app = createKerangkaHonoApp(ckir, { store, screens: fakeScreens });
+    const app = createKerangkaHonoApp(ckir, { store, screens: fakeScreens, trustContextHeaders: true });
 
     // Seed deals
     await store.create("Deal", { id: "d-1", amount: 100.5, stage: "won", ownerId: "u-1" });
@@ -645,4 +647,3 @@ describe("Hono HTTP Adapter (@kerangka/adapter-hono)", () => {
     expect(uidlRedirectRes.headers.get("Location")).toBe("/screens/home");
   });
 });
-

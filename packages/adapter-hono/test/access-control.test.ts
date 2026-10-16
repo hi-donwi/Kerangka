@@ -44,7 +44,7 @@ const TENANTS = ["acme", "globex"];
 
 async function seeded() {
   const store = new MemoryStore();
-  const app = createKerangkaHonoApp(kir, { store });
+  const app = createKerangkaHonoApp(kir, { store, trustContextHeaders: true });
   for (const tenantId of TENANTS) {
     await app.request("/api/doc", {
       method: "POST",
@@ -127,12 +127,14 @@ describe("a caller that establishes a tenant sees only its own rows", () => {
 
   it("refuses a record belonging to another tenant", async () => {
     const { app } = await seeded();
-    // A 404 here would be a defensible answer to a probe, and a bad one: it tells the caller
-    // which ids exist. ADR-0040 requires the refusal, so the request is refused.
+    // KX-01 scopes the store lookup itself: no other tenant's row is loaded to refuse it.
     const res = await app.request("/api/doc/d-globex", as("acme", "billing"));
 
-    expect(res.status).toBe(403);
-    expect(await res.text()).not.toContain("globex");
+    expect(res.status).toBe(404);
+    const problem = await res.json();
+    expect(problem.code).toBe("NOT_FOUND");
+    expect(problem).not.toHaveProperty("tenantId");
+    expect(problem).not.toHaveProperty("amount");
   });
 
   it("still answers a record that belongs to the caller", async () => {

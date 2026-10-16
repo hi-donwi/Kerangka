@@ -5,6 +5,11 @@
 - **Deciders:** The Kerangka Authors
 - **Project:** kerangka
 
+**Amended by [ADR-0047](0047-hono-context-is-owned-by-the-host.md):** Hono now resolves verified
+context through a host hook and trusts headers only by explicit opt-in. Item lookups are scoped
+at the store boundary; a foreign row is not loaded to produce a 403 and instead answers 404.
+The read-filter and permission decisions below remain in force.
+
 ## Context
 
 `PLAN.md` states two things that the runtime does not do.

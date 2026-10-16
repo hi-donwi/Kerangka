@@ -70,8 +70,13 @@ export interface KerangkaHonoOptions {
   serverUrl?: string;
   cors?: boolean;
   screens?: ScreensProjectorLike;
+  /** Resolve a verified principal for each request. A null result never falls back to headers. */
+  resolveContext?: (request: Request) => Promise<ActorContext | null>;
+  /** Trust self-asserted context headers/query scope. Development or trusted proxies only. */
+  trustContextHeaders?: boolean;
 }
 
+type KerangkaHonoEnv = { Variables: { actor: ActorContext } };
 
 /** `canOperate` asks for the record when only a condition on it could grant (PLAN.md §5.1). */
 const NEEDS_RECORD = "PERMISSION_NEEDS_RECORD";
@@ -86,8 +91,8 @@ function listDenial(result: { code?: string; reason?: string }): string | undefi
   return `${result.reason ?? "This read is conditional"}; a list cannot apply a per-record read condition, so declare it as the entity's readFilter instead`;
 }
 
-export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOptions = {}): Hono {
-  const app = new Hono();
+export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOptions = {}): Hono<KerangkaHonoEnv> {
+  const app = new Hono<KerangkaHonoEnv>();
 
   // An unhandled fault answers with the same Problem Details shape as every other error here,
   // and says nothing about what went wrong. Both halves matter: this adapter promises RFC 9457
@@ -132,6 +137,36 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     });
   }
 
+  app.use("*", async (c, next) => {
+    const path = c.req.path;
+    const dataRequest = (path.startsWith("/api/") && path !== "/api/mcp/tools") ||
+      path === "/screens" || path.startsWith("/screens/");
+    if (!dataRequest) return await next();
+
+    let actor: ActorContext | null | undefined;
+    if (options.resolveContext) {
+      try {
+        actor = await options.resolveContext(c.req.raw);
+      } catch {
+        return sendProblem(c, 500, "INTERNAL_ERROR", "The request could not be completed.");
+      }
+    } else if (options.trustContextHeaders === true) {
+      const id = c.req.header("X-Actor-Id");
+      const roles = c.req.header("X-Actor-Roles");
+      const tenantId = c.req.header("X-Tenant-Id") || c.req.query("tenantId") || undefined;
+      if (id || roles || tenantId) {
+        actor = { id, roles: roles?.split(",").map((role) => role.trim()).filter(Boolean) ?? [], tenantId };
+      }
+    }
+    // An explicit anonymous actor also prevents legacy engine overloads from treating body.roles as identity.
+    c.set("actor", actor ? { ...actor, roles: [...(actor.roles ?? [])] } : { roles: [] });
+    const tenantId = getTenantId(c);
+    if (kir.multitenancy && (typeof tenantId !== "string" || !tenantId.trim())) {
+      return sendProblem(c, 403, "TENANT_REQUIRED", "A verified tenant is required for this model.");
+    }
+    return await next();
+  });
+
   // ---------------------------------------------------------------------------
   // Helper functions
   // ---------------------------------------------------------------------------
@@ -156,21 +191,30 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     });
   }
 
-  function getTenantId(c: Context): string | undefined {
-    return c.req.header("X-Tenant-Id") || c.req.query("tenantId") || undefined;
+  function getTenantId(c: Context<KerangkaHonoEnv>): string | undefined {
+    return getActorContext(c).tenantId;
   }
 
-  function getActorContext(c: Context): ActorContext | undefined {
-    const actorId = c.req.header("X-Actor-Id");
-    const rolesHeader = c.req.header("X-Actor-Roles");
-    const roles = rolesHeader ? rolesHeader.split(",").map((r) => r.trim()).filter(Boolean) : undefined;
+  function getActorContext(c: Context<KerangkaHonoEnv>): ActorContext {
+    return c.get("actor");
+  }
+
+  function scopeRecord(c: Context<KerangkaHonoEnv>, record: Record<string, unknown>): Record<string, unknown> | Response {
     const tenantId = getTenantId(c);
-    if (!actorId && !roles && !tenantId) return undefined;
-    return {
-      id: actorId,
-      roles: roles ?? [],
-      tenantId,
-    };
+    if (!tenantId) return record;
+    const field = kir.multitenancy?.field ?? "tenantId";
+    if (record[field] !== undefined && record[field] !== tenantId) {
+      return sendProblem(c, 403, "PERMISSION_DENIED", "A record cannot change its tenant scope.");
+    }
+    return { ...record, [field]: tenantId };
+  }
+
+  function idempotencyKey(c: Context<KerangkaHonoEnv>): string | undefined {
+    const key = c.req.header("Idempotency-Key");
+    if (!key) return undefined;
+    const actor = getActorContext(c);
+    const scope = computeRequestFingerprint("CONTEXT", kir.app, { ...actor, roles: [...(actor.roles ?? [])].sort() });
+    return JSON.stringify([scope, key]);
   }
 
   function resolveEntityName(entityParam: string): string | null {
@@ -202,10 +246,10 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
    * rejects key reuse with a different payload, and rejects concurrent duplicates.
    */
   async function beginIdempotentRequest(
-    c: Context,
+    c: Context<KerangkaHonoEnv>,
     method: string
   ): Promise<Response | null> {
-    const key = c.req.header("Idempotency-Key");
+    const key = idempotencyKey(c);
     if (!key) return null;
 
     const fingerprint = computeRequestFingerprint(method, c.req.path, await readJsonBody(c));
@@ -248,11 +292,11 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
   }
 
   async function completeIdempotentRequest(
-    c: Context,
+    c: Context<KerangkaHonoEnv>,
     status: number,
     body: unknown
   ): Promise<void> {
-    const key = c.req.header("Idempotency-Key");
+    const key = idempotencyKey(c);
     if (!key) return;
     const cached: CachedResponse = {
       status,
@@ -267,8 +311,8 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     }
   }
 
-  async function failIdempotentRequest(c: Context): Promise<void> {
-    const key = c.req.header("Idempotency-Key");
+  async function failIdempotentRequest(c: Context<KerangkaHonoEnv>): Promise<void> {
+    const key = idempotencyKey(c);
     if (key && idempotencyStore.fail) await idempotencyStore.fail(key);
   }
 
@@ -305,10 +349,16 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
     }
 
     const actor = getActorContext(c);
-    const tenantId = getTenantId(c);
 
     try {
-      const result = engine.run(entityName, opName, toolArgs?.record as Record<string, unknown> ?? {}, toolArgs ?? {}, actor);
+      const record = scopeRecord(c, toolArgs?.record as Record<string, unknown> ?? {});
+      if (record instanceof Response) return record;
+      const result = engine.run(entityName, opName, record, toolArgs ?? {}, actor);
+      if (result.record) {
+        const scoped = scopeRecord(c, result.record);
+        if (scoped instanceof Response) return scoped;
+        result.record = scoped;
+      }
       return c.json(result);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -570,7 +620,11 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
     try {
       const tenantId = getTenantId(c);
-      const body = await readJsonBody(c);
+      const body = scopeRecord(c, await readJsonBody(c));
+      if (body instanceof Response) {
+        await failIdempotentRequest(c);
+        return body;
+      }
 
       // A conditional create grant is decided against the record being created.
       if (canCreate.code === NEEDS_RECORD) {
@@ -595,7 +649,11 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       }
 
       // Compute defaults & computed fields
-      const recordWithComputed = engine.compute(entityName, bodyWithDefaults);
+      const recordWithComputed = scopeRecord(c, engine.compute(entityName, bodyWithDefaults));
+      if (recordWithComputed instanceof Response) {
+        await failIdempotentRequest(c);
+        return recordWithComputed;
+      }
       const created = await store.create(entityName, recordWithComputed, {
         tenantId,
         actor: actor?.id ? { id: actor.id } : undefined,
@@ -757,8 +815,8 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       return sendProblem(c, 403, readScope.code ?? "PERMISSION_DENIED", readScope.reason);
     }
 
-    // 3. Fetch from store without tenant scoping so a cross-tenant item yields 403, not 404
-    const item = await store.get<Record<string, unknown>>(entityName, id);
+    // 3. Never load another tenant's row just to decide whether to refuse it.
+    const item = await store.get<Record<string, unknown>>(entityName, id, { tenantId: getTenantId(c) });
     if (!item) {
       return sendProblem(c, 404, "NOT_FOUND", `${entityName} with id '${id}' not found`);
     }
@@ -821,7 +879,11 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
         }
       }
 
-      const body = await readJsonBody(c);
+      const body = scopeRecord(c, await readJsonBody(c));
+      if (body instanceof Response) {
+        await failIdempotentRequest(c);
+        return body;
+      }
 
       // Optimistic Concurrency version parsing
       const rawExpectedVersion = c.req.header("If-Match") || c.req.header("X-Expected-Version");
@@ -839,7 +901,11 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
         );
       }
 
-      const computed = engine.compute(entityName, merged);
+      const computed = scopeRecord(c, engine.compute(entityName, merged));
+      if (computed instanceof Response) {
+        await failIdempotentRequest(c);
+        return computed;
+      }
 
       try {
         const updated = await store.update(entityName, id, computed, {
@@ -1058,7 +1124,12 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       // Persist mutation
       let updatedRecord = existing;
       if (runResult.record) {
-        updatedRecord = await store.update(entityName, id, runResult.record, {
+        const scoped = scopeRecord(c, runResult.record);
+        if (scoped instanceof Response) {
+          await failIdempotentRequest(c);
+          return scoped;
+        }
+        updatedRecord = await store.update(entityName, id, scoped, {
           tenantId,
           actor: actor?.id ? { id: actor.id } : undefined,
         });
@@ -1141,7 +1212,12 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
       // Persist status change
       let updatedRecord = existing;
       if (transResult.record) {
-        updatedRecord = await store.update(entityName, id, transResult.record, {
+        const scoped = scopeRecord(c, transResult.record);
+        if (scoped instanceof Response) {
+          await failIdempotentRequest(c);
+          return scoped;
+        }
+        updatedRecord = await store.update(entityName, id, scoped, {
           tenantId,
           actor: actor?.id ? { id: actor.id } : undefined,
         });

@@ -17,6 +17,7 @@ describe("Hono HTTP Adapter Timers and Schedules Integration", () => {
     const app = createKerangkaHonoApp(kir, {
       store,
       scheduler,
+      trustContextHeaders: true,
     });
 
     // 1. Create a draft leave request
