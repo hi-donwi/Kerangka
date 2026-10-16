@@ -1,0 +1,27 @@
+{
+  "kind": "kerangka.studio.source",
+  "version": "0.1",
+  "revision": "draft-1",
+  "entry": "model/app.kerangka.json",
+  "sources": {
+    "model/app.kerangka.json": {
+      "format": "json",
+      "text": "{\n  \"kerangka\": \"0.1\", \"app\": \"studio-probe\",\n  \"entities\": {\"Request\": {\"fields\": {\"title\": \"string!\"}}},\n  \"views\": {\"requests\": {\"list\": \"Request\"}}\n}\n"
+    },
+    "pages/help.uidl.json": {
+      "format": "json",
+      "text": "{\"version\":\"1.0\",\"id\":\"help\",\"name\":\"Help\",\"root\":{\"id\":\"help-text\",\"type\":\"Text\",\"props\":{\"value\":\"Synthetic preview\"}}}"
+    }
+  },
+  "application": {
+    "pages": {
+      "requests": { "mode": "recipe", "view": "requests" },
+      "help": { "mode": "authored", "source": "pages/help.uidl.json" }
+    },
+    "routes": [
+      { "id": "requests", "path": "/requests", "page": "requests", "access": "session" },
+      { "id": "help", "path": "/help", "page": "help", "access": "public" }
+    ],
+    "preview": { "profile": "read", "data": "synthetic" }
+  }
+}

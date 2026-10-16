@@ -165,3 +165,9 @@ after heading-id normalization. Both projection paths preserve these titles. Sta
 forms also emit bounded field groups and runtime-owned `uidl-admin-*` layout hooks;
 use the matching UIDL Runtime stylesheet. See
 [ADR-0046](docs/adr/0046-static-form-presentation-hooks.md).
+
+## Studio Foundation
+
+[Kerangka Studio P0](docs/studio/README.md) specifies a local-first visual authoring host,
+its source-bundle schema, reuse boundaries, and security gates. It is an accepted design
+with contract fixtures, not an implemented `/studio` console or a production-readiness claim.

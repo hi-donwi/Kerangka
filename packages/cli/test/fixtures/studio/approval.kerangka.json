@@ -1,0 +1,41 @@
+{
+  "kerangka": "0.1",
+  "app": "studio-approval",
+  "meta": { "title": "Synthetic Request Approval", "timezone": "UTC" },
+  "roles": ["employee", "manager"],
+  "entities": {
+    "Request": {
+      "fields": {
+        "id": "string!",
+        "employeeId": "string!",
+        "title": "string!",
+        "days": { "type": "int", "required": true, "min": 1, "max": 30 },
+        "status": "enum(draft, submitted, approved, rejected) = draft"
+      },
+      "rules": [
+        { "id": "title-not-blank", "field": "title", "check": "len(trim(title)) > 0", "message": "Title must not be blank" }
+      ],
+      "permissions": {
+        "create": { "employee": "employeeId == actor.id && status == 'draft'" },
+        "read": ["employee", "manager"],
+        "update": [],
+        "delete": []
+      },
+      "workflow": {
+        "field": "status",
+        "states": ["draft", "submitted", "approved", "rejected"],
+        "initial": "draft",
+        "terminal": ["approved", "rejected"],
+        "transitions": {
+          "submit": { "from": "draft", "to": "submitted", "roles": ["employee"], "when": "employeeId == actor.id" },
+          "approve": { "from": "submitted", "to": "approved", "roles": ["manager"], "when": "employeeId != actor.id" },
+          "reject": { "from": "submitted", "to": "rejected", "roles": ["manager"], "when": "employeeId != actor.id" }
+        }
+      }
+    }
+  },
+  "views": {
+    "requests": { "list": "Request", "columns": ["title", "employeeId", "days", "status"], "open": "request" },
+    "request": { "form": "Request", "sections": [["employeeId", "title"], ["days"]], "sectionTitles": ["Identity", "Request"] }
+  }
+}

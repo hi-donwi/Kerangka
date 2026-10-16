@@ -51,3 +51,4 @@ This directory records all significant architectural, semantic, and structural d
 | [0045](0045-screens-are-compiled-per-request-through-uidl-recipes.md) | Screens Are Compiled per Request Through UIDL Recipes | Accepted | 2026-10-13 |
 | [0046](0046-static-form-presentation-hooks.md) | Static Form Presentation Hooks and Section Titles | Accepted | 2026-10-15 |
 | [0047](0047-hono-context-is-owned-by-the-host.md) | Hono Actor and Tenant Context Is Owned by the Host | Accepted | 2026-10-16 |
+| [0048](0048-studio-is-an-authoring-host-not-a-second-engine.md) | Studio Is an Authoring Host, Not a Second Engine | Accepted | 2026-10-16 |
