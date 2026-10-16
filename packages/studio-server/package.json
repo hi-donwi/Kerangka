@@ -1,0 +1,13 @@
+{
+  "name": "@kerangka/studio-server",
+  "version": "0.1.1",
+  "description": "Loopback-only read-only Kerangka Studio host",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist"],
+  "scripts": { "build": "tsc -p tsconfig.build.json", "clean": "rm -rf dist" },
+  "engines": { "node": ">=22.13.0" },
+  "license": "Apache-2.0"
+}
