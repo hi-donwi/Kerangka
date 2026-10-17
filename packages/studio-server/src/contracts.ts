@@ -72,6 +72,27 @@ export interface StudioResponse extends InspectionResult {
   excluded: number;
 }
 
+/** A raw field definition: the Kerangka shorthand string or its object form. */
+export type FieldDefinitionInput = string | Record<string, unknown>;
+
+/**
+ * Authoring operations Studio can apply to raw JSON source. The union grows as later
+ * slices add constructs; an operation outside it is rejected with a diagnostic.
+ */
+export type DraftOperation =
+  | { op: "addEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
+  | { op: "setEntityField"; entity: string; field: string; definition: FieldDefinitionInput };
+
+export interface DraftRequest {
+  expectedRevision: string;
+  operations: readonly DraftOperation[];
+}
+
+/** A draft preview: the same shape as a project read, plus what was applied. */
+export interface DraftResponse extends StudioResponse {
+  applied: string[];
+}
+
 export const SOURCE_BYTES = 512 * 1024;
 export const PROJECT_BYTES = 4 * 1024 * 1024;
 export const SOURCE_COUNT = 128;
@@ -88,6 +109,8 @@ const messages = {
   STUDIO_FORBIDDEN: "Studio request denied.",
   STUDIO_NOT_FOUND: "No read-only Studio resource matches this request.",
   STUDIO_READ_ONLY: "Studio accepts read-only requests only.",
+  STUDIO_DRAFT_REQUEST: "The Studio draft request is not a supported operation.",
+  STUDIO_REVISION_CONFLICT: "The draft changed since it was opened. Refresh and retry.",
 } as const;
 
 export class StudioError extends Error {

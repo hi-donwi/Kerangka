@@ -1,14 +1,19 @@
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   PROJECT_BYTES,
   StudioError,
+  type DraftOperation,
+  type DraftRequest,
+  type FieldDefinitionInput,
   type InspectionResult,
+  type SourceSnapshot,
   type StudioBundle,
   type StudioResponse,
 } from "./contracts.js";
 import { openProject } from "./project.js";
 import { inspectProject } from "./inspection.js";
+import { applyDraftOperations } from "./draft.js";
 import { serveAsset } from "./assets.js";
 
 export interface StudioOptions {
@@ -31,6 +36,115 @@ function json(response: ServerResponse, status: number, value: unknown): void {
   response.end(body);
 }
 
+const DRAFT_BYTES = 64 * 1024;
+const DRAFT_OPERATIONS = 32;
+const DRAFT_DEFINITION = 4096;
+
+async function readDraftBody(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    size += buffer.length;
+    if (size > DRAFT_BYTES) {
+      request.destroy();
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/** Parse and strictly bound an untrusted draft request into the engine's shape. */
+function parseDraftRequest(raw: string): DraftRequest {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new StudioError("STUDIO_DRAFT_REQUEST");
+  const candidate = value as Record<string, unknown>;
+  const expectedRevision = candidate.expectedRevision;
+  if (typeof expectedRevision !== "string" || expectedRevision.length < 1 || expectedRevision.length > 200)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  const items = candidate.operations;
+  if (!Array.isArray(items) || items.length < 1 || items.length > 32)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  const operations: DraftOperation[] = [];
+  for (const item of items) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const entry = item as Record<string, unknown>;
+    if (entry.op !== "addEntityField" && entry.op !== "setEntityField") throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const { entity, field } = entry;
+    if (typeof entity !== "string" || entity.length < 1 || entity.length > 128) throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof field !== "string" || field.length < 1 || field.length > 128) throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const definition = entry.definition;
+    const stringDefinition = typeof definition === "string" && definition.length <= 4096;
+    const objectDefinition =
+      typeof definition === "object" &&
+      definition !== null &&
+      !Array.isArray(definition) &&
+      JSON.stringify(definition).length <= 4096;
+    if (!stringDefinition && !objectDefinition) throw new StudioError("STUDIO_DRAFT_REQUEST");
+    operations.push({ op: entry.op, entity, field, definition: definition as FieldDefinitionInput });
+  }
+  return { expectedRevision, operations };
+}
+
+/** Project a source snapshot plus its inspection into the client bundle shape. */
+function assemble(snapshot: SourceSnapshot, prefix: string, result: InspectionResult): StudioResponse {
+  const diagnostics = [...result.diagnostics];
+  const pages: StudioBundle["application"]["pages"] = Object.create(null) as StudioBundle["application"]["pages"];
+  const routes: StudioBundle["application"]["routes"] = [];
+  for (const screen of result.inspection?.screens ?? []) {
+    if (screen.kind === "authored") pages[screen.id] = { mode: "authored", source: screen.source };
+    else if (screen.label.length > 0 && screen.label.length <= 128)
+      pages[screen.id] = { mode: "recipe", view: screen.label };
+    const reserved = [prefix, "/api", "/screens", "/uidl"].some(
+      (path) => screen.route === path || screen.route.startsWith(`${path}/`),
+    );
+    const canonical =
+      /^(?:\/|\/(?:[A-Za-z0-9_-]+|:[A-Za-z][A-Za-z0-9_]*)(?:\/(?:[A-Za-z0-9_-]+|:[A-Za-z][A-Za-z0-9_]*))*)$/.test(
+        screen.route,
+      );
+    if (pages[screen.id] && canonical && !reserved && !routes.some((route) => route.path === screen.route)) {
+      routes.push({ id: `route-${screen.id}`, path: screen.route, page: screen.id, access: "session" });
+    } else if (screen.kind !== "authored") {
+      diagnostics.push({
+        severity: "warning",
+        code: "STUDIO_ROUTE_UNSUPPORTED",
+        source: screen.source,
+        path: screen.pointer,
+        message: "This derived route is not installed by the read-only Studio host. Inspect its source.",
+      });
+    }
+  }
+  return {
+    bundle: {
+      kind: "kerangka.studio.source",
+      version: "0.1",
+      revision: snapshot.revision,
+      entry: snapshot.entry,
+      sources: snapshot.sources,
+      application: { pages, routes, preview: { profile: "read", data: "synthetic" } },
+    },
+    excluded: snapshot.excluded,
+    ...result,
+    diagnostics: diagnostics.slice(0, 100),
+  };
+}
+
+function dedupeDiagnostics(diagnostics: StudioResponse["diagnostics"]): StudioResponse["diagnostics"] {
+  const seen = new Set<string>();
+  return diagnostics.filter((item) => {
+    const key = `${item.severity}|${item.code}|${item.source}|${item.path ?? ""}|${item.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export async function startStudio(options: StudioOptions): Promise<StudioHost> {
   const project = await openProject(options.target);
   const token = options.token ?? randomBytes(32).toString("base64url");
@@ -47,49 +161,37 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
       const snapshot = await project.read();
       const result = cached?.revision === snapshot.revision ? cached.result : await inspectProject(snapshot);
       cached = { revision: snapshot.revision, result };
-      const diagnostics = [...result.diagnostics];
-      const pages: StudioBundle["application"]["pages"] = Object.create(null) as StudioBundle["application"]["pages"];
-      const routes: StudioBundle["application"]["routes"] = [];
-      for (const screen of result.inspection?.screens ?? []) {
-        if (screen.kind === "authored") pages[screen.id] = { mode: "authored", source: screen.source };
-        else if (screen.label.length > 0 && screen.label.length <= 128)
-          pages[screen.id] = { mode: "recipe", view: screen.label };
-        const reserved = [prefix, "/api", "/screens", "/uidl"].some(
-          (path) => screen.route === path || screen.route.startsWith(`${path}/`),
-        );
-        const canonical =
-          /^(?:\/|\/(?:[A-Za-z0-9_-]+|:[A-Za-z][A-Za-z0-9_]*)(?:\/(?:[A-Za-z0-9_-]+|:[A-Za-z][A-Za-z0-9_]*))*)$/.test(
-            screen.route,
-          );
-        if (pages[screen.id] && canonical && !reserved && !routes.some((route) => route.path === screen.route)) {
-          routes.push({ id: `route-${screen.id}`, path: screen.route, page: screen.id, access: "session" });
-        } else if (screen.kind !== "authored") {
-          diagnostics.push({
-            severity: "warning",
-            code: "STUDIO_ROUTE_UNSUPPORTED",
-            source: screen.source,
-            path: screen.pointer,
-            message: "This derived route is not installed by the read-only Studio host. Inspect its source.",
-          });
-        }
-      }
-      return {
-        bundle: {
-          kind: "kerangka.studio.source",
-          version: "0.1",
-          revision: snapshot.revision,
-          entry: snapshot.entry,
-          sources: snapshot.sources,
-          application: { pages, routes, preview: { profile: "read", data: "synthetic" } },
-        },
-        excluded: snapshot.excluded,
-        ...result,
-        diagnostics: diagnostics.slice(0, 100),
-      };
+      return assemble(snapshot, prefix, result);
     })().finally(() => {
       pending = undefined;
     });
     return pending;
+  };
+  const handleDraft = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    const draftRequest = parseDraftRequest(await readDraftBody(request));
+    const snapshot = await project.read();
+    if (draftRequest.expectedRevision !== snapshot.revision) {
+      json(response, 409, {
+        code: "STUDIO_REVISION_CONFLICT",
+        message: "The draft changed since it was opened. Refresh and retry.",
+        revision: snapshot.revision,
+      });
+      return;
+    }
+    // A draft never touches disk; the compiler check runs once, in the inspection job.
+    const draft = applyDraftOperations(snapshot, draftRequest, { validate: () => [] });
+    const edited: SourceSnapshot = {
+      entry: snapshot.entry,
+      revision: draft.revision,
+      sources: draft.sources,
+      excluded: snapshot.excluded,
+    };
+    const assembled = assemble(edited, prefix, await inspectProject(edited));
+    json(response, 200, {
+      ...assembled,
+      applied: draft.applied,
+      diagnostics: dedupeDiagnostics([...draft.diagnostics, ...assembled.diagnostics]).slice(0, 100),
+    });
   };
   const server = createServer(
     { maxHeaderSize: 8192, requestTimeout: 5000, headersTimeout: 5000 },
@@ -111,13 +213,25 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
         const expected = Buffer.from(token);
         if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
           throw new StudioError("STUDIO_FORBIDDEN");
+        if (request.url === `${prefix}/api/draft`) {
+          if (request.method !== "POST") {
+            response.setHeader("Allow", "POST");
+            response.setHeader("Connection", "close");
+            json(response, 405, { code: "STUDIO_READ_ONLY", message: "Studio accepts POST for drafts only." });
+            return;
+          }
+          const contentType = request.headers["content-type"] ?? "";
+          if (!contentType.startsWith("application/json")) throw new StudioError("STUDIO_DRAFT_REQUEST");
+          await handleDraft(request, response);
+          return;
+        }
+        if (request.url !== `${prefix}/api/project`) throw new StudioError("STUDIO_NOT_FOUND");
         if (request.method !== "GET") {
           response.setHeader("Allow", "GET");
           response.setHeader("Connection", "close");
           json(response, 405, { code: "STUDIO_READ_ONLY", message: "Studio accepts read-only requests only." });
           return;
         }
-        if (request.url !== `${prefix}/api/project`) throw new StudioError("STUDIO_NOT_FOUND");
         json(response, 200, await load());
       })().catch((error: unknown) => {
         const safe = error instanceof StudioError ? error : new StudioError("STUDIO_PROJECT_UNAVAILABLE");

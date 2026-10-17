@@ -1,23 +1,12 @@
 import { compile, CompilerError } from "@kerangka/compiler";
-import type { SourceSnapshot, SourceText, StudioDiagnostic } from "./contracts.js";
+import type {
+  DraftRequest,
+  SourceSnapshot,
+  SourceText,
+  StudioDiagnostic,
+} from "./contracts.js";
 import { findPath, insertEntry, parseJson, setValue, type JsonNode } from "./json-edit.js";
 import { sourceRevision } from "./revision.js";
-
-/** A raw field definition: the Kerangka shorthand string or its object form. */
-export type FieldDefinitionInput = string | Record<string, unknown>;
-
-/**
- * Authoring operations ST-08 supports. The union grows as later slices add constructs;
- * an operation outside it is rejected with a diagnostic rather than ignored.
- */
-export type DraftOperation =
-  | { op: "addEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
-  | { op: "setEntityField"; entity: string; field: string; definition: FieldDefinitionInput };
-
-export interface DraftRequest {
-  expectedRevision: string;
-  operations: readonly DraftOperation[];
-}
 
 export interface DraftResult {
   revision: string;
