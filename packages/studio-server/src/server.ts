@@ -2,18 +2,24 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   PROJECT_BYTES,
+  SOURCE_BYTES,
+  SOURCE_COUNT,
   StudioError,
+  sourcePath,
   type DraftOperation,
   type DraftRequest,
   type FieldDefinitionInput,
   type InspectionResult,
+  type SaveRequest,
   type SourceSnapshot,
+  type SourceText,
   type StudioBundle,
   type StudioResponse,
 } from "./contracts.js";
 import { openProject } from "./project.js";
 import { inspectProject } from "./inspection.js";
 import { applyDraftOperations } from "./draft.js";
+import { saveSources } from "./save.js";
 import { serveAsset } from "./assets.js";
 
 export interface StudioOptions {
@@ -21,6 +27,8 @@ export interface StudioOptions {
   port?: number;
   token?: string;
   prefix?: string;
+  /** Mount the compare-and-swap save endpoint. Off means Studio is read-only on disk. */
+  writable?: boolean;
 }
 export interface StudioHost {
   origin: string;
@@ -90,6 +98,55 @@ function parseDraftRequest(raw: string): DraftRequest {
     operations.push({ op: entry.op, entity, field, definition: definition as FieldDefinitionInput });
   }
   return { expectedRevision, operations };
+}
+
+/** Read an untrusted save body, bounded by the whole-project budget. */
+async function readSaveBody(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    size += buffer.length;
+    if (size > PROJECT_BYTES) {
+      request.destroy();
+      throw new StudioError("STUDIO_SAVE_REQUEST");
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/** Parse and strictly bound an untrusted save request into the engine's shape. */
+function parseSaveRequest(raw: string): SaveRequest {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new StudioError("STUDIO_SAVE_REQUEST");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new StudioError("STUDIO_SAVE_REQUEST");
+  const candidate = value as Record<string, unknown>;
+  const expectedRevision = candidate.expectedRevision;
+  if (typeof expectedRevision !== "string" || expectedRevision.length < 1 || expectedRevision.length > 200)
+    throw new StudioError("STUDIO_SAVE_REQUEST");
+  const map = candidate.sources;
+  if (typeof map !== "object" || map === null || Array.isArray(map)) throw new StudioError("STUDIO_SAVE_REQUEST");
+  const entries = Object.entries(map as Record<string, unknown>);
+  if (entries.length < 1 || entries.length > SOURCE_COUNT) throw new StudioError("STUDIO_SAVE_REQUEST");
+  const sources: Record<string, SourceText> = Object.create(null) as Record<string, SourceText>;
+  let total = 0;
+  for (const [path, raw] of entries) {
+    if (!sourcePath(path) || typeof raw !== "object" || raw === null || Array.isArray(raw))
+      throw new StudioError("STUDIO_SAVE_REQUEST");
+    const source = raw as Record<string, unknown>;
+    const { format, text } = source;
+    if (format !== "json" && format !== "yaml") throw new StudioError("STUDIO_SAVE_REQUEST");
+    if (typeof text !== "string" || Buffer.byteLength(text) > SOURCE_BYTES) throw new StudioError("STUDIO_SAVE_REQUEST");
+    total += Buffer.byteLength(text);
+    if (total > PROJECT_BYTES) throw new StudioError("STUDIO_SAVE_REQUEST");
+    sources[path] = { format, text };
+  }
+  return { expectedRevision, sources };
 }
 
 /** Project a source snapshot plus its inspection into the client bundle shape. */
@@ -193,6 +250,41 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
       diagnostics: dedupeDiagnostics([...draft.diagnostics, ...assembled.diagnostics]).slice(0, 100),
     });
   };
+  const handleSave = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    const saveRequest = parseSaveRequest(await readSaveBody(request));
+    const outcome = await saveSources(project, saveRequest);
+    if (outcome.status === "conflict") {
+      // Ship only the paths the operator tried to change, so both versions are recoverable
+      // without returning the whole project.
+      const sources: Record<string, SourceText> = Object.create(null) as Record<string, SourceText>;
+      for (const path of Object.keys(saveRequest.sources)) {
+        const source = outcome.snapshot.sources[path];
+        if (source) sources[path] = source;
+      }
+      json(response, 409, {
+        code: "STUDIO_REVISION_CONFLICT",
+        message: "The model changed on disk since this draft was opened. Both versions are still available.",
+        revision: outcome.snapshot.revision,
+        sources,
+      });
+      return;
+    }
+    if (outcome.status === "invalid") {
+      json(response, 422, {
+        code: "STUDIO_SAVE_INVALID",
+        message: "The edited model does not compile; nothing was written.",
+        revision: outcome.snapshot.revision,
+        diagnostics: outcome.diagnostics.slice(0, 100),
+      });
+      return;
+    }
+    const result = await inspectProject(outcome.snapshot);
+    json(response, 200, {
+      ...assemble(outcome.snapshot, prefix, result),
+      revision: outcome.snapshot.revision,
+      saved: outcome.saved,
+    });
+  };
   const server = createServer(
     { maxHeaderSize: 8192, requestTimeout: 5000, headersTimeout: 5000 },
     (request, response) => {
@@ -223,6 +315,25 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
           const contentType = request.headers["content-type"] ?? "";
           if (!contentType.startsWith("application/json")) throw new StudioError("STUDIO_DRAFT_REQUEST");
           await handleDraft(request, response);
+          return;
+        }
+        if (request.url === `${prefix}/api/save`) {
+          if (request.method !== "POST") {
+            response.setHeader("Allow", "POST");
+            response.setHeader("Connection", "close");
+            json(response, 405, { code: "STUDIO_READ_ONLY", message: "Studio accepts POST for saves only." });
+            return;
+          }
+          if (options.writable !== true) {
+            json(response, 501, {
+              code: "STUDIO_SAVE_UNAVAILABLE",
+              message: "Saving is not enabled for this Studio session.",
+            });
+            return;
+          }
+          const contentType = request.headers["content-type"] ?? "";
+          if (!contentType.startsWith("application/json")) throw new StudioError("STUDIO_SAVE_REQUEST");
+          await handleSave(request, response);
           return;
         }
         if (request.url !== `${prefix}/api/project`) throw new StudioError("STUDIO_NOT_FOUND");

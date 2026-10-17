@@ -93,6 +93,21 @@ export interface DraftResponse extends StudioResponse {
   applied: string[];
 }
 
+/**
+ * A save request carries the whole source set the operator wants on disk at an expected
+ * revision. Only sources that already exist and whose text changed are written.
+ */
+export interface SaveRequest {
+  expectedRevision: string;
+  sources: Record<string, SourceText>;
+}
+
+/** A save result: the same shape as a project read, plus the paths that were written. */
+export interface SaveResponse extends InspectionResult {
+  revision: string;
+  saved: string[];
+}
+
 export const SOURCE_BYTES = 512 * 1024;
 export const PROJECT_BYTES = 4 * 1024 * 1024;
 export const SOURCE_COUNT = 128;
@@ -111,6 +126,10 @@ const messages = {
   STUDIO_READ_ONLY: "Studio accepts read-only requests only.",
   STUDIO_DRAFT_REQUEST: "The Studio draft request is not a supported operation.",
   STUDIO_REVISION_CONFLICT: "The draft changed since it was opened. Refresh and retry.",
+  STUDIO_SAVE_UNAVAILABLE: "Saving is not enabled for this Studio session.",
+  STUDIO_SAVE_REQUEST: "The Studio save request is not a supported write.",
+  STUDIO_SAVE_INVALID: "The edited model does not compile; nothing was written.",
+  STUDIO_SAVE_UNSUPPORTED: "A save may only rewrite a JSON source the project already has.",
 } as const;
 
 export class StudioError extends Error {

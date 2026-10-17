@@ -79,6 +79,8 @@ async function readSource(root: string, path: string): Promise<string> {
 }
 
 export interface StudioProject {
+  /** The canonical directory every source lives in; never leaves the host. */
+  readonly root: string;
   readonly entry: string;
   read(): Promise<SourceSnapshot>;
 }
@@ -102,6 +104,7 @@ export async function openProject(target: string): Promise<StudioProject> {
     if (!sourcePath(entry)) throw new StudioError("STUDIO_SOURCE_PATH");
 
     return {
+      root,
       entry,
       async read() {
         try {

@@ -22,7 +22,8 @@ export interface DraftOptions {
 
 const pointer = (key: string) => key.replace(/~/g, "~0").replace(/\//g, "~1");
 
-function compilerDiagnostics(entry: string, text: string): StudioDiagnostic[] {
+/** Compiler diagnostics for one edited source, shared by the draft and the save path. */
+export function sourceDiagnostics(entry: string, text: string): StudioDiagnostic[] {
   try {
     compile(text, { sourceFile: entry });
     return [];
@@ -76,7 +77,7 @@ export function applyDraftOperations(
     return { revision: snapshot.revision, sources: snapshot.sources, applied, diagnostics };
   }
 
-  const validate = options.validate ?? compilerDiagnostics;
+  const validate = options.validate ?? sourceDiagnostics;
   const sources: Record<string, SourceText> = { ...snapshot.sources };
   const edited = new Set<string>();
 
