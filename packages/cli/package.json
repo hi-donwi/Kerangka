@@ -23,6 +23,7 @@
     "@kerangka/compiler": "*",
     "@kerangka/engine-ts": "*",
     "@kerangka/server": "*",
+    "@kerangka/studio-server": "*",
     "@kerangka/uidl-projector": "*"
   },
   "license": "Apache-2.0"

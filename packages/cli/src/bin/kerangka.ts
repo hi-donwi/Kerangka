@@ -68,6 +68,7 @@ COMMANDS:
   emit <target> <file>    Unified projector (compose, openapi, asyncapi, json-schema, graphql, mcp,
                            uidl, sql:*, types:*)
   dev <file>              Run zero-config dev server with REST, MCP, and UIDL playground
+  studio <file|dir>       Inspect one local project in the read-only Studio (default port: 8080)
   serve <file>            Run the sidecar: REST and metadata endpoints, or --stdio JSON-RPC
                            (--session <file> keeps the session across a restart)
   verify <file>           Static analysis of workflows, permissions, decision tables, and events
@@ -106,6 +107,7 @@ OPTIONS:
   --trace                 Include the evaluation trace in the 'run' result
   -o, --output <path>     Output file or directory path (use '-' for stdout)
   -p, --port <number>     Port for dev server (default: 3000)
+  --studio-prefix <path> Studio mount prefix (default: /studio; loopback only)
   --drop                  Include DROP TABLE IF EXISTS statements in DDL
   --no-audit              Exclude audit columns (created_at, updated_at, etc.) in DDL
   -h, --help              Show help information
@@ -148,6 +150,7 @@ async function main(): Promise<void> {
         target: { type: "string", short: "t" },
         package: { type: "string" },
         port: { type: "string", short: "p" },
+        "studio-prefix": { type: "string" },
         drop: { type: "boolean" },
         audit: { type: "boolean", default: true },
         "check-breaking": { type: "boolean" },
@@ -210,6 +213,11 @@ async function main(): Promise<void> {
 
     let success = false;
     switch (command) {
+      case "studio": {
+        const { studioCommand } = await import("../commands/studio.js");
+        success = await studioCommand(file!, { port: values.port === undefined ? undefined : Number(values.port), prefix: values["studio-prefix"] });
+        break;
+      }
       case "init": {
         if (values.list) {
           success = listStartersCommand();
