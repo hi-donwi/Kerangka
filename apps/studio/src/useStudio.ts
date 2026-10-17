@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { readProject } from "./studio-api";
-import type { StudioResponse } from "../../../packages/studio-server/src/contracts.js";
+import { readProject, submitDraft } from "./studio-api";
+import type { DraftRequest, StudioResponse } from "../../../packages/studio-server/src/contracts.js";
 
 export function useStudio() {
   const [token, authenticate] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "");
@@ -28,5 +28,17 @@ export function useStudio() {
       });
     return () => controller.abort();
   }, [token, refresh]);
-  return { ...state, authorized: Boolean(token), authenticate, reload: () => setRefresh((value) => value + 1) };
+  // A draft is a preview: it replaces the shown snapshot, never the file on disk.
+  const applyDraft = async (request: DraftRequest) => {
+    const next = await submitDraft(token, request);
+    setState({ response: next, loading: false, error: null });
+    return next;
+  };
+  return {
+    ...state,
+    authorized: Boolean(token),
+    applyDraft,
+    authenticate,
+    reload: () => setRefresh((value) => value + 1),
+  };
 }

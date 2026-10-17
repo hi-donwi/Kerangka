@@ -5,6 +5,7 @@ import { PreviewFrame } from "./PreviewFrame";
 import { ProjectExplorer, type Selection } from "./ProjectExplorer";
 import { EntityInspector } from "./EntityInspector";
 import { Diagnostics } from "./Diagnostics";
+import { StudioConflict } from "./studio-api";
 
 type Tab = "definition" | "openapi" | "postgres" | "sqlite" | "preview";
 const tabs: Array<[Tab, string]> = [
@@ -20,6 +21,12 @@ export function App() {
   const [access, setAccess] = useState("");
   const [selection, setSelection] = useState<Selection | null>(null);
   const [tab, setTab] = useState<Tab>("definition");
+  const [draft, setDraft] = useState<{ busy: boolean; spent: boolean; error: string | null; notice: string | null }>({
+    busy: false,
+    spent: false,
+    error: null,
+    notice: null,
+  });
   const response = studio.response;
   const inspection = response?.inspection;
   const selected = selection ?? (response ? { kind: "source" as const, id: response.bundle.entry } : null);
@@ -28,6 +35,40 @@ export function App() {
   const screen = selected?.kind === "screen" ? inspection?.screens.find((item) => item.id === selected.id) : undefined;
   const source = selected?.kind === "source" ? response?.bundle.sources[selected.id] : undefined;
   const missing = Boolean(selected && !source && !entity && !screen);
+  const refresh = () => {
+    setDraft({ busy: false, spent: false, error: null, notice: null });
+    studio.reload();
+  };
+  const addField = async (field: string, definition: string) => {
+    if (!response || !entity) return;
+    setDraft({ busy: true, spent: false, error: null, notice: null });
+    try {
+      const next = await studio.applyDraft({
+        expectedRevision: response.bundle.revision,
+        operations: [{ op: "addEntityField", entity: entity.name, field, definition }],
+      });
+      setSelection({ kind: "entity", id: entity.name });
+      setTab("definition");
+      setDraft({
+        busy: false,
+        spent: true,
+        error: null,
+        notice: `${next.applied.join(", ") || "No change"} - preview only; the file on disk is unchanged.`,
+      });
+    } catch (error) {
+      if (error instanceof StudioConflict) {
+        setDraft({ busy: false, spent: false, error: null, notice: null });
+        studio.reload();
+        return;
+      }
+      setDraft({
+        busy: false,
+        spent: false,
+        error: error instanceof Error ? error.message : "The draft could not be applied.",
+        notice: null,
+      });
+    }
+  };
   const select = (next: Selection) =>
     startTransition(() => {
       setSelection(next);
@@ -70,8 +111,13 @@ export function App() {
           </span>
         </button>
         <span className="mode-badge">READ ONLY</span>
+        {draft.spent ? (
+          <span className="draft-badge" role="status">
+            UNSAVED DRAFT
+          </span>
+        ) : null}
         <span className="local-label">LOCAL WORKBENCH / P1</span>
-        <button className="refresh-button" onClick={studio.reload} disabled={!studio.authorized || studio.loading}>
+        <button className="refresh-button" onClick={refresh} disabled={!studio.authorized || studio.loading}>
           {studio.loading ? "Inspecting..." : "Refresh source"}
         </button>
       </header>
@@ -185,6 +231,8 @@ export function App() {
                       <EntityInspector
                         entity={entity}
                         roles={inspection?.roles ?? []}
+                        draft={draft}
+                        onAddField={addField}
                         onOpenSource={() =>
                           select({ kind: "source", id: response.bundle.entry, pointer: entity.pointer })
                         }
@@ -249,7 +297,9 @@ export function App() {
                 ? "Inspecting refreshed source..."
                 : studio.error
                   ? "Previous snapshot / refresh failed"
-                  : "Read-only snapshot / synthetic preview"}
+                  : draft.spent
+                    ? "Unsaved draft preview / file unchanged"
+                    : "Read-only snapshot / synthetic preview"}
             </span>
             <span>NO WRITES / NO LIVE CONNECTORS</span>
             <a href="./assets/licenses.md" target="_blank" rel="noreferrer noopener">

@@ -186,6 +186,27 @@ test("keeps unsupported network-bearing documents source-only", async ({ page })
   await expect(page.locator("iframe")).toHaveCount(0);
 });
 
+test("drafts an added entity field as a preview and never writes the file", async ({ page }) => {
+  await page.goto(host.url);
+  await expect(page.getByText("READ ONLY", { exact: true })).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Entities" })
+    .getByRole("button", { name: /^Request/ })
+    .click();
+  const form = page.getByRole("form", { name: /Add a field to Request/ });
+  await form.getByLabel("New field name", { exact: true }).fill("note");
+  await form.getByLabel("Type", { exact: true }).selectOption("string");
+  await form.getByRole("button", { name: "Add field" }).click();
+  await expect(page.getByText(/addEntityField Request\.note/)).toBeVisible();
+  await expect(page.getByText("UNSAVED DRAFT", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Entity fields" })).toContainText("note");
+  await page.getByRole("tab", { name: "REST API", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Derived output" })).toContainText("note");
+  await page.getByRole("tab", { name: "PostgreSQL", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Derived output" })).toContainText("note");
+  expect(await readFile(join(root, "app.kerangka.json"), "utf8")).toBe(model);
+});
+
 test("loads at 320px, supports keyboard tabs and browser refresh, and denies missing access", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await page.goto(host.url);

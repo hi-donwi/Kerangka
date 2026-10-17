@@ -44,7 +44,8 @@ body {
   margin: 0;
 }
 button,
-input {
+input,
+select {
   font: inherit;
 }
 button,
@@ -87,6 +88,14 @@ input {
 input::placeholder {
   color: var(--color-muted);
 }
+select {
+  min-block-size: 44px;
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius);
+  padding: var(--space-small) var(--space-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
 h1,
 h2,
 h3,
@@ -99,6 +108,7 @@ pre,
 .snapshot-id,
 .mode-badge,
 .local-label,
+.draft-badge,
 .status-bar {
   font-family: var(--font-code);
 }
@@ -410,6 +420,52 @@ tbody th {
   font-size: 0.72rem;
   line-height: 1.6;
 }
+.draft-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-control);
+  margin-block-start: var(--space-section);
+  padding: var(--space-section) var(--space-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+.draft-form h3 {
+  font-size: 0.9rem;
+}
+.draft-form-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-control);
+}
+.draft-form-controls > div {
+  flex: 1 1 10rem;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-small);
+}
+.draft-form label {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+.draft-form-required {
+  display: flex;
+  align-items: center;
+  gap: var(--space-small);
+}
+.draft-form-required input {
+  inline-size: auto;
+  min-block-size: auto;
+}
+.draft-form button {
+  align-self: start;
+}
+.draft-form-problem {
+  color: var(--color-accent);
+  font-size: 0.72rem;
+  line-height: 1.6;
+}
 .diagnostics {
   border-block-start: 1px solid var(--color-border);
   padding: var(--space-section) var(--space-panel);
@@ -596,7 +652,15 @@ tbody th {
     align-items: start;
     flex-direction: column;
   }
-  .local-label {
+.draft-badge {
+  color: var(--color-surface);
+  background: var(--color-accent);
+  padding: 0.35rem 0.5rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.local-label {
     display: none;
   }
 }
