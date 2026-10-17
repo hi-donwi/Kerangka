@@ -5,6 +5,10 @@ fixtures, **not** a Studio server, filesystem sandbox, authenticated host, brows
 or database-conformance implementation. Unless explicitly marked as a P0 fixture check,
 verification below is required future work, not a passing test result.
 
+The [P1 read-only guide](read-only.md) records the currently implemented and locally tested
+subset. This baseline still defines later obligations; do not treat its acceptance matrix
+as a claim that every control, platform, or benchmark has been certified.
+
 ## Assets, Actors, and Trust Boundaries
 
 Protect source confidentiality/integrity, host credentials, actor/tenant authority, draft

@@ -1,16 +1,18 @@
-# Kerangka Studio: P0 Foundation
+# Kerangka Studio
 
-Status: CP0 accepted on 2026-10-16; P1 read-only implementation is authorized.
-**Studio is not implemented or served by P0.** Acceptance of the technical design does not
-claim that runtime controls or later acceptance journeys have passed their tests.
+Status: CP0 accepted on 2026-10-16. P1 supplies a local read-only workbench; see the
+[launch guide and verified boundary](read-only.md). P0 design acceptance and P1 local tests
+are not production-readiness or writable/shared-preview approval.
 
 ## Decisions and Artifacts
 
 | Artifact | Purpose |
 |---|---|
+| [Read-only guide](read-only.md) | Launch, implemented profile, verification, and unsupported/remaining gates |
+| [Console design](design.md) | Workbench structure, tokens, responsiveness, and accessible states |
 | [ADR-0048](../adr/0048-studio-is-an-authoring-host-not-a-second-engine.md) | Ownership, source-backed reuse audit, app/service boundaries, and graph strategy |
 | [Source-bundle contract](source-bundle.md) | Version, raw sources, page ownership, routes, revisions, and validation stages |
-| [JSON Schema](../../spec/studio/source-bundle.schema.json) | Offline structural envelope validation; no runtime endpoint or public package export yet |
+| [JSON Schema](../../spec/studio/source-bundle.schema.json) | Offline structural authoring envelope, distinct from runtime/authorization validation |
 | [Security model](security.md) | Threats, enforcement owners, acceptance tests, resource budgets, and execution gates |
 | [Contract tests](../../packages/cli/test/studio-contract.test.ts) | Positive/negative envelope fixtures and pure-engine approval semantics |
 | [Approval model](../../packages/cli/test/fixtures/studio/approval.kerangka.json) | Small synthetic employee/manager model using existing syntax |

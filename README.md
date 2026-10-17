@@ -166,8 +166,16 @@ forms also emit bounded field groups and runtime-owned `uidl-admin-*` layout hoo
 use the matching UIDL Runtime stylesheet. See
 [ADR-0046](docs/adr/0046-static-form-presentation-hooks.md).
 
-## Studio Foundation
+## Read-Only Studio
 
-[Kerangka Studio P0](docs/studio/README.md) specifies a local-first visual authoring host,
-its source-bundle schema, reuse boundaries, and security gates. It is an accepted design
-with contract fixtures, not an implemented `/studio` console or a production-readiness claim.
+[Kerangka Studio](docs/studio/read-only.md) inspects one local model, entity/field metadata,
+source-linked diagnostics, generated OpenAPI/SQL, and static synthetic UIDL screens.
+Build the checkout, then launch the loopback-only host:
+
+```sh
+node packages/cli/dist/bin/kerangka.js studio packages/cli/test/fixtures/studio/approval.kerangka.json --port 8080
+```
+
+Use its private launch link; it grants read access to the selected project for that process.
+No source writes, business API, database connection, or connector execution is enabled.
+The [foundation and security gates](docs/studio/README.md) remain separate from production readiness.
