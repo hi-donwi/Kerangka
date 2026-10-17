@@ -1,0 +1,31 @@
+:root {
+  --preview-surface: #fff;
+  --preview-text: #27251f;
+  --preview-padding: 1rem;
+}
+html,
+body {
+  margin: 0;
+  background: var(--preview-surface);
+  color: var(--preview-text);
+  font-family: system-ui, sans-serif;
+}
+body {
+  padding: 0;
+}
+#root {
+  min-height: 1px;
+}
+button,
+input,
+select,
+textarea {
+  pointer-events: none;
+}
+input:disabled,
+select:disabled,
+textarea:disabled {
+  color: var(--preview-text);
+  opacity: 1;
+  -webkit-text-fill-color: var(--preview-text);
+}

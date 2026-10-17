@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const repoRoot = fileURLToPath(new URL(".", import.meta.url));
 const packagesDir = fileURLToPath(new URL("packages/", import.meta.url));
@@ -45,6 +45,7 @@ const alias = [
 export default defineConfig({
   resolve: { alias },
   test: {
+    exclude: [...configDefaults.exclude, "apps/studio/e2e/**"],
     // The examples and the conformance suite are read from the repo root, so a test's
     // own directory is the wrong place to resolve them from.
     root: repoRoot

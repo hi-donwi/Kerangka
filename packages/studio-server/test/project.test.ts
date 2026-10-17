@@ -14,7 +14,9 @@ beforeEach(async () => {
   await mkdir(root);
   await writeFile(join(root, "app.kerangka.json"), text);
 });
-afterEach(async () => { await rm(scratch, { recursive: true, force: true }); });
+afterEach(async () => {
+  await rm(scratch, { recursive: true, force: true });
+});
 
 describe("operator-selected read-only project", () => {
   it("preserves exact text and derives content revisions without changing files", async () => {
@@ -32,7 +34,8 @@ describe("operator-selected read-only project", () => {
   it("discovers only source conventions and never hidden or generated directories", async () => {
     for (const dir of ["model", ".private", "node_modules", "dist", "build"]) await mkdir(join(root, dir));
     await writeFile(join(root, "model", "other.kerangka.yaml"), "# Preserved\nkerangka: '0.1'\napp: other\n");
-    for (const dir of [".private", "node_modules", "dist", "build"]) await writeFile(join(root, dir, "secret.kerangka.json"), "DO_NOT_RETURN");
+    for (const dir of [".private", "node_modules", "dist", "build"])
+      await writeFile(join(root, dir, "secret.kerangka.json"), "DO_NOT_RETURN");
     await writeFile(join(root, "package.json"), "DO_NOT_RETURN");
     const snapshot = await (await openProject(root)).read();
     expect(Object.keys(snapshot.sources)).toEqual(["app.kerangka.json", "model/other.kerangka.yaml"]);
@@ -64,7 +67,9 @@ describe("operator-selected read-only project", () => {
   it("refuses a hard-linked source", async () => {
     await writeFile(join(scratch, "outside.json"), "OUTSIDE");
     await link(join(scratch, "outside.json"), join(root, "linked.kerangka.json"));
-    await expect((await openProject(join(root, "app.kerangka.json"))).read()).rejects.toMatchObject({ code: "STUDIO_SOURCE_UNSAFE" });
+    await expect((await openProject(join(root, "app.kerangka.json"))).read()).rejects.toMatchObject({
+      code: "STUDIO_SOURCE_UNSAFE",
+    });
   });
 
   it("enforces file byte limits before returning source", async () => {
@@ -83,11 +88,32 @@ describe("operator-selected read-only project", () => {
 
   it("refuses source names outside the portable contract instead of renaming them", async () => {
     await writeFile(join(root, "bad name.kerangka.json"), "{}");
-    await expect((await openProject(join(root, "app.kerangka.json"))).read()).rejects.toMatchObject({ code: "STUDIO_SOURCE_PATH" });
+    await expect((await openProject(join(root, "app.kerangka.json"))).read()).rejects.toMatchObject({
+      code: "STUDIO_SOURCE_PATH",
+    });
   });
 
   it("refuses invalid UTF-8 rather than replacing bytes", async () => {
     await writeFile(join(root, "app.kerangka.json"), Buffer.from([0xc3, 0x28]));
     await expect((await openProject(root)).read()).rejects.toMatchObject({ code: "STUDIO_SOURCE_ENCODING" });
   });
+
+  it("does not cross a nested repository ownership boundary", async () => {
+    await mkdir(join(root, "nested"));
+    await writeFile(join(root, "nested", ".git"), "gitdir: /not-used");
+    await writeFile(join(root, "nested", "private.kerangka.json"), "OTHER_REPOSITORY_MARKER");
+    const snapshot = await (await openProject(root)).read();
+    expect(Object.keys(snapshot.sources)).toEqual(["app.kerangka.json"]);
+    expect(JSON.stringify(snapshot)).not.toContain("OTHER_REPOSITORY_MARKER");
+  });
+
+  it("bounds traversal even when a directory contains only non-source files", async () => {
+    const project = await openProject(join(root, "app.kerangka.json"));
+    for (let offset = 0; offset < 10000; offset += 100) {
+      await Promise.all(
+        Array.from({ length: 100 }, (_, index) => writeFile(join(root, `asset-${offset + index}.txt`), "")),
+      );
+    }
+    await expect(project.read()).rejects.toMatchObject({ code: "STUDIO_SOURCE_LIMIT" });
+  }, 15000);
 });

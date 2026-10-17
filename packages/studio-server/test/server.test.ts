@@ -11,8 +11,11 @@ const token = "synthetic-test-capability-01234567890123456789";
 const text = '{"kerangka":"0.1","app":"synthetic","entities":{}}';
 const authorization = `Bearer ${token}`;
 const forbiddenHeaders: Array<Record<string, string>> = [
-  {}, { authorization: "Bearer wrong" }, { authorization, origin: "https://evil.invalid" },
-  { authorization, origin: "null" }, { authorization, "sec-fetch-site": "cross-site" }
+  {},
+  { authorization: "Bearer wrong" },
+  { authorization, origin: "https://evil.invalid" },
+  { authorization, origin: "null" },
+  { authorization, "sec-fetch-site": "cross-site" },
 ];
 
 beforeEach(async () => {
@@ -20,11 +23,33 @@ beforeEach(async () => {
   await writeFile(join(root, "app.kerangka.json"), text);
   host = await startStudio({ target: root, port: 0, token });
 });
-afterEach(async () => { await host?.close(); await rm(root, { recursive: true, force: true }); });
+afterEach(async () => {
+  await host?.close();
+  await rm(root, { recursive: true, force: true });
+});
 
 describe("read-only Studio request boundary", () => {
+  it("serves only public built UI assets without a capability, including opaque-frame modules", async () => {
+    const page = await fetch(`${host.origin}/studio/`);
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain('id="root"');
+    const script = /src="\.\/(assets\/[^\"]+\.js)"/.exec(html)?.[1];
+    expect(script).toBeTruthy();
+    const asset = await fetch(`${host.origin}/studio/${script}`, { headers: { origin: "null" } });
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("access-control-allow-origin")).toBe("*");
+    expect(asset.headers.has("access-control-allow-credentials")).toBe(false);
+    const notices = await fetch(`${host.origin}/studio/assets/licenses.md`);
+    expect(notices.status).toBe(200);
+    expect(await notices.text()).toContain("MIT");
+    expect((await fetch(`${host.origin}/studio/api/project`)).status).toBe(403);
+  });
+
   it("returns only the chosen project to an authorized caller", async () => {
-    const response = await fetch(`${host.origin}/studio/api/project`, { headers: { authorization, origin: host.origin } });
+    const response = await fetch(`${host.origin}/studio/api/project`, {
+      headers: { authorization, origin: host.origin },
+    });
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.has("access-control-allow-origin")).toBe(false);
@@ -42,10 +67,14 @@ describe("read-only Studio request boundary", () => {
 
   it("denies a forged Host on the actual HTTP wire", async () => {
     const status = await new Promise<number | undefined>((resolve, reject) => {
-      const req = request(`${host.origin}/studio/api/project`, { headers: { authorization, host: "evil.invalid" } }, (response) => {
-        response.resume();
-        response.on("end", () => resolve(response.statusCode));
-      });
+      const req = request(
+        `${host.origin}/studio/api/project`,
+        { headers: { authorization, host: "evil.invalid" } },
+        (response) => {
+          response.resume();
+          response.on("end", () => resolve(response.statusCode));
+        },
+      );
       req.on("error", reject);
       req.end();
     });
@@ -53,12 +82,20 @@ describe("read-only Studio request boundary", () => {
   });
 
   it.each(["POST", "PUT", "PATCH", "DELETE", "OPTIONS"])("refuses %s and leaves source untouched", async (method) => {
-    const response = await fetch(`${host.origin}/studio/api/project`, { method, headers: { authorization, origin: host.origin } });
+    const response = await fetch(`${host.origin}/studio/api/project`, {
+      method,
+      headers: { authorization, origin: host.origin },
+    });
     expect(response.status).toBe(405);
     expect(await readFile(join(root, "app.kerangka.json"), "utf8")).toBe(text);
   });
 
-  it.each(["/studio/api/project?path=../outside.json", "/studio/api/source/../outside", "/api/request", "/studio/assets/../../app.kerangka.json"])("does not turn %s into filesystem or business access", async (path) => {
+  it.each([
+    "/studio/api/project?path=../outside.json",
+    "/studio/api/source/../outside",
+    "/api/request",
+    "/studio/assets/../../app.kerangka.json",
+  ])("does not turn %s into filesystem or business access", async (path) => {
     const response = await fetch(`${host.origin}${path}`, { headers: { authorization } });
     expect(response.status).toBe(404);
     expect(await response.text()).not.toContain(text);

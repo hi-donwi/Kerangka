@@ -12,16 +12,22 @@ identity resolver, store, connector, or source-save operation is exposed.
 
 Discovery includes the selected entry, canonical `kerangka.json/yaml/yml`,
 `*.kerangka.json/yaml/yml`, `*.uidl.json`, and root `kerangka.lock`. Hidden, generated,
-dependency, and other non-source entries are counted as excluded, not interpreted.
+dependency, nested repository, and other non-source entries are counted as excluded, not interpreted.
 Unrepresentable source paths, symlinks/hardlinks, invalid UTF-8, changing files, and
 budget excess fail closed. Text is read from bounded descriptors without normalization.
+Enumeration is capped at 10000 entries and depth 16, including non-source entries.
 
 This boundary does not defend against compromise of the local OS/account. Opening a
 project deliberately authorizes source reading within its selected canonical root.
 The capability is not business-user authentication or proof of tenant isolation.
 
+P1 also serves trusted built Studio assets and bounded inspection/projection jobs.
+Public module assets permit opaque-frame CORS; the private source API does not.
+See [the full read-only boundary](../../docs/studio/read-only.md) before expanding it.
+
 ```sh
-npm test -- packages/studio-server/test/project.test.ts packages/studio-server/test/server.test.ts
+npm run build
+npm test -- packages/studio-server/test
 npm run typecheck
-npm run build -w @kerangka/studio-server
+npm run test:studio:e2e
 ```
