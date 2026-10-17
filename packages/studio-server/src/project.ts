@@ -1,7 +1,6 @@
 import { constants, type Dirent } from "node:fs";
 import { lstat, open, opendir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { createHash } from "node:crypto";
 import {
   PROJECT_BYTES,
   SOURCE_BYTES,
@@ -11,6 +10,7 @@ import {
   type SourceSnapshot,
   type SourceText,
 } from "./contracts.js";
+import { sourceRevision } from "./revision.js";
 
 const excludedNames = new Set(["node_modules", "dist", "build", "vendor"]);
 const conventional = (name: string) =>
@@ -145,7 +145,6 @@ export async function openProject(target: string): Promise<StudioProject> {
           if (!names.includes(entry)) throw new StudioError("STUDIO_PROJECT_UNAVAILABLE");
           const sources: Record<string, SourceText> = Object.create(null) as Record<string, SourceText>;
           const aliases = new Set<string>();
-          const hash = createHash("sha256");
           let total = 0;
           for (const path of names.sort()) {
             if (aliases.has(path.toLowerCase())) throw new StudioError("STUDIO_SOURCE_PATH");
@@ -155,9 +154,8 @@ export async function openProject(target: string): Promise<StudioProject> {
             total += bytes;
             if (total > PROJECT_BYTES) throw new StudioError("STUDIO_SOURCE_LIMIT");
             sources[path] = { format: /\.(yaml|yml)$/.test(path) ? "yaml" : "json", text };
-            hash.update(`${path.length}:${path}:${bytes}:`).update(text);
           }
-          return { entry, sources, revision: `sha256:${hash.digest("hex")}`, excluded };
+          return { entry, sources, revision: sourceRevision(sources), excluded };
         } catch (error) {
           throw error instanceof StudioError ? error : new StudioError("STUDIO_PROJECT_UNAVAILABLE");
         }
