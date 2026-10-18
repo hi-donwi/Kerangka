@@ -139,8 +139,10 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
 
   app.use("*", async (c, next) => {
     const path = c.req.path;
-    const dataRequest = (path.startsWith("/api/") && path !== "/api/mcp/tools") ||
-      path === "/screens" || path.startsWith("/screens/");
+    const isMcpTools = path === "/api/mcp/tools" || path.endsWith("/api/mcp/tools");
+    const isApi = (path.startsWith("/api/") || path.includes("/api/")) && !isMcpTools;
+    const isScreens = path === "/screens" || path.startsWith("/screens/") || path.includes("/screens");
+    const dataRequest = isApi || isScreens;
     if (!dataRequest) return await next();
 
     let actor: ActorContext | null | undefined;
@@ -192,11 +194,11 @@ export function createKerangkaHonoApp(kir: KIRDocument, options: KerangkaHonoOpt
   }
 
   function getTenantId(c: Context<KerangkaHonoEnv>): string | undefined {
-    return getActorContext(c).tenantId;
+    return getActorContext(c)?.tenantId;
   }
 
   function getActorContext(c: Context<KerangkaHonoEnv>): ActorContext {
-    return c.get("actor");
+    return c.get("actor") ?? { roles: [] };
   }
 
   function scopeRecord(c: Context<KerangkaHonoEnv>, record: Record<string, unknown>): Record<string, unknown> | Response {
