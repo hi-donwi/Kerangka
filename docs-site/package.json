@@ -10,10 +10,19 @@
     "preview": "astro preview",
     "check": "astro check",
     "check:links": "node scripts/check-links.mjs",
-    "verify": "astro build && node scripts/check-links.mjs"
+    "audit:security": "npm audit --include=dev --audit-level=high",
+    "verify": "astro build && node scripts/check-links.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.33.2",
-    "astro": "^5.13.10"
+    "@astrojs/markdown-remark": "^7.3.0",
+    "@astrojs/starlight": "^0.42.6",
+    "astro": "^7.4.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  },
+  "engines": {
+    "node": ">=22.22.0"
   }
 }

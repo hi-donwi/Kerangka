@@ -116,6 +116,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          check-latest: true
           cache: npm
           cache-dependency-path: |
             package-lock.json
@@ -129,6 +130,10 @@ jobs:
         working-directory: docs-site
         run: npm ci
 
+      - name: Audit docs dependencies (including build tools)
+        working-directory: docs-site
+        run: npm run audit:security
+
       - name: Build docs site and check internal links
         working-directory: docs-site
         run: npm run verify
@@ -136,6 +141,10 @@ jobs:
       - name: Install kitchen sink
         working-directory: kitchen-sink
         run: npm ci
+
+      - name: Audit kitchen sink dependencies (including build tools)
+        working-directory: kitchen-sink
+        run: npm run audit:security
 
       - name: Build workspace for browser engine and sample KIR
         run: |
@@ -151,6 +160,10 @@ jobs:
       - name: Install Playwright browser
         working-directory: kitchen-sink
         run: npx playwright install --with-deps chromium
+
+      - name: Docs browser tests (content, navigation, search)
+        working-directory: docs-site
+        run: npm run test:e2e
 
       - name: Kitchen sink browser tests (golden path, reset, mobile, keyboard, budget)
         working-directory: kitchen-sink
