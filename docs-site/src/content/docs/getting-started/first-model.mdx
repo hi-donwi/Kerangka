@@ -1,0 +1,198 @@
+---
+title: Your First Model
+description: Install Kerangka, check and compile the todo model, execute it, and see where each boundary sits.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This page takes you from a clean checkout to a compiled, executed, and served model. Every
+command below was run against commit `03266fa` and its real output is quoted, so you can
+compare yours with what is expected.
+
+## What you will build
+
+You will take `examples/todo.kerangka.json` — a three-field todo list with one action —
+through the four boundaries Kerangka keeps separate:
+
+| Boundary | What lives there | Command |
+|---|---|---|
+| Model | Declarative JSON: entities, fields, rules, actions, views | — |
+| KIR | Canonical intermediate representation compiled from the model | `kerangka build` |
+| Host | Sidecar/dev server that stores records and applies effects | `kerangka dev`, `kerangka run` |
+| Rendering | Projected documents consumed by UIDL-Runtime | `kerangka uidl` |
+
+## Prerequisites
+
+- **Node.js `>= 20.0.0`** (the repository's `engines` field). This page was verified on
+  **Node 22.22.3** and **npm 10.9.8**.
+- **git**, and network access to clone the repository.
+- No global install is required; the CLI is linked into the checkout by `npm install`.
+
+<Aside type="note">
+Some commands open SQLite through Node's built-in `node:sqlite`, which still prints an
+`ExperimentalWarning`. It is expected and does not affect results.
+</Aside>
+
+## Steps
+
+<Steps>
+
+1. **Install and build the checkout**
+
+   ```bash
+   git clone <repository-url> kerangka
+   cd kerangka
+   npm install
+   npm run build
+   ```
+
+   `dist/` is gitignored, so `npm run build` is required once after every fresh clone;
+   `npm install` alone does not build it.
+
+2. **Verify the checkout**
+
+   ```bash
+   npm run verify
+   ```
+
+   This runs `typecheck`, the unit/integration test suite, and `examples:verify`.
+   Verified result:
+
+   ```
+   Test Files  97 passed | 1 skipped (98)
+        Tests  1280 passed | 1 skipped (1281)
+   8/8 examples verified
+   ```
+
+3. **Check the model**
+
+   ```bash
+   npx kerangka check examples/todo.kerangka.json
+   ```
+
+   Expected:
+
+   ```
+   OK: examples/todo.kerangka.json is valid (App: 'todo', 1 entities, 0 rules/invariants, 0 transitions)
+   ```
+
+   `check` validates shape, references, and expressions. It does not compile anything yet.
+
+4. **Compile the model to KIR**
+
+   ```bash
+   npx kerangka build examples/todo.kerangka.json -o build/todo.kir.json
+   ```
+
+   Expected:
+
+   ```
+   WROTE: build/todo.kir.json
+   ```
+
+   `build/` is gitignored. The KIR file is the canonical, stack-neutral representation every
+   later projection starts from.
+
+5. **Run the declarative examples**
+
+   ```bash
+   npx kerangka test examples/todo.kerangka.json
+   ```
+
+   Expected:
+
+   ```
+   Running 1 declarative example(s) for .../examples/todo.kerangka.json:
+     [PASS] #1: toggle completion state
+
+   Result: 1/1 passed
+   ```
+
+6. **Execute a single action**
+
+   ```bash
+   npx kerangka run examples/todo.kerangka.json Todo.toggle \
+     --record '{"title":"Buy milk","completed":false,"priority":"medium"}'
+   ```
+
+   Expected (abridged to the parts that matter):
+
+   ```json
+   {
+     "ok": true,
+     "record": { "title": "Buy milk", "completed": true, "priority": "medium" },
+     "events": [],
+     "effects": [
+       { "type": "persist", "entity": "Todo", "record": { "title": "Buy milk", "completed": true, "priority": "medium" } }
+     ]
+   }
+   Ran Todo.toggle: ok (1 effect(s) returned, not applied)
+   ```
+
+   Note the last line: the engine computed the new record and returned a `persist` effect,
+   but **did not apply it**. Persistence is the host's job, never the engine's.
+
+7. **Serve the model**
+
+   ```bash
+   npx kerangka dev examples/todo.kerangka.json
+   ```
+
+   Expected:
+
+   ```
+   Kerangka Dev Server running at http://localhost:3000
+   - Playground: http://localhost:3000/
+   - OpenAPI Spec: http://localhost:3000/openapi.json
+   - GraphQL SDL: http://localhost:3000/schema.graphql
+   - MCP Tools: http://localhost:3000/api/mcp/tools
+   ```
+
+   Stop it with `Ctrl+C`. The dev server is the host: it stores records, dispatches events,
+   and performs the effects the engine returned in the previous step.
+
+8. **Project the UI**
+
+   ```bash
+   npx kerangka uidl examples/todo.kerangka.json -o build/uidl/
+   ```
+
+   Expected:
+
+   ```
+   Generated 2 UIDL documents in build/uidl/
+   ```
+
+   The static output holds lists and forms. Dashboard figures are not in these files; a
+   running server computes them at `GET /screens/{viewId}`.
+
+</Steps>
+
+## The four boundaries, in one paragraph
+
+The **model** is declarative data and nothing else. `kerangka build` turns it into **KIR**,
+the canonical JSON every stack and projection agrees on. The **host** (here `kerangka dev`)
+is what executes the compiled model against real storage: it accepts records, applies the
+effects the engine returns, and owns events and the outbox. **Rendering** is downstream of
+all of that — `kerangka uidl` projects the same model into documents that UIDL-Runtime
+renders. Keeping these four apart is what lets the same model produce a REST API, a GraphQL
+schema, MCP tools, and a UI without any of them reimplementing the rules.
+
+## Versions and limitations
+
+- **Model format:** `kerangka: "0.1"` in the JSON document.
+- **Workspace version:** `0.1.1`. The CLI banner reports `Kerangka CLI v0.1.0`.
+- **Node:** `engines` requires `>= 20.0.0`; this page is verified on Node 22.22.3.
+- **`kerangka run` never writes.** It returns effects; only a host applies them. Do not
+  expect a file or database to have changed after step 6.
+- **SQLite is experimental** in Node's built-in `node:sqlite`, and prints a warning.
+- **Static UIDL output excludes dashboard figures**; those require a running server.
+- **This documentation site is a preview.** It is served under `/docs/preview/` until a
+  release commit pins a versioned path.
+
+## Next steps
+
+- Read the [Kerangka model concept page](/docs/preview/concepts/kerangka-model) for how
+  types, traits, workflows, and views fit together.
+- Try `npx kerangka check` and `npx kerangka build` on the other fixtures in `examples/`
+  (`invoicing`, `commerce`, `inventory`, `leave-request`, `expense-approval`).

@@ -13,7 +13,8 @@ export default defineConfig({
         {
           label: 'Introduction',
           items: [
-            { label: 'Overview', link: '/' }
+            { label: 'Overview', link: '/' },
+            { label: 'Your First Model', link: '/getting-started/first-model/' }
           ]
         },
         {
