@@ -1,12 +1,15 @@
 export interface ManifestInput {
   name: string;
+  run: string;
   record: Record<string, unknown>;
+  input?: Record<string, unknown>;
   actor?: Record<string, unknown>;
 }
 
 export interface ManifestOutcome {
   input: string;
   status: "ok" | "denied" | "error";
+  error?: string;
   record?: Record<string, unknown>;
 }
 

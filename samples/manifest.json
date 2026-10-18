@@ -12,6 +12,7 @@
     "inputs": [
       {
         "name": "submit-draft",
+        "run": "Expense.submit",
         "record": {
           "description": "Train ticket",
           "amount": "42.00",
@@ -25,6 +26,7 @@
       },
       {
         "name": "approve-as-manager",
+        "run": "Expense.approve",
         "record": {
           "description": "Train ticket",
           "amount": "42.00",
@@ -38,6 +40,7 @@
       },
       {
         "name": "approve-as-employee",
+        "run": "Expense.approve",
         "record": {
           "description": "Train ticket",
           "amount": "42.00",
@@ -68,7 +71,8 @@
         },
         {
           "input": "approve-as-employee",
-          "status": "denied"
+          "status": "denied",
+          "error": "PERMISSION_DENIED"
         }
       ]
     },
@@ -88,6 +92,7 @@
     "inputs": [
       {
         "name": "empty-invoice",
+        "run": "Invoice.send",
         "record": {
           "status": "draft",
           "lines": []
@@ -103,7 +108,8 @@
       "outcomes": [
         {
           "input": "empty-invoice",
-          "status": "denied"
+          "status": "denied",
+          "error": "GUARD_FAILED"
         }
       ]
     },
@@ -123,6 +129,7 @@
     "inputs": [
       {
         "name": "submit-2-days",
+        "run": "LeaveRequest.submit",
         "record": {
           "employeeId": "emp-1",
           "days": 2,
@@ -138,6 +145,7 @@
       },
       {
         "name": "submit-6-days",
+        "run": "LeaveRequest.submit",
         "record": {
           "employeeId": "emp-1",
           "days": 6,

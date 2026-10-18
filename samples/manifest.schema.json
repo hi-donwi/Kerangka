@@ -38,10 +38,12 @@
         "minItems": 1,
         "items": {
           "type": "object",
-          "required": ["name", "record"],
+          "required": ["name", "run", "record"],
           "additionalProperties": false,
           "properties": {
             "name": { "type": "string", "minLength": 1 },
+            "run": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*\\.[A-Za-z][A-Za-z0-9_]*$" },
+            "input": { "type": "object" },
             "record": { "type": "object" },
             "actor": { "type": "object" }
           }
@@ -62,6 +64,7 @@
               "properties": {
                 "input": { "type": "string", "minLength": 1 },
                 "status": { "enum": ["ok", "denied", "error"] },
+                "error": { "type": "string", "minLength": 1 },
                 "record": { "type": "object" }
               }
             }
