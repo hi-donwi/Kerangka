@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "uidl-runtime": "^0.1.8"
   },
   "devDependencies": {
     "@types/react": "19.3.0",
