@@ -1,0 +1,39 @@
+---
+title: Compatibility Matrix
+description: Supported features and implementations
+---
+
+## Summary
+
+Kerangka v0.1.x focuses on a reference model (JSON skeleton), compiler, reference engine,
+and CLI emission. Portability is provided by SDKs; the runtime inside generated projects
+implements the semantics.
+
+## CLI targets
+
+| Target | Status | Notes |
+|---|---|---|
+| OpenAPI 3.1 | supported | `kerangka openapi` and `emit openapi` |
+| JSON Schema 2020-12 | supported | `kerangka json-schema` and `emit json-schema` |
+| GraphQL SDL | supported | `kerangka graphql` and `emit graphql` |
+| MCP tools | supported | `kerangka mcp` and `emit mcp` |
+| UIDL documents | supported | `kerangka uidl` and `emit uidl` |
+| SQL DDL (Postgres/SQLite) | supported | `ddl` and `db diff` |
+| Docker Compose | supported | `compose` |
+| Codegen | supported (TS, Java 21, Python, Go, Rust, Dart) | multi-target with tests |
+
+## Conformance
+
+- Conformance suite: 6 suites, 198 cases (200 tests) — all passing in CI.
+- Examples: 8 targets verified (`npm run examples:verify`).
+
+## SDK parity (qualitative)
+
+SDKs in `sdk/` provide client access to the runtime and serialization helpers. Coverage
+varies by language; treat as a discovery surface for now. For strict reference behavior,
+use the TypeScript reference engine.
+
+## Versioning
+
+Kerangka follows semantic versioning. This is v0.1.1. Contract changes will be noted in
+`CHANGELOG.md` and ADRs under `docs/adr/`.

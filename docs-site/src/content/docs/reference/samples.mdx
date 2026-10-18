@@ -1,0 +1,33 @@
+---
+title: Samples Reference
+description: Cross-linked samples with generated contracts
+---
+
+## Samples manifest
+
+The `samples/manifest.json` file lists previewable samples with their models, inputs,
+and expected outcomes. Each sample is verified via `node scripts/verify-samples.mjs`.
+
+| ID | Title | Source | Notes |
+|---|---|---|---|
+| approval | Expense Approval | [examples/expense-approval.kerangka.json](https://github.com/hi-donwi/Kerangka/blob/main/examples/expense-approval.kerangka.json) | Minimal workflow, guard checks |
+| validation | Field, Expression, and Validation | [examples/invoicing.kerangka.json](https://github.com/hi-donwi/Kerangka/blob/main/examples/invoicing.kerangka.json) | Computed fields, rules, guards |
+| workflow | Action, Workflow, and Decision | [examples/leave-request.kerangka.json](https://github.com/hi-donwi/Kerangka/blob/main/examples/leave-request.kerangka.json) | Transitions, roles, routing by decision logic |
+
+## Generated artifacts
+
+`scripts/generate-samples.mjs` emits OpenAPI 3.1, JSON Schema 2020-12, and UIDL documents
+for all samples under `generated/<id>/`. These files are gitignored; regenerate with:
+
+```bash
+npm run build
+node scripts/generate-samples.mjs
+```
+
+## Verification
+
+```bash
+node scripts/verify-samples.mjs  # validates manifest + expected outcomes
+npx vitest run conformance       # 200 passing
+npm run examples:verify          # 8/8 verified
+```
