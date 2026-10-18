@@ -1,0 +1,12 @@
+:root { color-scheme: light; }
+body { margin: 0; font-family: system-ui, sans-serif; background: #f6f7f9; color: #1f2937; }
+.ks { max-width: 960px; margin: 0 auto; padding: 24px; }
+header h1 { margin: 0 0 4px; }
+nav { display: flex; gap: 8px; margin: 16px 0; }
+nav button { padding: 6px 12px; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer; }
+nav button.active { background: #1f2937; color: #fff; border-color: #1f2937; }
+.sample { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }
+.meta { margin: 4px 0; }
+pre { background: #f3f4f6; padding: 8px; border-radius: 6px; overflow: auto; }
+.actor { color: #6b7280; }
+.note { color: #6b7280; font-style: italic; }
