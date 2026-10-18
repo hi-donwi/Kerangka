@@ -1,0 +1,10 @@
+{
+  "version": "0.1.1",
+  "channel": "preview",
+  "basePath": "/docs/preview",
+  "outDir": "./dist/docs/preview",
+  "publishTarget": "github-pages",
+  "site": "",
+  "latestAliasPath": "/docs/latest",
+  "requiresPublishApproval": true
+}

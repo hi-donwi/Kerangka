@@ -1,10 +1,18 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
-// Build for preview under /docs/preview/ so the versioned layout is exercised.
+// Versioned path and output directory come from release.json, so moving from the
+// preview channel to a versioned release (for example /docs/v0.1.1) is a single
+// config edit instead of a hunt through this file.
+const release = JSON.parse(readFileSync(new URL('./release.json', import.meta.url), 'utf8'));
+
 export default defineConfig({
-  base: '/docs/preview',
-  outDir: './dist/docs/preview',
+  base: release.basePath,
+  outDir: release.outDir,
+  // Set `site` in release.json when the canonical host is known (GitHub Pages needs it
+  // for the sitemap and canonical URLs); the preview build does not have one.
+  ...(release.site ? { site: release.site } : {}),
   integrations: [
     starlight({
       title: 'Kerangka Docs',
@@ -20,7 +28,18 @@ export default defineConfig({
         {
           label: 'Concepts',
           items: [
-            { label: 'Kerangka Model', link: '/concepts/kerangka-model/' }
+            { label: 'Kerangka Model', link: '/concepts/kerangka-model/' },
+            { label: 'Field, Expression, and Validation', link: '/concepts/validation/' },
+            { label: 'Actions, Workflows, and Decisions', link: '/concepts/workflow/' },
+            { label: 'Generated Contracts and UIDL', link: '/concepts/contracts/' }
+          ]
+        },
+        {
+          label: 'Reference',
+          items: [
+            { label: 'CLI Reference', link: '/reference/cli/' },
+            { label: 'Compatibility Matrix', link: '/reference/compatibility/' },
+            { label: 'Samples Reference', link: '/reference/samples/' }
           ]
         }
       ],
@@ -32,7 +51,7 @@ export default defineConfig({
         }
       },
       editLink: {
-        baseUrl: 'https://github.com/donwi-code/public/tree/main/docs-site'
+        baseUrl: 'https://github.com/hi-donwi/Kerangka/tree/main/docs-site/'
       },
       pagination: true,
       lastUpdated: true,
