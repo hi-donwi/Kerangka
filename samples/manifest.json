@@ -109,5 +109,70 @@
     },
     "support": "supported",
     "version": "v0.1.1"
+  },
+  {
+    "id": "workflow",
+    "title": "Action, Workflow, and Decision",
+    "modelPath": "samples/workflow/leave-request.kerangka.json",
+    "docsPath": "/docs/preview/kitchen-sink/workflow",
+    "sourcePath": "examples/leave-request.kerangka.json",
+    "allowedModes": [
+      "preview",
+      "run"
+    ],
+    "inputs": [
+      {
+        "name": "submit-2-days",
+        "record": {
+          "employeeId": "emp-1",
+          "days": 2,
+          "status": "draft",
+          "startDate": "2026-10-01",
+          "endDate": "2026-10-02"
+        },
+        "actor": {
+          "roles": [
+            "employee"
+          ]
+        }
+      },
+      {
+        "name": "submit-6-days",
+        "record": {
+          "employeeId": "emp-1",
+          "days": 6,
+          "status": "draft",
+          "startDate": "2026-10-01",
+          "endDate": "2026-10-07"
+        },
+        "actor": {
+          "roles": [
+            "employee"
+          ]
+        }
+      }
+    ],
+    "expected": {
+      "outcomes": [
+        {
+          "input": "submit-2-days",
+          "status": "ok",
+          "record": {
+            "status": "submitted",
+            "assignedApproverRole": "team-lead"
+          }
+        },
+        {
+          "input": "submit-6-days",
+          "status": "ok",
+          "record": {
+            "status": "submitted",
+            "assignedApproverRole": "hr-director"
+          }
+        }
+      ]
+    },
+    "support": "supported",
+    "version": "v0.1.1"
   }
 ]
