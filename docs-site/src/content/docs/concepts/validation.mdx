@@ -1,0 +1,35 @@
+---
+title: Field, Expression, and Validation
+description: How fields, computed expressions, and rules interact in Kerangka
+---
+
+## Fields and shorthand
+
+A field is declared either as a shorthand string (`"title": "string!"`) or as an object
+with `type`, `default`, `compute`, and constraints. The shorthand is expanded by the
+compiler into the object form.
+
+## Computed fields
+
+A field with `compute` is derived from the record and cannot be written by the caller.
+In the invoicing model, `total` is:
+
+```json
+"total": { "type": "decimal(12,2)", "compute": "sum(lines, qty * unitPrice)" }
+```
+
+## Rules
+
+Rules are named checks attached to an entity. They run when an action is executed and
+produce a diagnostic if they fail. The invoicing model declares:
+
+```json
+{ "id": "due-after-issue", "check": "dueDate >= issuedOn", "field": "dueDate" }
+```
+
+## Validation outcome
+
+The `send` transition requires `count(lines) > 0 && total > 0`. An empty invoice therefore
+fails with `GUARD_FAILED`, which is exactly what the sample expects.
+
+See the [kitchen sink](/docs/preview/kitchen-sink) for the linked sample.
