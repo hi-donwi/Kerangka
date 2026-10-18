@@ -108,6 +108,7 @@ OPTIONS:
   -o, --output <path>     Output file or directory path (use '-' for stdout)
   -p, --port <number>     Port for dev server (default: 3000)
   --studio-prefix <path> Studio mount prefix (default: /studio; loopback only)
+  --studio-writable     Allow Studio to save model edits back to the file (CAS-guarded)
   --drop                  Include DROP TABLE IF EXISTS statements in DDL
   --no-audit              Exclude audit columns (created_at, updated_at, etc.) in DDL
   -h, --help              Show help information
@@ -151,6 +152,7 @@ async function main(): Promise<void> {
         package: { type: "string" },
         port: { type: "string", short: "p" },
         "studio-prefix": { type: "string" },
+        "studio-writable": { type: "boolean" },
         drop: { type: "boolean" },
         audit: { type: "boolean", default: true },
         "check-breaking": { type: "boolean" },
@@ -215,7 +217,11 @@ async function main(): Promise<void> {
     switch (command) {
       case "studio": {
         const { studioCommand } = await import("../commands/studio.js");
-        success = await studioCommand(file!, { port: values.port === undefined ? undefined : Number(values.port), prefix: values["studio-prefix"] });
+        success = await studioCommand(file!, {
+          port: values.port === undefined ? undefined : Number(values.port),
+          prefix: values["studio-prefix"],
+          writable: values["studio-writable"] === true,
+        });
         break;
       }
       case "init": {

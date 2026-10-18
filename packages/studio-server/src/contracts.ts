@@ -70,6 +70,8 @@ export interface StudioBundle {
 export interface StudioResponse extends InspectionResult {
   bundle: StudioBundle;
   excluded: number;
+  /** True when this host accepts saves. Absent means the session is read-only. */
+  writable?: boolean;
 }
 
 /** A raw field definition: the Kerangka shorthand string or its object form. */
@@ -103,7 +105,7 @@ export interface SaveRequest {
 }
 
 /** A save result: the same shape as a project read, plus the paths that were written. */
-export interface SaveResponse extends InspectionResult {
+export interface SaveResponse extends StudioResponse {
   revision: string;
   saved: string[];
 }

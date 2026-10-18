@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
-import { readProject, submitDraft } from "./studio-api";
-import type { DraftRequest, StudioResponse } from "../../../packages/studio-server/src/contracts.js";
+import { readProject, saveProject, submitDraft } from "./studio-api";
+import type {
+  DraftRequest,
+  SaveRequest,
+  SaveResponse,
+  StudioResponse,
+} from "../../../packages/studio-server/src/contracts.js";
 
 export function useStudio() {
   const [token, authenticate] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "");
@@ -34,10 +39,18 @@ export function useStudio() {
     setState({ response: next, loading: false, error: null });
     return next;
   };
+  // A save response is a full snapshot; adopt it instead of re-reading the project.
+  const adopt = (response: SaveResponse) => setState({ response, loading: false, error: null });
+  const saveDraft = async (request: SaveRequest) => {
+    const next = await saveProject(token, request);
+    adopt(next);
+    return next;
+  };
   return {
     ...state,
     authorized: Boolean(token),
     applyDraft,
+    saveDraft,
     authenticate,
     reload: () => setRefresh((value) => value + 1),
   };

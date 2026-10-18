@@ -3,6 +3,7 @@ import { startStudio } from "@kerangka/studio-server";
 export interface StudioCommandOptions {
   port?: number;
   prefix?: string;
+  writable?: boolean;
 }
 
 export async function studioCommand(target: string, options: StudioCommandOptions = {}): Promise<boolean> {
@@ -11,11 +12,15 @@ export async function studioCommand(target: string, options: StudioCommandOption
     return false;
   }
   try {
-    const host = await startStudio({ target, port: options.port, prefix: options.prefix });
-    console.log("Kerangka Studio / read-only / loopback only");
+    const host = await startStudio({ target, port: options.port, prefix: options.prefix, writable: options.writable });
+    console.log(`Kerangka Studio / ${options.writable ? "writable" : "read-only"} / loopback only`);
     // This is the trusted operator bootstrap channel, never a request/operational log.
     console.log(`Local launch link (do not share): ${host.url}`);
-    console.log("Source is not writable. Preview uses synthetic data. Stop with Ctrl+C.");
+    console.log(
+      options.writable
+        ? "Saves rewrite model files in place, one atomic replace at a time. Preview uses synthetic data. Stop with Ctrl+C."
+        : "Source is not writable. Preview uses synthetic data. Stop with Ctrl+C.",
+    );
     return await new Promise<boolean>((resolve) => {
       const stop = () => {
         process.off("SIGINT", stop);

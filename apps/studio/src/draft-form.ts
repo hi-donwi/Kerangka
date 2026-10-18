@@ -1,9 +1,9 @@
 /**
  * Draft form helpers for the entity inspector.
  *
- * Studio can propose an edit and show the recompiled projection, but it never saves:
- * these helpers only build the shorthand an operator picks, so they stay pure and
- * testable without a DOM.
+ * Studio can propose an edit and show the recompiled projection. Saving that preview back
+ * to the file is a separate, explicit step handled by the App; these helpers only build
+ * the shorthand an operator picks, so they stay pure and testable without a DOM.
  */
 
 /** Canonical scalar field types (aliases excluded) an operator may add. */

@@ -583,6 +583,74 @@ tbody th {
   line-height: 1.6;
   font-size: 0.85rem;
 }
+.status-banner {
+  margin: var(--space-control) var(--space-panel);
+  padding: var(--space-control);
+  color: var(--color-text);
+  background: var(--color-border);
+  border-inline-start: 3px solid var(--color-highlight);
+  line-height: 1.6;
+  font-size: 0.85rem;
+}
+.save-button {
+  background: var(--color-highlight);
+  color: var(--color-text);
+  border-color: var(--color-highlight);
+  font-weight: 700;
+}
+.masthead .save-button {
+  margin-inline-start: auto;
+}
+/* Only one masthead control absorbs the trailing free space. */
+.masthead .refresh-button + .refresh-button {
+  margin-inline-start: 0;
+}
+.save-button:hover:not(:disabled) {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-surface);
+}
+.conflict-panel {
+  margin: var(--space-control) var(--space-panel);
+  padding: var(--space-section);
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent-surface);
+}
+.conflict-panel h2 {
+  margin-block: var(--space-small);
+  font-size: 1.05rem;
+}
+.conflict-panel > p {
+  margin-block: var(--space-small);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.conflict-file {
+  margin-block-start: var(--space-section);
+}
+.conflict-file h3 {
+  font-size: 0.85rem;
+  margin-block-end: var(--space-small);
+}
+.conflict-versions {
+  display: grid;
+  gap: var(--space-control);
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+}
+.conflict-versions .eyebrow {
+  margin-block-end: var(--space-small);
+  color: var(--color-muted);
+}
+.conflict-versions pre {
+  max-block-size: 18rem;
+  overflow: auto;
+}
+.conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-control);
+  margin-block-start: var(--space-section);
+}
 .preview-heading {
   display: flex;
   justify-content: space-between;

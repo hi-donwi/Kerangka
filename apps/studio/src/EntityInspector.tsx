@@ -88,8 +88,8 @@ export function EntityInspector({
         <h3>Add a field</h3>
         <p className="muted">
           {draft.spent
-            ? "The unsaved preview holds one new field. Refresh the source before drafting again; saving is a later slice."
-            : "Studio recompiles the projection for preview only. It never saves the model file."}
+            ? "One field is staged. Save writes it back to the file; discard reloads the source and drops it."
+            : "Studio recompiles the projection for preview. Save writes to the file only on a writable host."}
         </p>
         <div className="draft-form-controls">
           <div>

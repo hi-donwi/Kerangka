@@ -1,4 +1,12 @@
-import type { DraftRequest, DraftResponse, StudioResponse } from "../../../packages/studio-server/src/contracts.js";
+import type {
+  DraftRequest,
+  DraftResponse,
+  SaveRequest,
+  SaveResponse,
+  SourceText,
+  StudioDiagnostic,
+  StudioResponse,
+} from "../../../packages/studio-server/src/contracts.js";
 
 export const studioBase = () => new URL(".", window.location.href).pathname;
 
@@ -17,7 +25,17 @@ async function post<T>(path: string, payload: unknown, token: string, signal?: A
     const message =
       body && typeof body.message === "string" ? body.message : "The request could not be completed.";
     if (response.status === 409)
-      throw new StudioConflict(typeof body?.revision === "string" ? body.revision : "", message);
+      throw new StudioConflict(
+        typeof body?.revision === "string" ? body.revision : "",
+        message,
+        body?.sources && typeof body.sources === "object" ? (body.sources as Record<string, SourceText>) : undefined,
+      );
+    if (response.status === 422 && body?.code === "STUDIO_SAVE_INVALID")
+      throw new StudioSaveRefused(
+        message,
+        typeof body?.revision === "string" ? body.revision : "",
+        Array.isArray(body?.diagnostics) ? (body.diagnostics as StudioDiagnostic[]) : [],
+      );
     throw new Error(message);
   }
   return body as T;
@@ -28,9 +46,23 @@ export class StudioConflict extends Error {
   constructor(
     readonly revision: string,
     message: string,
+    /** The winning file for each path the save tried to change; absent on draft conflicts. */
+    readonly sources?: Record<string, SourceText>,
   ) {
     super(message);
     this.name = "StudioConflict";
+  }
+}
+
+/** A save the server refused to write, with the diagnostics that explain why. */
+export class StudioSaveRefused extends Error {
+  constructor(
+    message: string,
+    readonly revision: string,
+    readonly diagnostics: StudioDiagnostic[],
+  ) {
+    super(message);
+    this.name = "StudioSaveRefused";
   }
 }
 
@@ -55,4 +87,8 @@ export async function readProject(token: string, signal: AbortSignal): Promise<S
 
 export function submitDraft(token: string, request: DraftRequest, signal?: AbortSignal): Promise<DraftResponse> {
   return post<DraftResponse>("api/draft", request, token, signal);
+}
+
+export function saveProject(token: string, request: SaveRequest, signal?: AbortSignal): Promise<SaveResponse> {
+  return post<SaveResponse>("api/save", request, token, signal);
 }

@@ -222,3 +222,71 @@ test("loads at 320px, supports keyboard tabs and browser refresh, and denies mis
   await expect(page.getByRole("heading", { name: "Open a local project.", exact: true })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Sources" })).toHaveCount(0);
 });
+
+test.describe("writable host: save and conflict recovery", () => {
+  let writableRoot: string;
+  let writableHost: StudioHost;
+  let writableModel: string;
+
+  test.beforeAll(async () => {
+    writableRoot = await mkdtemp(join(tmpdir(), "kerangka-studio-writable-"));
+    writableModel = await readFile(
+      new URL("../../../packages/cli/test/fixtures/studio/approval.kerangka.json", import.meta.url),
+      "utf8",
+    );
+    await writeFile(join(writableRoot, "app.kerangka.json"), writableModel);
+    writableHost = await startStudio({ target: writableRoot, port: 0, writable: true });
+  });
+  test.beforeEach(async () => {
+    await writeFile(join(writableRoot, "app.kerangka.json"), writableModel);
+  });
+  test.afterAll(async () => {
+    await writableHost?.close();
+    if (writableRoot) await rm(writableRoot, { recursive: true, force: true });
+  });
+
+  test("saves a draft to disk and advances the revision", async ({ page }) => {
+    await page.goto(writableHost.url);
+    await expect(page.getByText("WRITABLE HOST", { exact: true })).toBeVisible();
+    await page
+      .getByRole("navigation", { name: "Entities" })
+      .getByRole("button", { name: /^Request/ })
+      .click();
+    const form = page.getByRole("form", { name: /Add a field to Request/ });
+    await form.getByLabel("New field name", { exact: true }).fill("note");
+    await form.getByLabel("Type", { exact: true }).selectOption("string");
+    await form.getByRole("button", { name: "Add field" }).click();
+    await expect(page.getByText("UNSAVED DRAFT", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
+    await expect(page.getByText(/saved to disk/)).toBeVisible();
+    const saved = JSON.parse(await readFile(join(writableRoot, "app.kerangka.json"), "utf8"));
+    expect(saved.entities.Request.fields.note).toBe("string?");
+  });
+
+  test("recovers from a revision conflict by keeping the file on disk", async ({ page }) => {
+    await page.goto(writableHost.url);
+    await page
+      .getByRole("navigation", { name: "Entities" })
+      .getByRole("button", { name: /^Request/ })
+      .click();
+    const form = page.getByRole("form", { name: /Add a field to Request/ });
+    await form.getByLabel("New field name", { exact: true }).fill("note");
+    await form.getByLabel("Type", { exact: true }).selectOption("string");
+    await form.getByRole("button", { name: "Add field" }).click();
+    await expect(page.getByText("UNSAVED DRAFT", { exact: true })).toBeVisible();
+    // Externally change the file so the save's expected revision is stale.
+    const external = JSON.parse(writableModel);
+    external.entities.Request.fields.external = "string";
+    await writeFile(join(writableRoot, "app.kerangka.json"), JSON.stringify(external, null, 2));
+    await page.getByRole("button", { name: "Save draft", exact: true }).click();
+    const panel = page.getByRole("alert", { name: "Revision conflict" });
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText("YOUR DRAFT");
+    await expect(panel).toContainText("FILE ON DISK");
+    await panel.getByRole("button", { name: "Keep the file on disk" }).click();
+    await expect(page.getByText(/file on disk was kept/)).toBeVisible();
+    const kept = JSON.parse(await readFile(join(writableRoot, "app.kerangka.json"), "utf8"));
+    expect(kept.entities.Request.fields.external).toBe("string");
+    expect(kept.entities.Request.fields.note).toBeUndefined();
+  });
+});

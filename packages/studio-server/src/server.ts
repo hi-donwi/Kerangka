@@ -150,7 +150,12 @@ function parseSaveRequest(raw: string): SaveRequest {
 }
 
 /** Project a source snapshot plus its inspection into the client bundle shape. */
-function assemble(snapshot: SourceSnapshot, prefix: string, result: InspectionResult): StudioResponse {
+function assemble(
+  snapshot: SourceSnapshot,
+  prefix: string,
+  result: InspectionResult,
+  writable: boolean,
+): StudioResponse {
   const diagnostics = [...result.diagnostics];
   const pages: StudioBundle["application"]["pages"] = Object.create(null) as StudioBundle["application"]["pages"];
   const routes: StudioBundle["application"]["routes"] = [];
@@ -187,6 +192,7 @@ function assemble(snapshot: SourceSnapshot, prefix: string, result: InspectionRe
       application: { pages, routes, preview: { profile: "read", data: "synthetic" } },
     },
     excluded: snapshot.excluded,
+    writable,
     ...result,
     diagnostics: diagnostics.slice(0, 100),
   };
@@ -212,13 +218,14 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
   let origin = "";
   let cached: { revision: string; result: InspectionResult } | undefined;
   let pending: Promise<StudioResponse> | undefined;
+  const writable = options.writable === true;
   const load = (): Promise<StudioResponse> => {
     // Coalesce refreshes instead of running multiple untrusted jobs for one project.
     pending ??= (async (): Promise<StudioResponse> => {
       const snapshot = await project.read();
       const result = cached?.revision === snapshot.revision ? cached.result : await inspectProject(snapshot);
       cached = { revision: snapshot.revision, result };
-      return assemble(snapshot, prefix, result);
+      return assemble(snapshot, prefix, result, writable);
     })().finally(() => {
       pending = undefined;
     });
@@ -243,7 +250,7 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
       sources: draft.sources,
       excluded: snapshot.excluded,
     };
-    const assembled = assemble(edited, prefix, await inspectProject(edited));
+    const assembled = assemble(edited, prefix, await inspectProject(edited), writable);
     json(response, 200, {
       ...assembled,
       applied: draft.applied,
@@ -280,7 +287,7 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
     }
     const result = await inspectProject(outcome.snapshot);
     json(response, 200, {
-      ...assemble(outcome.snapshot, prefix, result),
+      ...assemble(outcome.snapshot, prefix, result, writable),
       revision: outcome.snapshot.revision,
       saved: outcome.saved,
     });

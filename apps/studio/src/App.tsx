@@ -5,7 +5,8 @@ import { PreviewFrame } from "./PreviewFrame";
 import { ProjectExplorer, type Selection } from "./ProjectExplorer";
 import { EntityInspector } from "./EntityInspector";
 import { Diagnostics } from "./Diagnostics";
-import { StudioConflict } from "./studio-api";
+import { StudioConflict, StudioSaveRefused } from "./studio-api";
+import type { SourceText } from "../../../packages/studio-server/src/contracts.js";
 
 type Tab = "definition" | "openapi" | "postgres" | "sqlite" | "preview";
 const tabs: Array<[Tab, string]> = [
@@ -16,19 +17,36 @@ const tabs: Array<[Tab, string]> = [
   ["sqlite", "SQLite"],
 ];
 
+/** A previewed draft the operator can save, and the disk revision it was based on. */
+interface DraftState {
+  busy: boolean;
+  spent: boolean;
+  baseRevision: string | null;
+  sources: Record<string, SourceText> | null;
+  error: string | null;
+  notice: string | null;
+}
+
+/** A save that lost a race, with both versions so the operator can choose. */
+interface ConflictState {
+  revision: string;
+  sources: Record<string, SourceText>;
+  draftSources: Record<string, SourceText>;
+}
+
+const emptyDraft: DraftState = { busy: false, spent: false, baseRevision: null, sources: null, error: null, notice: null };
+
 export function App() {
   const studio = useStudio();
   const [access, setAccess] = useState("");
   const [selection, setSelection] = useState<Selection | null>(null);
   const [tab, setTab] = useState<Tab>("definition");
-  const [draft, setDraft] = useState<{ busy: boolean; spent: boolean; error: string | null; notice: string | null }>({
-    busy: false,
-    spent: false,
-    error: null,
-    notice: null,
-  });
+  const [draft, setDraft] = useState<DraftState>(emptyDraft);
+  const [conflict, setConflict] = useState<ConflictState | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
   const response = studio.response;
   const inspection = response?.inspection;
+  const writable = response?.writable === true;
   const selected = selection ?? (response ? { kind: "source" as const, id: response.bundle.entry } : null);
   const entity =
     selected?.kind === "entity" ? inspection?.entities.find((item) => item.name === selected.id) : undefined;
@@ -36,15 +54,19 @@ export function App() {
   const source = selected?.kind === "source" ? response?.bundle.sources[selected.id] : undefined;
   const missing = Boolean(selected && !source && !entity && !screen);
   const refresh = () => {
-    setDraft({ busy: false, spent: false, error: null, notice: null });
+    setDraft(emptyDraft);
+    setConflict(null);
+    setFlash(null);
     studio.reload();
   };
   const addField = async (field: string, definition: string) => {
     if (!response || !entity) return;
-    setDraft({ busy: true, spent: false, error: null, notice: null });
+    const expectedRevision = response.bundle.revision;
+    setDraft({ busy: true, spent: false, baseRevision: null, sources: null, error: null, notice: null });
+    setConflict(null);
     try {
       const next = await studio.applyDraft({
-        expectedRevision: response.bundle.revision,
+        expectedRevision,
         operations: [{ op: "addEntityField", entity: entity.name, field, definition }],
       });
       setSelection({ kind: "entity", id: entity.name });
@@ -52,22 +74,61 @@ export function App() {
       setDraft({
         busy: false,
         spent: true,
+        baseRevision: expectedRevision,
+        sources: next.bundle.sources,
         error: null,
         notice: `${next.applied.join(", ") || "No change"} - preview only; the file on disk is unchanged.`,
       });
     } catch (error) {
       if (error instanceof StudioConflict) {
-        setDraft({ busy: false, spent: false, error: null, notice: null });
+        setDraft(emptyDraft);
         studio.reload();
         return;
       }
       setDraft({
         busy: false,
         spent: false,
+        baseRevision: null,
+        sources: null,
         error: error instanceof Error ? error.message : "The draft could not be applied.",
         notice: null,
       });
     }
+  };
+  /** Write the previewed sources back; `forceRevision` retries after the operator picks the draft. */
+  const saveDraft = async (forceRevision?: string) => {
+    const sources = draft.sources;
+    if (!sources) return;
+    setDraft((current) => ({ ...current, busy: true, error: null }));
+    try {
+      const next = await studio.saveDraft({ expectedRevision: forceRevision ?? draft.baseRevision ?? "", sources });
+      setConflict(null);
+      setFlash(`${next.saved.join(", ") || "No file"} saved to disk. The revision advanced.`);
+      setDraft(emptyDraft);
+    } catch (error) {
+      if (error instanceof StudioConflict && error.sources) {
+        setDraft((current) => ({ ...current, busy: false }));
+        setConflict({ revision: error.revision, sources: error.sources, draftSources: sources });
+        return;
+      }
+      const message =
+        error instanceof StudioSaveRefused
+          ? `${error.message} ${error.diagnostics
+              .filter((item) => item.severity === "error")
+              .map((item) => item.message)
+              .join(" ")}`
+          : error instanceof Error
+            ? error.message
+            : "The draft could not be saved.";
+      setDraft((current) => ({ ...current, busy: false, error: message.trim() }));
+    }
+  };
+  /** After a conflict, keep the file that won and drop the draft. */
+  const takeDiskVersion = () => {
+    setDraft(emptyDraft);
+    setConflict(null);
+    setFlash("The file on disk was kept. The draft was discarded.");
+    studio.reload();
   };
   const select = (next: Selection) =>
     startTransition(() => {
@@ -110,13 +171,23 @@ export function App() {
             KERANGKA <strong>STUDIO</strong>
           </span>
         </button>
-        <span className="mode-badge">READ ONLY</span>
+        <span className="mode-badge">{writable ? "WRITABLE HOST" : "READ ONLY"}</span>
         {draft.spent ? (
           <span className="draft-badge" role="status">
             UNSAVED DRAFT
           </span>
         ) : null}
-        <span className="local-label">LOCAL WORKBENCH / P1</span>
+        <span className="local-label">LOCAL WORKBENCH / P2</span>
+        {writable && draft.spent && !conflict ? (
+          <button className="save-button" onClick={() => void saveDraft()} disabled={draft.busy || studio.loading}>
+            {draft.busy ? "Saving..." : "Save draft"}
+          </button>
+        ) : null}
+        {draft.spent ? (
+          <button className="refresh-button" onClick={refresh} disabled={draft.busy}>
+            Discard
+          </button>
+        ) : null}
         <button className="refresh-button" onClick={refresh} disabled={!studio.authorized || studio.loading}>
           {studio.loading ? "Inspecting..." : "Refresh source"}
         </button>
@@ -176,6 +247,55 @@ export function App() {
             <p className="error-banner" role="alert">
               Refresh failed: {studio.error} The previous snapshot is still shown.
             </p>
+          )}
+          {flash && !conflict && (
+            <p className="status-banner" role="status">
+              {flash}
+            </p>
+          )}
+          {conflict && (
+            <section className="conflict-panel" role="alert" aria-label="Revision conflict">
+              <p className="eyebrow">REVISION CONFLICT</p>
+              <h2>The model changed on disk since this draft was opened.</h2>
+              <p>
+                Nothing was overwritten. Choose which version becomes the file on disk; the other one stays only in
+                this session until you decide.
+              </p>
+              {Object.keys(conflict.draftSources)
+                .filter((path) => conflict.sources[path] && conflict.draftSources[path]?.text !== conflict.sources[path]?.text)
+                .map((path) => (
+                  <div key={path} className="conflict-file">
+                    <h3>{path}</h3>
+                    <div className="conflict-versions">
+                      <div>
+                        <p className="eyebrow">YOUR DRAFT</p>
+                        <SourceView text={conflict.draftSources[path]?.text ?? ""} label={`Draft ${path}`} />
+                      </div>
+                      <div>
+                        <p className="eyebrow">FILE ON DISK</p>
+                        <SourceView text={conflict.sources[path]?.text ?? ""} label={`Disk ${path}`} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              <div className="conflict-actions">
+                <button
+                  className="save-button"
+                  onClick={() => void saveDraft(conflict.revision)}
+                  disabled={draft.busy || studio.loading}
+                >
+                  {draft.busy ? "Saving..." : "Overwrite with my draft"}
+                </button>
+                <button className="refresh-button" onClick={takeDiskVersion} disabled={draft.busy}>
+                  Keep the file on disk
+                </button>
+              </div>
+              {draft.error ? (
+                <p className="error-banner" role="alert">
+                  Save refused: {draft.error}
+                </p>
+              ) : null}
+            </section>
           )}
           <div className="workbench">
             <ProjectExplorer response={response} selected={selected} onSelect={select} />
@@ -293,15 +413,19 @@ export function App() {
           </div>
           <footer className="status-bar">
             <span role="status">
-              {studio.loading
-                ? "Inspecting refreshed source..."
-                : studio.error
-                  ? "Previous snapshot / refresh failed"
-                  : draft.spent
-                    ? "Unsaved draft preview / file unchanged"
-                    : "Read-only snapshot / synthetic preview"}
+              {draft.busy && draft.spent
+                ? "Saving draft to disk..."
+                : studio.loading
+                  ? "Inspecting refreshed source..."
+                  : studio.error
+                    ? "Previous snapshot / refresh failed"
+                    : draft.spent
+                      ? "Unsaved draft preview / file unchanged"
+                      : writable
+                        ? "Writable snapshot / saves rewrite the model file"
+                        : "Read-only snapshot / synthetic preview"}
             </span>
-            <span>NO WRITES / NO LIVE CONNECTORS</span>
+            <span>NO LIVE CONNECTORS</span>
             <a href="./assets/licenses.md" target="_blank" rel="noreferrer noopener">
               Third-party notices
             </a>
