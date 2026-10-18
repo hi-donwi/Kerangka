@@ -141,3 +141,11 @@ jobs:
         run: |
           npm run typecheck
           npm run build
+
+      - name: Install Playwright browser
+        working-directory: kitchen-sink
+        run: npx playwright install --with-deps chromium
+
+      - name: Kitchen sink browser tests (golden path, reset, mobile, keyboard, budget)
+        working-directory: kitchen-sink
+        run: npm run test:e2e
