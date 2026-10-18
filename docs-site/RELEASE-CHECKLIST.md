@@ -8,7 +8,7 @@ publishing; the publish step itself waits for the C3 review.
 | Gate | Scope | State |
 |---|---|---|
 | C1 | Docs shell, first-model tutorial, sample contract | awaiting owner review |
-| C2 | Kitchen-sink bounds: bounded inputs, no network/filesystem/writer, source-only fallback | awaiting owner review |
+| C2 | Live execution required: disposable workers, bounded inputs/output, no host I/O, source-only fallback | awaiting owner review |
 | C3 | Pre-publication review: attribution, security limitations, versioned paths, artifact | awaiting owner review |
 
 ## Checks before a release
@@ -70,6 +70,14 @@ well. Record the CI run id in the evidence table below.
 
 ## Known follow-ups
 
+- UIDL-Runtime is retained; UIDL rendering is not part of the engine execution slice.
+- Mid-tier mobile TTI measurements and kitchen-sink sample deep links remain open.
+- The existing Vite 5 development toolchain audit reports one high and one moderate
+  vulnerability. Resolve or explicitly review before C3; no package upgrade or security
+  exception is implied by passing the runtime tests.
+- The docs dependency audit reports 14 findings, including one critical and one high.
+  Triage applicability and remediate before C3; the static build passing is not a clean
+  dependency audit.
 - `/docs/latest/` alias mechanism.
 - Portal coverage: the prose in `docs/reference-applications.md` and
   `docs/usability-protocol.md` is not yet ported into the portal.
