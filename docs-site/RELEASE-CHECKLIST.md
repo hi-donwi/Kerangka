@@ -27,15 +27,31 @@ npm run examples:verify
 node scripts/verify-samples.mjs
 node scripts/generate-samples.mjs
 
-# 3. Docs site
-cd docs-site && npm ci && npm run verify
+# 3. Docs site (Node.js >=22.22.0)
+cd docs-site
+npm ci
+npm run audit:security
+npm run verify
+npx playwright install chromium --only-shell
+npm run test:e2e
 
 # 4. Kitchen sink
-cd ../kitchen-sink && npm ci && npm run typecheck && npm run build && npm run test:e2e
+cd ../kitchen-sink
+npm ci
+npm run audit:security
+npm run typecheck
+npm run build
+npm run test:e2e
 ```
 
 All four groups must be green, and the CI run on the release commit must be green as
 well. Record the CI run id in the evidence table below.
+
+The audit gates include development tools and reject high/critical findings and scanner
+errors. A passing threshold gate does not mean the complete audit has no findings.
+The 2026-10-18 upgrades removed the known critical/high findings: Astro 7.4.0,
+Starlight 0.42.6, and kitchen-sink Vite 6.4.4. See the package READMEs for migration
+requirements and the remaining moderate advisory.
 
 ## Release steps
 
@@ -72,12 +88,10 @@ well. Record the CI run id in the evidence table below.
 
 - UIDL-Runtime is retained; UIDL rendering is not part of the engine execution slice.
 - Mid-tier mobile TTI measurements and kitchen-sink sample deep links remain open.
-- The existing Vite 5 development toolchain audit reports one high and one moderate
-  vulnerability. Resolve or explicitly review before C3; no package upgrade or security
-  exception is implied by passing the runtime tests.
-- The docs dependency audit reports 14 findings, including one critical and one high.
-  Triage applicability and remediate before C3; the static build passing is not a clean
-  dependency audit.
+- The docs audit still reports ten moderate findings from the Expressive Code / PostCSS
+  parser chain (GHSA-rj75-hqrm-r3gf). A compatible upstream fix is not available in its
+  declared parser range; no cross-major override or security exception is granted.
+  Re-evaluate before C3. The kitchen-sink audit currently has zero findings.
 - `/docs/latest/` alias mechanism.
 - Portal coverage: the prose in `docs/reference-applications.md` and
   `docs/usability-protocol.md` is not yet ported into the portal.

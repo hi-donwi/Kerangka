@@ -17,6 +17,7 @@ Then from `kitchen-sink/`:
 
 ```bash
 npm ci
+npm run audit:security
 npm run typecheck
 npm run build
 npx playwright install chromium
@@ -26,6 +27,18 @@ npm run test:e2e
 `npm run dev` also requires the root build. Both dev and build regenerate sample KIR
 and other projections under `generated/<id>/`; generated output remains gitignored.
 Rebuild the root workspace after changing the compiler or engine.
+
+## Dependency security
+
+Vite 6.4.4 replaces the vulnerable Vite 5 toolchain without changing the React plugin
+or the execution architecture. It includes the maintained fix for
+[GHSA-fx2h-pf6j-xcff](https://github.com/advisories/GHSA-fx2h-pf6j-xcff); see the
+[Vite 6 migration guide](https://v6.vite.dev/guide/migration.html).
+
+`npm run audit:security` includes development dependencies and blocks high/critical
+findings and scanner errors. CI runs it before the production build. The complete npm
+audit reported zero findings on 2026-10-18. This does not grant C2/C3 acceptance or
+permission to publish.
 
 ## Execution Boundary
 
