@@ -1,0 +1,31 @@
+---
+title: Generated Contracts and UIDL
+description: How Kerangka projects a model into OpenAPI, JSON Schema, and UIDL
+---
+
+## What gets generated
+
+For every sample in `samples/manifest.json`, `scripts/generate-samples.mjs` runs the CLI
+projectors and writes the results under `generated/<sample-id>/`:
+
+- `openapi.json` — OpenAPI 3.1 specification for the model's REST surface.
+- `json-schema.json` — JSON Schema 2020-12 for entities and event payloads.
+- `uidl/*.uidl.json` — UIDL screen documents (lists and forms) for UIDL-Runtime.
+
+## How to regenerate
+
+```bash
+npm run build          # ensures the CLI is current
+node scripts/generate-samples.mjs
+```
+
+The output is deterministic for a given model and CLI version, so it can be compared
+against committed fixtures in CI.
+
+## Boundaries
+
+- The projectors are **read-only**: they never execute actions or touch storage.
+- Dashboard figures are not in the static UIDL output; a running server computes them at
+  `GET /screens/{viewId}`.
+- UIDL-Runtime is a separate product. Rendering these documents needs that runtime bound
+  in its own session; this site only shows the generated JSON.

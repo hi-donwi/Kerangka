@@ -63,3 +63,4 @@ Thumbs.db
 
 # Test temporary directories
 .tmp*
+generated/
