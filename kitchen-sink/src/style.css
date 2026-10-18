@@ -11,3 +11,10 @@ nav button.active { background: #1f2937; color: #fff; border-color: #1f2937; }
 pre { background: #f3f4f6; padding: 8px; border-radius: 6px; overflow: auto; }
 .actor { color: #6b7280; }
 .note { color: #6b7280; font-style: italic; }
+button { padding: 8px 12px; cursor: pointer; }
+button:disabled { cursor: wait; opacity: 0.6; }
+button:focus-visible, summary:focus-visible { outline: 2px solid #1f2937; outline-offset: 2px; }
+.sample { min-width: 0; }
+.sample li { margin-block: 12px; }
+.sample code, .meta, .note { overflow-wrap: anywhere; }
+summary { cursor: pointer; padding-block: 12px; }
