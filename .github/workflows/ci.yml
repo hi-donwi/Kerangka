@@ -69,6 +69,9 @@ jobs:
       - name: Examples (kerangka check + kerangka verify + kerangka test)
         run: npm run examples:verify
 
+      - name: Sample projections (OpenAPI, JSON Schema, UIDL)
+        run: node scripts/generate-samples.mjs
+
       - name: Sidecar from a non-JavaScript client (Python over stdio JSON-RPC)
         run: python3 scripts/sidecar-smoke.py
 
@@ -103,3 +106,38 @@ jobs:
           dart pub get
           dart analyze
           dart test
+
+  docs:
+    name: Docs site, kitchen sink, samples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            docs-site/package-lock.json
+            kitchen-sink/package-lock.json
+
+      - name: Samples manifest
+        run: node scripts/verify-samples.mjs
+
+      - name: Install docs site
+        working-directory: docs-site
+        run: npm ci
+
+      - name: Build docs site and check internal links
+        working-directory: docs-site
+        run: npm run verify
+
+      - name: Install kitchen sink
+        working-directory: kitchen-sink
+        run: npm ci
+
+      - name: Typecheck and build kitchen sink
+        working-directory: kitchen-sink
+        run: |
+          npm run typecheck
+          npm run build
