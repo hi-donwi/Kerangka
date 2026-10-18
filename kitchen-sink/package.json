@@ -4,13 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node ../scripts/generate-samples.mjs",
     "dev": "vite",
+    "prebuild": "node ../scripts/generate-samples.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@kerangka/engine-ts": "file:../packages/engine-ts",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "uidl-runtime": "^0.1.8"

@@ -69,7 +69,7 @@ jobs:
       - name: Examples (kerangka check + kerangka verify + kerangka test)
         run: npm run examples:verify
 
-      - name: Sample projections (OpenAPI, JSON Schema, UIDL)
+      - name: Sample projections (KIR, OpenAPI, JSON Schema, UIDL)
         run: node scripts/generate-samples.mjs
 
       - name: Sidecar from a non-JavaScript client (Python over stdio JSON-RPC)
@@ -118,6 +118,7 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: |
+            package-lock.json
             docs-site/package-lock.json
             kitchen-sink/package-lock.json
 
@@ -135,6 +136,11 @@ jobs:
       - name: Install kitchen sink
         working-directory: kitchen-sink
         run: npm ci
+
+      - name: Build workspace for browser engine and sample KIR
+        run: |
+          npm ci
+          npm run build
 
       - name: Typecheck and build kitchen sink
         working-directory: kitchen-sink
