@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const repoRoot = fileURLToPath(new URL(".", import.meta.url));
 const packagesDir = fileURLToPath(new URL("packages/", import.meta.url));
@@ -47,6 +47,10 @@ export default defineConfig({
   test: {
     // The examples and the conformance suite are read from the repo root, so a test's
     // own directory is the wrong place to resolve them from.
-    root: repoRoot
+    root: repoRoot,
+    // kitchen-sink's Playwright specs live in this repository but run under
+    // `npm run test:e2e` inside that package; collecting them here fails, because
+    // @playwright/test is not installed at the root.
+    exclude: [...configDefaults.exclude, "kitchen-sink/e2e/**", "docs-site/**"]
   }
 });
