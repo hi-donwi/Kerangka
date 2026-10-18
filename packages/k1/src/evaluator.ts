@@ -310,6 +310,54 @@ function evaluateCall(node: CallNode, ctx: EvalContext): unknown {
       if (typeof left === "number" && typeof right === "number") return Math.max(left, right);
       throw new K1EvaluationError("max() requires numeric arguments", "TYPE_ERROR");
     }
+    case "clamp": {
+      if (left === null) return null;
+      const minVal = args[1] !== undefined ? evaluate(args[1], ctx) : null;
+      const maxVal = args[2] !== undefined ? evaluate(args[2], ctx) : null;
+      if (typeof left === "number" && typeof minVal === "number" && typeof maxVal === "number") {
+        return Math.min(Math.max(left, minVal), maxVal);
+      }
+      throw new K1EvaluationError("clamp() requires numeric arguments (val, min, max)", "TYPE_ERROR");
+    }
+    case "pow":
+    case "power": {
+      if (left === null || right === null) return null;
+      if (typeof left === "number" && typeof right === "number") {
+        return DecimalMath.round(Math.pow(left, right), 10);
+      }
+      throw new K1EvaluationError("pow() requires numeric arguments", "TYPE_ERROR");
+    }
+    case "sqrt": {
+      if (left === null) return null;
+      if (typeof left === "number") {
+        if (left < 0) throw new K1EvaluationError("sqrt() cannot take negative numbers", "DOMAIN_ERROR");
+        return DecimalMath.round(Math.sqrt(left), 10);
+      }
+      throw new K1EvaluationError("sqrt() requires a number", "TYPE_ERROR");
+    }
+    case "exp": {
+      if (left === null) return null;
+      if (typeof left === "number") {
+        return DecimalMath.round(Math.exp(left), 10);
+      }
+      throw new K1EvaluationError("exp() requires a number", "TYPE_ERROR");
+    }
+    case "log": {
+      if (left === null) return null;
+      if (typeof left === "number") {
+        if (left <= 0) throw new K1EvaluationError("log() requires positive numbers", "DOMAIN_ERROR");
+        return DecimalMath.round(Math.log(left), 10);
+      }
+      throw new K1EvaluationError("log() requires a positive number", "TYPE_ERROR");
+    }
+    case "log10": {
+      if (left === null) return null;
+      if (typeof left === "number") {
+        if (left <= 0) throw new K1EvaluationError("log10() requires positive numbers", "DOMAIN_ERROR");
+        return DecimalMath.round(Math.log10(left), 10);
+      }
+      throw new K1EvaluationError("log10() requires a positive number", "TYPE_ERROR");
+    }
 
     // String
     case "lower": {
