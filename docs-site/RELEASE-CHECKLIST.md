@@ -71,6 +71,7 @@ well. Record the CI run id in the evidence table below.
 ## Known follow-ups
 
 - `/docs/latest/` alias mechanism.
-- Sphinx-to-MDX migration plan, if the prose sources move (documented in the plan run).
+- Portal coverage: the prose in `docs/reference-applications.md` and
+  `docs/usability-protocol.md` is not yet ported into the portal.
 - Studio pages: the Studio exists only on an unpushed branch, so no Studio page ships
   with this release.
