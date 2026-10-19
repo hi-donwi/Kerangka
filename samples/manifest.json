@@ -3,7 +3,7 @@
     "id": "approval",
     "title": "Expense Approval",
     "modelPath": "samples/approval/expense-approval.kerangka.json",
-    "docsPath": "/docs/preview/reference/samples/",
+    "docsPath": "/docs/v0.1.1/reference/samples/",
     "sourcePath": "examples/expense-approval.kerangka.json",
     "allowedModes": [
       "preview",
@@ -83,7 +83,7 @@
     "id": "validation",
     "title": "Field, Expression, and Validation",
     "modelPath": "samples/validation/invoicing.kerangka.json",
-    "docsPath": "/docs/preview/concepts/validation/",
+    "docsPath": "/docs/v0.1.1/concepts/validation/",
     "sourcePath": "examples/invoicing.kerangka.json",
     "allowedModes": [
       "preview",
@@ -120,7 +120,7 @@
     "id": "workflow",
     "title": "Action, Workflow, and Decision",
     "modelPath": "samples/workflow/leave-request.kerangka.json",
-    "docsPath": "/docs/preview/concepts/workflow/",
+    "docsPath": "/docs/v0.1.1/concepts/workflow/",
     "sourcePath": "examples/leave-request.kerangka.json",
     "allowedModes": [
       "preview",
