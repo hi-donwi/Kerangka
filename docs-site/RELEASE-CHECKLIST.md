@@ -76,13 +76,15 @@ requirements and the remaining moderate advisory.
 
 | Item | Value |
 |---|---|
-| Release version | _(fill at release)_ |
-| Release commit | _(fill at release)_ |
-| CI run id | _(fill at release)_ |
-| Artifact path | `docs-site/dist/docs/v<version>/` |
-| C1 review | _(pending)_ |
-| C2 review | _(pending)_ |
-| C3 review and publish approval | _(pending)_ |
+| Release version | 0.1.1 |
+| Release commit | `b956147` |
+| CI run id | `39336791528` |
+| Artifact path | `docs-site/dist/Kerangka/docs/v0.1.1/` |
+| Published site | https://hi-donwi.github.io/Kerangka/docs/v0.1.1/ |
+| Pages branch | `gh-pages` at `fbf5ad9` |
+| C1 review | not separately recorded |
+| C2 review | not separately recorded |
+| C3 review and publish approval | owner requested publication |
 
 ## Known follow-ups
 
@@ -91,8 +93,8 @@ requirements and the remaining moderate advisory.
 - The docs audit still reports ten moderate findings from the Expressive Code / PostCSS
   parser chain (GHSA-rj75-hqrm-r3gf). A compatible upstream fix is not available in its
   declared parser range; no cross-major override or security exception is granted.
-  Re-evaluate before C3. The kitchen-sink audit currently has zero findings.
-- `/docs/latest/` alias mechanism.
+  They remain open after the v0.1.1 publication. The kitchen-sink audit currently has zero findings.
+- `/Kerangka/docs/latest/` is a redirect to v0.1.1 on the published `gh-pages` branch.
 - Portal coverage: the prose in `docs/reference-applications.md` and
   `docs/usability-protocol.md` is not yet ported into the portal.
 - Studio pages: the Studio exists only on an unpushed branch, so no Studio page ships
