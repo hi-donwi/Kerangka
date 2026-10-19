@@ -11,8 +11,8 @@ from the core CLI's runtime requirements. CI selects the latest Node 22 patch.
 ```bash
 npm ci
 npm run audit:security
-npm run dev        # http://localhost:4321/docs/v0.1.1/
-npm run build      # static output under dist/docs/v0.1.1
+npm run dev        # http://localhost:4321/Kerangka/docs/v0.1.1/
+npm run build      # static output under dist/Kerangka/docs/v0.1.1
 npm run verify     # build, then check every internal link resolves
 npx playwright install chromium --only-shell
 npm run test:e2e    # built-site content, desktop/mobile navigation, and Pagefind search
@@ -44,13 +44,14 @@ development dependencies and fails on high/critical findings or scanner errors.
 {
   "version": "0.1.1",
   "channel": "release",
-  "basePath": "/docs/v0.1.1",
-  "outDir": "./dist/docs/v0.1.1"
+  "basePath": "/Kerangka/docs/v0.1.1",
+  "outDir": "./dist/Kerangka/docs/v0.1.1"
 }
 ```
 
-The current channel is **release** `v0.1.1`: the site builds to `/docs/v0.1.1/`.
-A `/docs/latest/` alias is created at publish time and must point at that version.
+The current channel is **release** `v0.1.1`. GitHub project Pages serves the
+repository at `/Kerangka/`, so the public path is `/Kerangka/docs/v0.1.1/`.
+A `/Kerangka/docs/latest/` alias is created at publish time and must point at that version.
 Preview builds use `/docs/preview/` and must not shadow a released version. See
 [RELEASE-CHECKLIST.md](./RELEASE-CHECKLIST.md).
 
