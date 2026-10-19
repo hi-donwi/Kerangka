@@ -40,14 +40,41 @@ test.describe("kitchen sink execution", () => {
     expect(crossOrigin, "preview mode must not call third-party hosts").toEqual([]);
   });
 
-  test("reset: reload returns to the default sample", async ({ page }) => {
+  test("reload preserves the selected sample but resets execution", async ({ page }) => {
     await page.goto("/");
     const nav = page.getByRole("navigation", { name: "samples" });
     await nav.getByRole("button", { name: "Action, Workflow, and Decision" }).click();
     await expect(page.locator("section.sample h2")).toHaveText("Action, Workflow, and Decision");
 
     await page.reload();
+    await expect(page.locator("section.sample h2")).toHaveText("Action, Workflow, and Decision");
+    await expect(page.getByRole("status")).toContainText("Choose an input");
+  });
+
+  test("deep links support reload and back/forward without serializing fixture data", async ({ page }) => {
+    await page.goto("/?sample=workflow&record=fixture#actor");
+    await expect(page.locator("section.sample h2")).toHaveText("Action, Workflow, and Decision");
+    await expect(page).toHaveURL(/\/\?sample=workflow$/);
+    const nav = page.getByRole("navigation", { name: "samples" });
+    await nav.getByRole("button", { name: "Field, Expression, and Validation" }).click();
+    await expect(page).toHaveURL(/\/\?sample=validation$/);
+    await page.goBack();
+    await expect(page.locator("section.sample h2")).toHaveText("Action, Workflow, and Decision");
+    await page.goForward();
+    await expect(page.locator("section.sample h2")).toHaveText("Field, Expression, and Validation");
+    await page.getByRole("button", { name: "Run empty-invoice", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("PASS: denied");
+    await page.getByRole("button", { name: "Reset sample" }).click();
+    await expect(page.getByRole("status")).toContainText("Choose an input");
+    await expect(page).toHaveURL(/\/\?sample=validation$/);
+    await page.reload();
+    await expect(page.locator("section.sample h2")).toHaveText("Field, Expression, and Validation");
+  });
+
+  test("unknown sample URLs safely fall back to the default ID", async ({ page }) => {
+    await page.goto("/?sample=__proto__&actor=fixture#state");
     await expect(page.locator("section.sample h2")).toHaveText("Expense Approval");
+    await expect(page).toHaveURL(/\/\?sample=approval$/);
   });
 
   test("validation and workflow execute all declared inputs; reset clears results", async ({ page }) => {

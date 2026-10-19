@@ -21,7 +21,7 @@
       },
       "docsPath": {
         "type": "string",
-        "description": "Path from the docs site to the page describing this sample."
+        "description": "Absolute, query-free path under the docs base that must resolve to a built HTML page."
       },
       "sourcePath": {
         "type": "string",

@@ -134,7 +134,7 @@ jobs:
         working-directory: docs-site
         run: npm run audit:security
 
-      - name: Build docs site and check internal links
+      - name: Build docs site and check internal and sample links
         working-directory: docs-site
         run: npm run verify
 

@@ -3,14 +3,32 @@ import manifest from "../../samples/manifest.json";
 import ExecutionWorker from "./execution.worker?worker&inline";
 import { LIMITS, type ExecutionReply } from "./execution";
 import { runInWorker } from "./runner";
+import { sampleRoute } from "./sample-route";
 import type { ManifestEntry } from "./types";
 
 const entries = manifest as ManifestEntry[];
+const sampleIds = entries.map((entry) => entry.id);
 const models = import.meta.glob<unknown>("../../generated/*/kir.json", { eager: true, import: "default" });
 const sources = import.meta.glob<string>("../../samples/*/*.kerangka.json", { eager: true, query: "?raw", import: "default" });
 
 export function App() {
-  const [selected, setSelected] = useState(entries[0]?.id ?? "");
+  const [selected, setSelected] = useState(() => sampleRoute(window.location.href, sampleIds).id);
+  useEffect(() => {
+    const sync = () => {
+      const route = sampleRoute(window.location.href, sampleIds);
+      window.history.replaceState(null, "", route.path);
+      setSelected(route.id);
+    };
+    sync();
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+  function select(id: string) {
+    const route = sampleRoute(window.location.href, sampleIds, id);
+    if (route.id === selected) return;
+    window.history.pushState(null, "", route.path);
+    setSelected(route.id);
+  }
   const entry = entries.find((e) => e.id === selected);
   return (
     <main className="ks">
@@ -23,7 +41,8 @@ export function App() {
           <button
             key={e.id}
             className={e.id === selected ? "active" : ""}
-            onClick={() => setSelected(e.id)}
+            onClick={() => select(e.id)}
+            aria-pressed={e.id === selected}
             type="button"
           >
             {e.title}

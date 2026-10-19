@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import manifest from "../../samples/manifest.json" with { type: "json" };
 
 test("versioned content and sidebar navigation work on desktop and mobile", async ({ page }) => {
   const errors: string[] = [];
@@ -33,4 +34,12 @@ test("built Pagefind search opens a matching content page", async ({ page }) => 
   await expect(page).toHaveURL(/\/docs\/preview\/concepts\/validation\/?(?:#.*)?$/);
   await expect(page.getByRole("heading", { name: "Field, Expression, and Validation", exact: true })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("every manifest docs link opens a built content page", async ({ page }) => {
+  for (const entry of manifest) {
+    const response = await page.goto(entry.docsPath);
+    expect(response?.status(), entry.id).toBe(200);
+    await expect(page.getByRole("main").getByRole("heading", { level: 1 }).first()).toBeVisible();
+  }
 });
