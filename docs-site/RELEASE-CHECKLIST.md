@@ -81,7 +81,7 @@ requirements and the remaining moderate advisory.
 | CI run id | `39336791528` |
 | Artifact path | `docs-site/dist/Kerangka/docs/v0.1.1/` |
 | Published site | https://hi-donwi.github.io/Kerangka/docs/v0.1.1/ |
-| Pages branch | `gh-pages` at `fbf5ad9` |
+| Pages branch | `gh-pages` at `788e353` |
 | C1 review | not separately recorded |
 | C2 review | not separately recorded |
 | C3 review and publish approval | owner requested publication |
