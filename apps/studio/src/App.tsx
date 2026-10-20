@@ -30,6 +30,7 @@ import { StatementInspector } from "./StatementInspector";
 import { DecisionTable } from "./DecisionTable";
 import { EventPolicy } from "./EventPolicy";
 import { ConnectorInspector } from "./ConnectorInspector";
+import { ConnectorPolicy } from "./ConnectorPolicy";
 import { ApiExplorer } from "./ApiExplorer";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
@@ -655,6 +656,7 @@ export function App() {
                     {entity ? <DecisionTable entity={entity} /> : null}
                     {entity ? <EventPolicy entity={entity} /> : null}
                     {entity ? <ConnectorInspector entity={entity} /> : null}
+                    <ConnectorPolicy />
                     {studio.authorized && token ? <BundleTools token={token} onImported={() => studio.reload()} /> : null}
                     {response ? <EjectPanel modelPath={response.bundle.entry} /> : null}
                     {response ? <RouteInspector response={response} /> : null}
