@@ -38,6 +38,7 @@ import { AiProposal } from "./AiProposal";
 import { ControlPlane } from "./ControlPlane";
 import { ReviewPanel } from "./ReviewPanel";
 import { ScaleBudget } from "./ScaleBudget";
+import { AuditPanel } from "./AuditPanel";
 import { ApiExplorer } from "./ApiExplorer";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
@@ -674,6 +675,7 @@ export function App() {
                     <ControlPlane />
                     <ReviewPanel />
                     <ScaleBudget />
+                    <AuditPanel />
                     {response ? <ApiExplorer response={response} /> : null}
                     {entity.operations.length ? (
                       <ScenarioPanel
