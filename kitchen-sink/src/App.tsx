@@ -1,10 +1,12 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import release from "../../docs-site/release.json";
 import manifest from "../../samples/manifest.json";
 import ExecutionWorker from "./execution.worker?worker&inline";
 import { LIMITS, type ExecutionReply } from "./execution";
 import { runInWorker } from "./runner";
 import { sampleRoute } from "./sample-route";
 import type { ManifestEntry } from "./types";
+import { publishedDocsHref, repositorySourceHref } from "./sample-links";
 import { uidlForSample } from "./uidl-files";
 
 const SampleUidlPreview = lazy(() => import("./uidl-preview").then((module) => ({ default: module.SampleUidlPreview })));
@@ -54,6 +56,20 @@ export function App() {
       </nav>
       {entry ? <SampleView key={entry.id} entry={entry} /> : <p>No sample selected.</p>}
     </main>
+  );
+}
+
+function SourceLink({ sourcePath }: { sourcePath: string }) {
+  const href = repositorySourceHref(sourcePath);
+  return (
+    <p className="meta">
+      <strong>Source:</strong>{" "}
+      {href ? (
+        <a href={href} target="_blank" rel="noreferrer"><code>{sourcePath}</code></a>
+      ) : (
+        <code>{sourcePath}</code>
+      )}
+    </p>
   );
 }
 
@@ -115,13 +131,12 @@ function SampleView({ entry }: { entry: ManifestEntry }) {
         <strong>Allowed modes:</strong> {entry.allowedModes.join(", ")}
       </p>
       <p className="meta">
-        <strong>Docs:</strong> <a href={entry.docsPath}>{entry.docsPath}</a>
+        <strong>Docs:</strong>{" "}
+        <a href={publishedDocsHref(entry.docsPath, release.site)} target="_blank" rel="noreferrer">
+          {entry.docsPath}
+        </a>
       </p>
-      {entry.sourcePath ? (
-        <p className="meta">
-          <strong>Source:</strong> <code>{entry.sourcePath}</code>
-        </p>
-      ) : null}
+      {entry.sourcePath ? <SourceLink sourcePath={entry.sourcePath} /> : null}
       <h3>Inputs</h3>
       <ul>
         {entry.inputs.map((i) => (

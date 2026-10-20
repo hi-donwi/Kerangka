@@ -42,6 +42,10 @@ permission to publish.
 
 ## Execution Boundary
 
+Docs and source links open the published site and the public repository. They are
+not loaded by the page, so preview mode still makes no cross-origin request until
+the person follows a link.
+
 Each manifest input declares `run: "Entity.operation"`, `record`, optional operation
 `input`, and optional `actor`. Expected outcomes can name an exact engine `error` code
 as well as expected record fields. The UI shows actual output, PASS/MISMATCH, and engine

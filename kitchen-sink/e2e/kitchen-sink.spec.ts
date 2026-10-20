@@ -15,6 +15,14 @@ test.describe("kitchen sink execution", () => {
     await expect(nav.getByRole("button")).toHaveCount(SAMPLES);
 
     await expect(page.locator("section.sample h2")).toHaveText("Expense Approval");
+    await expect(page.getByRole("link", { name: "/Kerangka/docs/v0.1.1/reference/samples/" })).toHaveAttribute(
+      "href",
+      "https://hi-donwi.github.io/Kerangka/docs/v0.1.1/reference/samples/",
+    );
+    await expect(page.getByRole("link", { name: "examples/expense-approval.kerangka.json" })).toHaveAttribute(
+      "href",
+      "https://github.com/hi-donwi/Kerangka/blob/main/examples/expense-approval.kerangka.json",
+    );
     await page.getByRole("button", { name: "Run submit-draft", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("PASS: ok");
     await expect(page.getByRole("status")).toContainText('"status": "submitted"');
