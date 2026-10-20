@@ -40,6 +40,7 @@ import { ReviewPanel } from "./ReviewPanel";
 import { ScaleBudget } from "./ScaleBudget";
 import { AuditPanel } from "./AuditPanel";
 import { RestorePanel } from "./RestorePanel";
+import { TargetProfile } from "./TargetProfile";
 import { ApiExplorer } from "./ApiExplorer";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
@@ -678,6 +679,7 @@ export function App() {
                     <ScaleBudget />
                     <AuditPanel />
                     <RestorePanel />
+                    <TargetProfile />
                     {response ? <ApiExplorer response={response} /> : null}
                     {entity.operations.length ? (
                       <ScenarioPanel
