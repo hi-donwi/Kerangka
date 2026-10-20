@@ -165,3 +165,17 @@ after heading-id normalization. Both projection paths preserve these titles. Sta
 forms also emit bounded field groups and runtime-owned `uidl-admin-*` layout hooks;
 use the matching UIDL Runtime stylesheet. See
 [ADR-0046](docs/adr/0046-static-form-presentation-hooks.md).
+
+## Read-Only Studio
+
+[Kerangka Studio](docs/studio/read-only.md) inspects one local model, entity/field metadata,
+source-linked diagnostics, generated OpenAPI/SQL, and static synthetic UIDL screens.
+Build the checkout, then launch the loopback-only host:
+
+```sh
+node packages/cli/dist/bin/kerangka.js studio packages/cli/test/fixtures/studio/approval.kerangka.json --port 8080
+```
+
+Use its private launch link; it grants read access to the selected project for that process.
+No source writes, business API, database connection, or connector execution is enabled.
+The [foundation and security gates](docs/studio/README.md) remain separate from production readiness.

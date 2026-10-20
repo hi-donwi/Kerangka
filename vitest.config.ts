@@ -51,6 +51,6 @@ export default defineConfig({
     // kitchen-sink's Playwright specs live in this repository but run under
     // `npm run test:e2e` inside that package; collecting them here fails, because
     // @playwright/test is not installed at the root.
-    exclude: [...configDefaults.exclude, "kitchen-sink/e2e/**", "docs-site/**"]
+    exclude: [...configDefaults.exclude, "kitchen-sink/e2e/**", "docs-site/**", "apps/studio/e2e/**"]
   }
 });

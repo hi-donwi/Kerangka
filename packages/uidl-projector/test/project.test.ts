@@ -28,7 +28,7 @@ describe("RecipeProjector.views", () => {
     expect(new RecipeProjector(invoicing).views()).toEqual([
       { id: "home", kind: "dashboard", route: "/" },
       { id: "invoices", kind: "list", entity: "Invoice", route: "/invoices" },
-      { id: "invoice", kind: "form", entity: "Invoice", route: "/invoice/:id" },
+      { id: "invoice", kind: "form", entity: "Invoice", route: "/invoice/:id", sections: [["number","customer","issuedOn","dueDate"],["lines"],["total","status"]] },
       { id: "customer-list", kind: "list", entity: "Customer", route: "/customer-list" },
       { id: "customer-form", kind: "form", entity: "Customer", route: "/customer-form/:id" },
     ]);

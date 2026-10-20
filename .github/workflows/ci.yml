@@ -66,6 +66,14 @@ jobs:
       - name: Conformance suite
         run: npm run test:conformance
 
+      - name: Install Studio browser
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: "0"
+        run: npx playwright install --with-deps chromium
+
+      - name: Studio read-only browser and isolation tests
+        run: npm run test:studio:e2e
+
       - name: Examples (kerangka check + kerangka verify + kerangka test)
         run: npm run examples:verify
 

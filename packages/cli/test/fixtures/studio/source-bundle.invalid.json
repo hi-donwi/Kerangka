@@ -1,0 +1,12 @@
+{
+  "kind": "kerangka.studio.source",
+  "version": "9.0",
+  "revision": "draft-1",
+  "entry": "../outside.json",
+  "sources": { "../outside.json": { "format": "json", "text": "{}" } },
+  "application": {
+    "pages": {},
+    "routes": [],
+    "preview": { "profile": "write", "data": "production" }
+  }
+}
