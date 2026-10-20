@@ -35,6 +35,7 @@ import { SchemaImpact } from "./SchemaImpact";
 import { BuildManifest } from "./BuildManifest";
 import { RecoveryPanel } from "./RecoveryPanel";
 import { AiProposal } from "./AiProposal";
+import { ControlPlane } from "./ControlPlane";
 import { ApiExplorer } from "./ApiExplorer";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
@@ -668,6 +669,7 @@ export function App() {
                     <BuildManifest />
                     <RecoveryPanel />
                     <AiProposal />
+                    <ControlPlane />
                     {response ? <ApiExplorer response={response} /> : null}
                     {entity.operations.length ? (
                       <ScenarioPanel
