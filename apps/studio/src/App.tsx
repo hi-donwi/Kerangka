@@ -34,6 +34,7 @@ import { ConnectorPolicy } from "./ConnectorPolicy";
 import { SchemaImpact } from "./SchemaImpact";
 import { BuildManifest } from "./BuildManifest";
 import { RecoveryPanel } from "./RecoveryPanel";
+import { AiProposal } from "./AiProposal";
 import { ApiExplorer } from "./ApiExplorer";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
@@ -666,6 +667,7 @@ export function App() {
                     {response ? <SchemaImpact response={response} /> : null}
                     <BuildManifest />
                     <RecoveryPanel />
+                    <AiProposal />
                     {response ? <ApiExplorer response={response} /> : null}
                     {entity.operations.length ? (
                       <ScenarioPanel
