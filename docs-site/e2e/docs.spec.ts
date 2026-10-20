@@ -36,6 +36,14 @@ test("built Pagefind search opens a matching content page", async ({ page }) => 
   expect(errors).toEqual([]);
 });
 
+test("reference catalogue and usability protocol are published", async ({ page }) => {
+  await page.goto("/Kerangka/docs/v0.1.1/reference/applications/");
+  await expect(page.getByRole("heading", { name: "Reference Applications", exact: true })).toBeVisible();
+  await expect(page.getByRole("main").getByRole("link", { name: "samples reference", exact: true })).toBeVisible();
+  await page.goto("/Kerangka/docs/v0.1.1/reference/usability-protocol/");
+  await expect(page.getByRole("heading", { name: "Learner Usability Protocol", exact: true })).toBeVisible();
+});
+
 test("every manifest docs link opens a built content page", async ({ page }) => {
   for (const entry of manifest) {
     const response = await page.goto(entry.docsPath);

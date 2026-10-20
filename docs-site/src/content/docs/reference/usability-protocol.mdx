@@ -1,0 +1,58 @@
+---
+title: Learner Usability Protocol
+description: How non-programmers are tested against the claim that JSON is enough
+---
+
+This protocol is a v1.0 exit requirement. It tests people who know basic JSON and
+have not written professional backend code.
+
+## Objectives
+
+1. Test the claim that a JSON document is enough for most business software.
+2. Check that a non-programmer can build, change, understand, and debug application
+   logic from a Kerangka document.
+3. Check that `kerangka check` hints are enough to repair a mistake without an expert.
+
+## Participants
+
+- Five to eight people.
+- Able to edit a text file in an editor or a web playground.
+- Understand key-value pairs, lists, and numbers in JSON.
+- Have not written professional backend code or SQL.
+
+## Tasks
+
+### Scaffolding and first run (5 minutes)
+
+Run `npx kerangka dev todo.kerangka.json`. Observe whether the participant opens the
+local app and uses the rendered screen.
+
+### Add a constrained field (10 minutes)
+
+Add a `notes` string field with a maximum length of 200 characters to `Customer` in
+`invoicing.kerangka.json`. Observe whether the shorthand syntax is usable.
+
+### Add a rule and recover from an error (10 minutes)
+
+Add a rule that `creditLimit` is at most 50000. Introduce a syntax error, run
+`kerangka check`, and use the compiler hint to fix it. Observe whether the hint
+explains the correction.
+
+### Change a decision table (10 minutes)
+
+Open `leave-request.kerangka.json` and add a row to `approverRouting`: leave longer
+than 10 days routes to `board-of-directors`. Observe whether the table is
+understandable as JSON.
+
+## Success criteria
+
+| Metric | Target |
+|---|---|
+| Task completion rate | At least 80 percent without intervention |
+| Time to a running app | Under 15 minutes from the start of the task |
+| Error recovery rate | At least 75 percent of validation errors fixed on the first attempt using compiler hints |
+| Post-test satisfaction | Net Promoter Score of at least +40 for ease of use |
+
+This protocol measures learning, not the browser sample runner. The
+[first model](/Kerangka/docs/v0.1.1/getting-started/first-model) tutorial is the
+closest published walkthrough.

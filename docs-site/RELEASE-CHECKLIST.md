@@ -95,7 +95,7 @@ requirements and the remaining moderate advisory.
   declared parser range; no cross-major override or security exception is granted.
   They remain open after the v0.1.1 publication. The kitchen-sink audit currently has zero findings.
 - `/Kerangka/docs/latest/` is a redirect to v0.1.1 on the published `gh-pages` branch.
-- Portal coverage: the prose in `docs/reference-applications.md` and
-  `docs/usability-protocol.md` is not yet ported into the portal.
+- Portal coverage: `docs/reference-applications.md` and `docs/usability-protocol.md`
+  are published under Reference.
 - Studio pages: the Studio exists only on an unpushed branch, so no Studio page ships
   with this release.

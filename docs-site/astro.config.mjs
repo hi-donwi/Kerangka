@@ -39,7 +39,9 @@ export default defineConfig({
           items: [
             { label: 'CLI Reference', link: '/reference/cli/' },
             { label: 'Compatibility Matrix', link: '/reference/compatibility/' },
-            { label: 'Samples Reference', link: '/reference/samples/' }
+            { label: 'Samples Reference', link: '/reference/samples/' },
+            { label: 'Reference Applications', link: '/reference/applications/' },
+            { label: 'Usability Protocol', link: '/reference/usability-protocol/' }
           ]
         }
       ],

@@ -39,7 +39,8 @@ terminates workers after 1000 ms and limits output previews to 8 KiB. Unsupporte
 unavailable, or timed-out runs show model source with a reason. These limits are for
 shipped synthetic fixtures, not arbitrary-code sandboxing.
 
-UIDL-Runtime remains a dependency; a rendered UIDL sample is still a separate slice.
+The kitchen sink can open a read-only UIDL preview of the generated screens. That
+preview does not run engine operations and cannot persist or apply writes.
 
 ## Verification
 

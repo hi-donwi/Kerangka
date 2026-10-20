@@ -27,5 +27,5 @@ against committed fixtures in CI.
 - The projectors are **read-only**: they never execute actions or touch storage.
 - Dashboard figures are not in the static UIDL output; a running server computes them at
   `GET /screens/{viewId}`.
-- UIDL-Runtime is a separate product. Rendering these documents needs that runtime bound
-  in its own session; this site only shows the generated JSON.
+- UIDL-Runtime is a separate product. This site documents the generated JSON. The
+  kitchen sink can render those screens read-only; it does not apply writes.
