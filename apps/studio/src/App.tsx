@@ -18,6 +18,7 @@ import { EntityInspector } from "./EntityInspector";
 import { FormSectionInspector } from "./FormSectionInspector";
 import { WorkflowGraph } from "./WorkflowGraph";
 import { AccessMatrix } from "./AccessMatrix";
+import { MaterializePage } from "./MaterializePage";
 import { ScenarioPanel } from "./ScenarioPanel";
 import { BundleTools } from "./BundleTools";
 import { runScenarioRequest } from "./studio-api";
@@ -534,6 +535,23 @@ export function App() {
                   </button>
                 ))}
               </div>
+              {screen?.kind === "form" ? (
+                <MaterializePage
+                  view={screen.label}
+                  sourceText={response?.bundle.sources[response.bundle.entry]?.text ?? ""}
+                  onMaterialize={(path, text) => {
+                    void (async () => {
+                      const currentSources = unsavedHistory(history ?? openHistory(response, selection)) ? currentStep(history!).response.bundle.sources : response.bundle.sources;
+                      const next = await studio.applyDraft({
+                        expectedRevision: (history ?? openHistory(response, selection)).baseRevision,
+                        operations: [],
+                        sources: { ...currentSources, [path]: { format: "json", text } },
+                      });
+                      if (next.applied.length) remember(pushHistory(history ?? openHistory(response, selection), { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }), "Page materialized as authored source.");
+                    })();
+                  }}
+                />
+              ) : null}
               {screen?.kind === "form" && screen.sections && screen.sectionTitles ? (
                 <FormSectionInspector
                   key={`${response.bundle.revision}:${screen.id}`}
