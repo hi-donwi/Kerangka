@@ -88,12 +88,16 @@ requirements and the remaining moderate advisory.
 
 ## Known follow-ups
 
-- UIDL-Runtime is retained; UIDL rendering is not part of the engine execution slice.
-- Mid-tier mobile TTI measurements and kitchen-sink sample deep links remain open.
+- UIDL-Runtime renders generated screens in a read-only preview. That preview is not
+  the engine execution slice.
+- Mid-tier mobile TTI is measured at 412x823, 2x scale, 4x CPU, and Slow 4G. A local
+  run on 2026-10-20 was under 1.1 s. CI asserts an 8 s regression ceiling. Sample deep
+  links are in place.
 - The docs audit still reports ten moderate findings from the Expressive Code / PostCSS
-  parser chain (GHSA-rj75-hqrm-r3gf). A compatible upstream fix is not available in its
-  declared parser range; no cross-major override or security exception is granted.
-  They remain open after the v0.1.1 publication. The kitchen-sink audit currently has zero findings.
+  parser chain (GHSA-rj75-hqrm-r3gf). Re-checked on 2026-10-20: installed parser 6.1.4,
+  fixed line 7.1.6, and the only audit fix path is a semver-major Starlight downgrade
+  to 0.21.5. No cross-major override or security exception is granted.
+  The kitchen-sink audit currently has zero findings.
 - `/Kerangka/docs/latest/` is a redirect to v0.1.1 on the published `gh-pages` branch.
 - Portal coverage: `docs/reference-applications.md` and `docs/usability-protocol.md`
   are published under Reference.

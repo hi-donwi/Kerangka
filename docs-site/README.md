@@ -87,11 +87,14 @@ configuration now uses the documented `docsLoader()` API rather than legacy coll
 compatibility. The Markdown processor peer is declared explicitly.
 
 On 2026-10-18, the portal's complete npm audit reports **no high/critical findings**,
-down from one of each. It still reports ten moderate findings along the single
-Expressive Code / `postcss-nested` / `postcss-selector-parser` dependency chain
+down from one of each. Re-checked on 2026-10-20, it still reports ten moderate findings
+along the single Expressive Code 0.44.2 / `postcss-nested` 6.2.0 /
+`postcss-selector-parser` 6.1.4 chain
 ([GHSA-rj75-hqrm-r3gf](https://github.com/advisories/GHSA-rj75-hqrm-r3gf)). The fixed
-parser is 7.1.6+, while the upstream package requires 6.x. No cross-major override,
-downgrade, or security exception is applied. Re-evaluate this residual finding before C3.
+parser is 7.1.6+. The installed `postcss-nested` range is `^6.1.1`, and the only
+`npm audit` fix path downgrades Starlight to 0.21.5, a semver-major move that would
+undo the Astro 7 upgrade. No cross-major override, downgrade, or security exception
+is applied.
 
 `audit:security` is a high/critical gate, not a claim that the complete audit has no
 findings. Use `npm audit --include=dev --json` to inspect all severities, and preserve
