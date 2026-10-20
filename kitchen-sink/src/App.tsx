@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import manifest from "../../samples/manifest.json";
 import ExecutionWorker from "./execution.worker?worker&inline";
 import { LIMITS, type ExecutionReply } from "./execution";
 import { runInWorker } from "./runner";
 import { sampleRoute } from "./sample-route";
 import type { ManifestEntry } from "./types";
+import { uidlForSample } from "./uidl-files";
+
+const SampleUidlPreview = lazy(() => import("./uidl-preview").then((module) => ({ default: module.SampleUidlPreview })));
 
 const entries = manifest as ManifestEntry[];
 const sampleIds = entries.map((entry) => entry.id);
@@ -51,6 +54,23 @@ export function App() {
       </nav>
       {entry ? <SampleView key={entry.id} entry={entry} /> : <p>No sample selected.</p>}
     </main>
+  );
+}
+
+function UidlSection({ sampleId }: { sampleId: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section aria-label="UIDL preview">
+      <h3>UIDL preview</h3>
+      <p className="note">Generated screens for this sample. Nothing is stored or sent to a host.</p>
+      {open ? (
+        <Suspense fallback={<p>Loading UIDL preview...</p>}>
+          <SampleUidlPreview documents={uidlForSample(sampleId)} />
+        </Suspense>
+      ) : (
+        <button type="button" onClick={() => setOpen(true)}>Show UIDL preview</button>
+      )}
+    </section>
   );
 }
 
@@ -141,11 +161,12 @@ function SampleView({ entry }: { entry: ManifestEntry }) {
           </li>
         ))}
       </ul>
+      <UidlSection sampleId={entry.id} />
       <p className="note">
         One operation per fresh worker; {LIMITS.wallClockMs} ms deadline. Limits: 16 KiB inputs,
         256 KiB KIR, 16 entities, 128 operations, depth 32, 20,000 structural nodes, 8 KiB output.
-        Effects are shown as data, never dispatched or persisted. UIDL-Runtime is retained;
-        UIDL rendering is not part of this execution view.
+        Effects are shown as data, never dispatched or persisted. The UIDL preview is read-only:
+        it does not persist data and has no permission to apply writes.
       </p>
     </section>
   );

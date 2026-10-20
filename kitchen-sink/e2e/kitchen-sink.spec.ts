@@ -206,6 +206,22 @@ test.describe("kitchen sink execution", () => {
     expect(activeTag).toBe("BUTTON");
   });
 
+  test("UIDL preview renders a generated screen without host writes", async ({ page }) => {
+    const requests: string[] = [];
+    page.on("request", (request) => requests.push(`${request.method()} ${request.url()}`));
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Show UIDL preview", exact: true }).click();
+    const screens = page.getByRole("group", { name: "UIDL screens" });
+    await expect(screens.getByRole("button", { name: "expenses", exact: true })).toBeVisible();
+    await screens.getByRole("button", { name: "expenses", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Expenses", exact: true })).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow, "UIDL preview must not widen the page").toBeLessThanOrEqual(0);
+    expect(requests.filter((entry) => !entry.startsWith("GET ") && !entry.startsWith("HEAD "))).toEqual([]);
+    expect(requests.filter((entry) => !entry.includes("127.0.0.1:4173") && !entry.includes("localhost:4173"))).toEqual([]);
+  });
+
   test("execution budget: static assets stay under the JS budget", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "Run submit-draft", exact: true }).click();

@@ -58,6 +58,7 @@ Effects are inspectable data, never delivered, and no storage adapter is importe
 Vite's development server uses HMR and is not this production boundary. This runner
 accepts only shipped fixtures; it is not a security sandbox for arbitrary code or models.
 
-`uidl-runtime` is retained by decision. Rendering UIDL documents is a separate slice and
-is not represented as complete by these engine runs. C2 owner acceptance and C3
-publication are still separate gates.
+`uidl-runtime` renders the sample's generated screens in a read-only preview. The
+preview uses an in-memory adapter that does not persist, and it has no mutation
+handler, so writes fail closed. Opening the preview is separate from engine
+execution and does not change the execution result.
