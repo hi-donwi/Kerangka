@@ -89,7 +89,8 @@ export type FieldDefinitionInput = string | Record<string, unknown>;
 export type DraftOperation =
   | { op: "addEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
   | { op: "setEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
-  | { op: "setFormSections"; view: string; sections: string[][]; sectionTitles: string[] };
+  | { op: "setFormSections"; view: string; sections: string[][]; sectionTitles: string[] }
+  | { op: "setTransition"; entity: string; transition: string; from: string[]; to: string; roles: string[]; when?: string };
 
 export interface DraftRequest {
   expectedRevision: string;

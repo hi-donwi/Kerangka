@@ -89,6 +89,10 @@ function parseDraftRequest(raw: string): DraftRequest {
       operations.push(parseFormSections(entry));
       continue;
     }
+    if (entry.op === "setTransition") {
+      operations.push(parseTransition(entry));
+      continue;
+    }
     if (entry.op !== "addEntityField" && entry.op !== "setEntityField") throw new StudioError("STUDIO_DRAFT_REQUEST");
     const { entity, field } = entry;
     if (typeof entity !== "string" || entity.length < 1 || entity.length > 128) throw new StudioError("STUDIO_DRAFT_REQUEST");
@@ -137,6 +141,25 @@ function parseFormSections(entry: Record<string, unknown>): DraftOperation {
     parsedTitles.push(title);
   }
   return { op: "setFormSections", view, sections: parsed, sectionTitles: parsedTitles };
+}
+
+function parseTransition(entry: Record<string, unknown>): DraftOperation {
+  const entity = entry.entity;
+  const transition = entry.transition;
+  const from = entry.from;
+  const to = entry.to;
+  const roles = entry.roles;
+  const when = entry.when;
+  if (typeof entity !== "string" || entity.length < 1 || entity.length > 128) throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (typeof transition !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(transition) || transition.length > 64)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (!Array.isArray(from) || from.length < 1 || from.length > 16 || !from.every((item) => typeof item === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(item)))
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (typeof to !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(to)) throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (!Array.isArray(roles) || !roles.every((item) => typeof item === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(item)))
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (when !== undefined && (typeof when !== "string" || when.length > 512)) throw new StudioError("STUDIO_DRAFT_REQUEST");
+  return { op: "setTransition", entity, transition, from, to, roles, ...(when ? { when } : {}) };
 }
 
 function parseSourceMap(map: unknown, code: "STUDIO_DRAFT_REQUEST" | "STUDIO_SAVE_REQUEST"): Record<string, SourceText> {

@@ -18,6 +18,7 @@ import { EntityInspector } from "./EntityInspector";
 import { FormSectionInspector } from "./FormSectionInspector";
 import { WorkflowGraph } from "./WorkflowGraph";
 import { AccessMatrix } from "./AccessMatrix";
+import { TransitionEditor } from "./TransitionEditor";
 import { Diagnostics } from "./Diagnostics";
 import { StudioConflict, StudioSaveRefused } from "./studio-api";
 import type { SourceText } from "../../../packages/studio-server/src/contracts.js";
@@ -186,6 +187,40 @@ export function App() {
         error: error instanceof Error ? error.message : "The draft could not be applied.",
         notice: null,
       });
+    }
+  };
+  const setTransition = async (entityName: string, transition: string, next: { from: string[]; to: string; roles: string[]; when?: string }) => {
+    if (!response || !history) return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : undefined;
+    setDraft((state) => ({ ...state, busy: true, error: null }));
+    try {
+      const result = await studio.applyDraft({
+        expectedRevision: history.baseRevision,
+        operations: [{ op: "setTransition", entity: entityName, transition, ...next }],
+        ...(currentSources ? { sources: currentSources } : {}),
+      });
+      if (result.applied.length === 0) {
+        setDraft((state) => ({
+          ...state,
+          busy: false,
+          error: result.diagnostics.find((item) => item.severity === "error")?.message ?? "The transition could not be applied.",
+        }));
+        return;
+      }
+      remember(
+        pushHistory(history, {
+          label: result.applied.join(", "),
+          selection: { kind: "entity", id: entityName },
+          response: result,
+        }),
+        `${result.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    } catch (error) {
+      setDraft((state) => ({
+        ...state,
+        busy: false,
+        error: error instanceof Error ? error.message : "The transition could not be applied.",
+      }));
     }
   };
   const setFormSections = async (view: string, sections: string[][], sectionTitles: string[]) => {
@@ -546,7 +581,29 @@ export function App() {
                           }
                         />
                         {entity.operations.some((item) => item.kind === "transition") ? (
-                          <WorkflowGraph entity={entity} />
+                          <>
+                            <WorkflowGraph entity={entity} />
+                            {entity.operations
+                              .filter((item) => item.kind === "transition")
+                              .map((item) => (
+                                <TransitionEditor
+                                  key={item.name}
+                                  entity={entity.name}
+                                  transition={item.name}
+                                  from={item.from ?? []}
+                                  to={item.to ?? ""}
+                                  roles={item.roles}
+                                  when={undefined}
+                                  allStates={Array.from(
+                                    new Set(entity.operations.flatMap((operation) => [...(operation.from ?? []), operation.to ?? ""]).filter(Boolean)),
+                                  )}
+                                  allRoles={inspection?.roles ?? []}
+                                  busy={draft.busy}
+                                  error={draft.error}
+                                  onApply={(next) => void setTransition(entity.name, item.name, next)}
+                                />
+                              ))}
+                          </>
                         ) : null}
                         {entity.permissions ? (
                           <AccessMatrix

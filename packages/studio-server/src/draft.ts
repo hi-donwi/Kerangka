@@ -128,6 +128,57 @@ function applyFormSections(
   return titlesNode ? setValue(text, titlesNode, titlesJson) : insertEntry(text, viewAgain, "sectionTitles", titlesJson);
 }
 
+function transitionJson(from: string[], to: string, roles: string[], when?: string): string {
+  const value: Record<string, unknown> = { from: from.length === 1 ? from[0] : from, to, roles };
+  if (when) value.when = when;
+  return JSON.stringify(value);
+}
+
+function applyTransition(
+  entry: string,
+  source: SourceText,
+  entity: string,
+  transition: string,
+  from: string[],
+  to: string,
+  roles: string[],
+  when: string | undefined,
+  diagnostics: StudioDiagnostic[],
+): string | undefined {
+  const path = `/entities/${pointer(entity)}/workflow/transitions/${pointer(transition)}`;
+  if (source.format !== "json") {
+    diagnostics.push({ severity: "error", code: "STUDIO_WRITE_UNSUPPORTED", source: entry, path, message: "Only JSON sources accept visual writes in this version." });
+    return undefined;
+  }
+  let root: JsonNode;
+  try {
+    root = parseJson(source.text);
+  } catch (error) {
+    diagnostics.push({ severity: "error", code: "STUDIO_DRAFT_PARSE", source: entry, message: error instanceof Error ? error.message : "The source is not valid JSON." });
+    return undefined;
+  }
+  const entityNode = findPath(root, ["entities", entity]);
+  const workflowNode = findPath(root, ["entities", entity, "workflow"]);
+  const transitionsNode = findPath(root, ["entities", entity, "workflow", "transitions"]);
+  const statesNode = findPath(root, ["entities", entity, "workflow", "states"]);
+  const states = statesNode?.kind === "array" ? statesNode.items.map((node) => (node.kind === "string" ? JSON.parse(source.text.slice(node.start, node.end)) : "")).filter(Boolean) : [];
+  if (!entityNode || entityNode.kind !== "object" || !workflowNode || workflowNode.kind !== "object" || !transitionsNode || transitionsNode.kind !== "object") {
+    diagnostics.push({ severity: "error", code: "STUDIO_OPERATION_TARGET", source: entry, path: `/entities/${pointer(entity)}`, message: `Entity '${entity}' has no editable workflow.` });
+    return undefined;
+  }
+  const missingStates = [to, ...from].filter((state) => states.length > 0 && !states.includes(state));
+  if (missingStates.length) {
+    diagnostics.push({ severity: "error", code: "STUDIO_FIELD_MISSING", source: entry, path, message: `Transition refers to an unknown state: ${missingStates.join(", ")}.` });
+    return undefined;
+  }
+  const value = transitionJson(from, to, roles, when);
+  const existing = findPath(root, ["entities", entity, "workflow", "transitions", transition]);
+  let text = source.text;
+  if (existing) text = setValue(text, existing, value);
+  else text = insertEntry(text, transitionsNode, transition, value);
+  return text;
+}
+
 export function sourceDiagnostics(entry: string, text: string): StudioDiagnostic[] {
   try {
     compile(text, { sourceFile: entry });
@@ -188,6 +239,25 @@ export function applyDraftOperations(
 
   for (const operation of request.operations) {
     const source = sources[snapshot.entry]!;
+    if (operation.op === "setTransition") {
+      const editedText = applyTransition(
+        snapshot.entry,
+        source,
+        operation.entity,
+        operation.transition,
+        operation.from,
+        operation.to,
+        operation.roles,
+        operation.when,
+        diagnostics,
+      );
+      if (editedText) {
+        sources[snapshot.entry] = { format: "json", text: editedText };
+        edited.add(snapshot.entry);
+        applied.push(`setTransition ${operation.entity}.${operation.transition}`);
+      }
+      continue;
+    }
     if (operation.op === "setFormSections") {
       const editedText = applyFormSections(
         snapshot.entry,
