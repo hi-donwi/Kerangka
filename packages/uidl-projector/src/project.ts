@@ -223,9 +223,16 @@ export class RecipeProjector {
       } else if (typeof def.list === "string" && this.kir.entities[def.list]) {
         screens.push({ id, kind: "list", entity: def.list, route: `/${id}` });
       } else if (typeof def.form === "string" && this.kir.entities[def.form]) {
-        const formScreen = {
+        const formScreen: {
+          id: string;
+          kind: "form";
+          entity: string;
+          route: string;
+          sections?: string[][];
+          sectionTitles?: string[];
+        } = {
           id,
-          kind: "form" as const,
+          kind: "form",
           entity: def.form,
           route: `/${id}/:id`,
         };
