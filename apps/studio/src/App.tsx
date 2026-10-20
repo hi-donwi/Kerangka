@@ -15,6 +15,7 @@ import {
 import { PreviewFrame } from "./PreviewFrame";
 import { ProjectExplorer, type Selection } from "./ProjectExplorer";
 import { EntityInspector } from "./EntityInspector";
+import { FormSectionInspector } from "./FormSectionInspector";
 import { Diagnostics } from "./Diagnostics";
 import { StudioConflict, StudioSaveRefused } from "./studio-api";
 import type { SourceText } from "../../../packages/studio-server/src/contracts.js";
@@ -183,6 +184,41 @@ export function App() {
         error: error instanceof Error ? error.message : "The draft could not be applied.",
         notice: null,
       });
+    }
+  };
+  const setFormSections = async (view: string, sections: string[][], sectionTitles: string[]) => {
+    if (!response || !history || !screen) return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : undefined;
+    setDraft((state) => ({ ...state, busy: true, error: null }));
+    try {
+      const next = await studio.applyDraft({
+        expectedRevision: history.baseRevision,
+        operations: [{ op: "setFormSections", view, sections, sectionTitles }],
+        ...(currentSources ? { sources: currentSources } : {}),
+      });
+      if (next.applied.length === 0) {
+        setDraft((state) => ({
+          ...state,
+          busy: false,
+          error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "The section layout could not be applied.",
+        }));
+        return;
+      }
+      remember(
+        pushHistory(history, {
+          label: next.applied.join(", "),
+          selection: { kind: "screen", id: screen.id },
+          response: next,
+        }),
+        `${next.applied.join(", ")} - preview regenerated; emitted UIDL was not written.`,
+      );
+      setTab("preview");
+    } catch (error) {
+      setDraft((state) => ({
+        ...state,
+        busy: false,
+        error: error instanceof Error ? error.message : "The section layout could not be applied.",
+      }));
     }
   };
   const applySource = async (path: string, text: string) => {
@@ -455,6 +491,17 @@ export function App() {
                   </button>
                 ))}
               </div>
+              {screen?.kind === "form" && screen.sections && screen.sectionTitles ? (
+                <FormSectionInspector
+                  key={`${response.bundle.revision}:${screen.id}`}
+                  view={screen.label}
+                  sections={screen.sections}
+                  sectionTitles={screen.sectionTitles}
+                  busy={draft.busy}
+                  error={draft.error}
+                  onApply={(sections, sectionTitles) => void setFormSections(screen.label, sections, sectionTitles)}
+                />
+              ) : null}
               <section
                 id="inspection-content"
                 className="inspection-content"

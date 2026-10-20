@@ -216,6 +216,22 @@ test("undo and redo share visual and source edits and restore the selection", as
   expect(await readFile(join(root, "app.kerangka.json"), "utf8")).toBe(model);
 });
 
+test("configures a generated form section without writing emitted UIDL", async ({ page }) => {
+  await page.goto(host.url);
+  const help = await readFile(join(root, "help.uidl.json"), "utf8");
+  await page.getByRole("navigation", { name: "Screens" }).getByRole("button", { name: /^request form$/ }).click();
+  await expect(page.frameLocator("iframe").getByRole("heading", { name: "Identity", exact: true })).toBeVisible();
+  const form = page.getByRole("form", { name: "Configure form sections for request" });
+  await form.getByLabel("Section 1 title").fill("Applicant");
+  await form.getByRole("button", { name: "Move down" }).first().click();
+  await form.getByRole("button", { name: "Apply section layout" }).click();
+  await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+  expect(await readFile(join(root, "app.kerangka.json"), "utf8")).toBe(model);
+  expect(await readFile(join(root, "help.uidl.json"), "utf8")).toBe(help);
+});
+
 test("drafts an added entity field as a preview and never writes the file", async ({ page }) => {
   await page.goto(host.url);
   await expect(page.getByText("READ ONLY", { exact: true })).toBeVisible();

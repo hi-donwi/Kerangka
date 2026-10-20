@@ -47,6 +47,87 @@ export function changedSources(before: Record<string, SourceText>, after: Record
   return Object.keys(after).filter((path) => after[path]?.text !== before[path]?.text);
 }
 
+function stringValue(text: string, node: JsonNode | undefined): string | undefined {
+  if (!node || node.kind !== "string") return undefined;
+  try {
+    const value = JSON.parse(text.slice(node.start, node.end));
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function applyFormSections(
+  entry: string,
+  source: SourceText,
+  view: string,
+  sections: string[][],
+  sectionTitles: string[],
+  diagnostics: StudioDiagnostic[],
+): string | undefined {
+  const path = `/views/${pointer(view)}`;
+  if (source.format !== "json") {
+    diagnostics.push({
+      severity: "error",
+      code: "STUDIO_WRITE_UNSUPPORTED",
+      source: entry,
+      path,
+      message: "Only JSON sources accept visual writes in this version.",
+      hint: "YAML stays source-only.",
+    });
+    return undefined;
+  }
+  let root: JsonNode;
+  try {
+    root = parseJson(source.text);
+  } catch (error) {
+    diagnostics.push({
+      severity: "error",
+      code: "STUDIO_DRAFT_PARSE",
+      source: entry,
+      message: error instanceof Error ? error.message : "The source is not valid JSON.",
+    });
+    return undefined;
+  }
+  const viewNode = findPath(root, ["views", view]);
+  const formNode = findPath(root, ["views", view, "form"]);
+  const entity = stringValue(source.text, formNode);
+  if (!viewNode || viewNode.kind !== "object" || !entity) {
+    diagnostics.push({
+      severity: "error",
+      code: "STUDIO_OPERATION_TARGET",
+      source: entry,
+      path,
+      message: `View '${view}' is not a generated form recipe.`,
+      hint: "Authored UIDL stays source-only. Configure a view with a form target.",
+    });
+    return undefined;
+  }
+  const fields = findPath(root, ["entities", entity, "fields"]);
+  const known = new Set(fields?.kind === "object" ? fields.entries.map((entry) => entry.key) : []);
+  const missing = sections.flat().filter((name) => !known.has(name));
+  if (missing.length) {
+    diagnostics.push({
+      severity: "error",
+      code: "STUDIO_FIELD_MISSING",
+      source: entry,
+      path: `${path}/sections`,
+      message: `Form section refers to a field that is not on '${entity}': ${missing.join(", ")}.`,
+    });
+    return undefined;
+  }
+  const sectionsJson = JSON.stringify(sections);
+  const titlesJson = JSON.stringify(sectionTitles);
+  let text = source.text;
+  const sectionsNode = findPath(root, ["views", view, "sections"]);
+  text = sectionsNode ? setValue(text, sectionsNode, sectionsJson) : insertEntry(text, viewNode, "sections", sectionsJson);
+  const again = parseJson(text);
+  const viewAgain = findPath(again, ["views", view]);
+  const titlesNode = findPath(again, ["views", view, "sectionTitles"]);
+  if (!viewAgain || viewAgain.kind !== "object") return undefined;
+  return titlesNode ? setValue(text, titlesNode, titlesJson) : insertEntry(text, viewAgain, "sectionTitles", titlesJson);
+}
+
 export function sourceDiagnostics(entry: string, text: string): StudioDiagnostic[] {
   try {
     compile(text, { sourceFile: entry });
@@ -107,6 +188,22 @@ export function applyDraftOperations(
 
   for (const operation of request.operations) {
     const source = sources[snapshot.entry]!;
+    if (operation.op === "setFormSections") {
+      const editedText = applyFormSections(
+        snapshot.entry,
+        source,
+        operation.view,
+        operation.sections,
+        operation.sectionTitles,
+        diagnostics,
+      );
+      if (editedText) {
+        sources[snapshot.entry] = { format: "json", text: editedText };
+        edited.add(snapshot.entry);
+        applied.push(`setFormSections ${operation.view}`);
+      }
+      continue;
+    }
     if (operation.op !== "addEntityField" && operation.op !== "setEntityField") {
       const kind = (operation as { op?: string }).op ?? "unknown";
       diagnostics.push({

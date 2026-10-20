@@ -27,6 +27,10 @@ export interface ScreenInfo {
   source: string;
   pointer: string;
   document: unknown;
+  /** Recipe-owned form layout. Absent for lists, dashboards, and authored UIDL. */
+  entity?: string;
+  sections?: string[][];
+  sectionTitles?: string[];
 }
 export interface EntityInfo {
   name: string;
@@ -83,7 +87,8 @@ export type FieldDefinitionInput = string | Record<string, unknown>;
  */
 export type DraftOperation =
   | { op: "addEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
-  | { op: "setEntityField"; entity: string; field: string; definition: FieldDefinitionInput };
+  | { op: "setEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
+  | { op: "setFormSections"; view: string; sections: string[][]; sectionTitles: string[] };
 
 export interface DraftRequest {
   expectedRevision: string;

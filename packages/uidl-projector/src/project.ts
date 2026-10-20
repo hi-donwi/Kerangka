@@ -51,6 +51,8 @@ export type ScreenView =
       entity: string;
       /** The route a host serves it at: `/{id}` for a list, `/{id}/:id` for a form. */
       route: string;
+      sections?: string[][];
+      sectionTitles?: string[];
     }
   | {
       id: string;
@@ -221,7 +223,14 @@ export class RecipeProjector {
       } else if (typeof def.list === "string" && this.kir.entities[def.list]) {
         screens.push({ id, kind: "list", entity: def.list, route: `/${id}` });
       } else if (typeof def.form === "string" && this.kir.entities[def.form]) {
-        screens.push({ id, kind: "form", entity: def.form, route: `/${id}/:id` });
+        screens.push({
+          id,
+          kind: "form",
+          entity: def.form,
+          route: `/${id}/:id`,
+          sections: Array.isArray(def.sections) ? (def.sections as string[][]) : undefined,
+          sectionTitles: Array.isArray(def.sectionTitles) ? (def.sectionTitles as string[]) : undefined,
+        });
       }
     }
     // The same scaffolds the compiler's generator makes for an entity with no view of its own.

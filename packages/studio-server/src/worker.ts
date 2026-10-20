@@ -25,6 +25,16 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const pointer = (key: string) => key.replace(/~/g, "~0").replace(/\//g, "~1");
 const pageId = (key: string) => `page-${createHash("sha256").update(key).digest("hex").slice(0, 16)}`;
 
+function formSections(view: unknown): string[][] {
+  if (!record(view) || !Array.isArray(view.sections)) return [];
+  return view.sections.filter((section): section is string[] => Array.isArray(section)).map((section) => section.filter((name) => typeof name === "string"));
+}
+
+function formSectionTitles(view: unknown): string[] {
+  if (!record(view) || !Array.isArray(view.sectionTitles)) return [];
+  return view.sectionTitles.filter((title): title is string => typeof title === "string");
+}
+
 class SourceFailure extends Error {
   constructor(readonly diagnostic: StudioDiagnostic) {
     super(diagnostic.code);
@@ -178,6 +188,13 @@ function inspect(input: SourceSnapshot): InspectionResult {
       kind: view.kind,
       route: view.route,
       source: input.entry,
+      ...(view.kind === "form"
+        ? {
+            entity: view.entity,
+            sections: formSections(kir.views?.[view.id]),
+            sectionTitles: formSectionTitles(kir.views?.[view.id]),
+          }
+        : {}),
       pointer: kir.views?.[view.id]
         ? `/views/${pointer(view.id)}`
         : `/entities/${pointer(view.kind === "dashboard" ? "" : view.entity)}`,

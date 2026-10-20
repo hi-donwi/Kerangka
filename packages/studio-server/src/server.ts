@@ -85,6 +85,10 @@ function parseDraftRequest(raw: string): DraftRequest {
   for (const item of items) {
     if (typeof item !== "object" || item === null || Array.isArray(item)) throw new StudioError("STUDIO_DRAFT_REQUEST");
     const entry = item as Record<string, unknown>;
+    if (entry.op === "setFormSections") {
+      operations.push(parseFormSections(entry));
+      continue;
+    }
     if (entry.op !== "addEntityField" && entry.op !== "setEntityField") throw new StudioError("STUDIO_DRAFT_REQUEST");
     const { entity, field } = entry;
     if (typeof entity !== "string" || entity.length < 1 || entity.length > 128) throw new StudioError("STUDIO_DRAFT_REQUEST");
@@ -100,6 +104,39 @@ function parseDraftRequest(raw: string): DraftRequest {
     operations.push({ op: entry.op, entity, field, definition: definition as FieldDefinitionInput });
   }
   return sources ? { expectedRevision, operations, sources } : { expectedRevision, operations };
+}
+
+function parseFormSections(entry: Record<string, unknown>): DraftOperation {
+  const view = entry.view;
+  const sections = entry.sections;
+  const sectionTitles = entry.sectionTitles;
+  if (typeof view !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(view) || view.length > 128)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (!Array.isArray(sections) || sections.length < 1 || sections.length > 8) throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (!Array.isArray(sectionTitles) || sectionTitles.length !== sections.length) throw new StudioError("STUDIO_DRAFT_REQUEST");
+  const seen = new Set<string>();
+  const titles = new Set<string>();
+  const parsed: string[][] = [];
+  for (const section of sections) {
+    if (!Array.isArray(section) || section.length < 1 || section.length > 16) throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const names: string[] = [];
+    for (const name of section) {
+      if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || name.length > 64)
+        throw new StudioError("STUDIO_DRAFT_REQUEST");
+      if (seen.has(name)) throw new StudioError("STUDIO_DRAFT_REQUEST");
+      seen.add(name);
+      names.push(name);
+    }
+    parsed.push(names);
+  }
+  const parsedTitles: string[] = [];
+  for (const title of sectionTitles) {
+    if (typeof title !== "string" || title.trim().length < 1 || title.length > 64) throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (titles.has(title)) throw new StudioError("STUDIO_DRAFT_REQUEST");
+    titles.add(title);
+    parsedTitles.push(title);
+  }
+  return { op: "setFormSections", view, sections: parsed, sectionTitles: parsedTitles };
 }
 
 function parseSourceMap(map: unknown, code: "STUDIO_DRAFT_REQUEST" | "STUDIO_SAVE_REQUEST"): Record<string, SourceText> {

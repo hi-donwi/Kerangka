@@ -108,6 +108,47 @@ describe("Studio draft endpoint", () => {
     expect(await readFile(join(root, "notes.yaml"), "utf8")).toBe("title: keep\n");
   });
 
+  it("updates a form recipe and regenerates the preview without writing UIDL", async () => {
+    const before = await revision();
+    const response = await post({
+      expectedRevision: before,
+      operations: [{
+        op: "setFormSections",
+        view: "request",
+        sections: [["days"], ["employeeId", "title"]],
+        sectionTitles: ["Duration", "Applicant"],
+      }],
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.applied).toEqual(["setFormSections request"]);
+    const text = body.bundle.sources[entry].text as string;
+    expect(text).toContain('"sectionTitles": ["Duration","Applicant"]');
+    expect(text).toContain('"title": "string!"');
+    const form = body.inspection.screens.find((item: { label: string }) => item.label === "request");
+    expect(form.sections).toEqual([["days"], ["employeeId", "title"]]);
+    expect(JSON.stringify(form.document)).toContain("Applicant");
+    expect(JSON.stringify(form.document)).not.toContain("help.uidl.json");
+    expect(await onDisk()).toBe(model);
+  });
+
+  it("rejects a form section that names a missing field", async () => {
+    const response = await post({
+      expectedRevision: await revision(),
+      operations: [{
+        op: "setFormSections",
+        view: "request",
+        sections: [["missing"]],
+        sectionTitles: ["Missing"],
+      }],
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.applied).toEqual([]);
+    expect(body.diagnostics.some((item: { code: string }) => item.code === "STUDIO_FIELD_MISSING")).toBe(true);
+    expect(await onDisk()).toBe(model);
+  });
+
   it("refuses a stale revision and leaves the source untouched", async () => {
     const response = await post({
       expectedRevision: `sha256:${"0".repeat(64)}`,
