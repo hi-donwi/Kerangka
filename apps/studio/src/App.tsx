@@ -26,6 +26,7 @@ import { RouteInspector } from "./RouteInspector";
 import { ComponentTree } from "./ComponentTree";
 import { BindingInspector } from "./BindingInspector";
 import { ThemeInspector } from "./ThemeInspector";
+import { StatementInspector } from "./StatementInspector";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
 import { Diagnostics } from "./Diagnostics";
@@ -646,6 +647,7 @@ export function App() {
                     {entity ? <ComponentTree entity={entity} /> : null}
                     {entity ? <BindingInspector entity={entity} /> : null}
                     <ThemeInspector />
+                    {entity ? <StatementInspector entity={entity} /> : null}
                     {studio.authorized && token ? <BundleTools token={token} onImported={() => studio.reload()} /> : null}
                     {response ? <EjectPanel modelPath={response.bundle.entry} /> : null}
                     {response ? <RouteInspector response={response} /> : null}
