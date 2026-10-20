@@ -223,14 +223,15 @@ export class RecipeProjector {
       } else if (typeof def.list === "string" && this.kir.entities[def.list]) {
         screens.push({ id, kind: "list", entity: def.list, route: `/${id}` });
       } else if (typeof def.form === "string" && this.kir.entities[def.form]) {
-        screens.push({
+        const formScreen = {
           id,
-          kind: "form",
+          kind: "form" as const,
           entity: def.form,
           route: `/${id}/:id`,
-          sections: Array.isArray(def.sections) ? (def.sections as string[][]) : undefined,
-          sectionTitles: Array.isArray(def.sectionTitles) ? (def.sectionTitles as string[]) : undefined,
-        });
+        };
+        if (Array.isArray(def.sections)) formScreen.sections = def.sections as string[][];
+        if (Array.isArray(def.sectionTitles)) formScreen.sectionTitles = def.sectionTitles as string[];
+        screens.push(formScreen);
       }
     }
     // The same scaffolds the compiler's generator makes for an entity with no view of its own.
