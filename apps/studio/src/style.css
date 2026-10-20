@@ -170,12 +170,15 @@ pre,
   font-size: 0.68rem;
   letter-spacing: 0.04em;
 }
+.history-button,
 .refresh-button {
-  margin-inline-start: auto;
   border-color: var(--color-surface);
   background: transparent;
   color: var(--color-surface);
   font-size: 0.8rem;
+}
+.refresh-button {
+  margin-inline-start: auto;
 }
 .refresh-button:hover:not(:disabled) {
   color: var(--color-text);
@@ -329,6 +332,17 @@ pre,
 }
 .inspection-content {
   min-block-size: 24rem;
+}
+.source-editor {
+  display: grid;
+  gap: var(--space-control);
+}
+.source-editor textarea {
+  min-block-size: 16rem;
+  max-inline-size: 100%;
+  font: inherit;
+  white-space: pre;
+  overflow: auto;
 }
 .source-view {
   margin: 0;
@@ -743,6 +757,7 @@ tbody th {
     display: block;
     margin-inline-start: 0;
   }
+  .history-button,
   .refresh-button {
     font-size: 0.72rem;
   }

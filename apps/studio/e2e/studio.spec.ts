@@ -186,6 +186,36 @@ test("keeps unsupported network-bearing documents source-only", async ({ page })
   await expect(page.locator("iframe")).toHaveCount(0);
 });
 
+test("undo and redo share visual and source edits and restore the selection", async ({ page }) => {
+  await page.goto(host.url);
+  await page
+    .getByRole("navigation", { name: "Entities" })
+    .getByRole("button", { name: /^Request/ })
+    .click();
+  const form = page.getByRole("form", { name: /Add a field to Request/ });
+  await form.getByLabel("New field name", { exact: true }).fill("note");
+  await form.getByRole("button", { name: "Add field" }).click();
+  await form.getByLabel("New field name", { exact: true }).fill("extra");
+  await form.getByRole("button", { name: "Add field" }).click();
+  await expect(page.getByRole("region", { name: "Entity fields" })).toContainText("extra");
+  await page.getByRole("navigation", { name: "Sources" }).getByRole("button", { name: "app.kerangka.json" }).click();
+  await expect(page.getByText(/YAML stays source-only/)).toBeVisible();
+  const editor = page.getByRole("textbox", { name: "Source editor text" });
+  await editor.fill((await editor.inputValue()).replace("Synthetic Request Approval", "Renamed Approval"));
+  await page.getByRole("button", { name: "Apply source edit", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Renamed Approval", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Synthetic Request Approval", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Request", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Entity fields" })).toContainText("extra");
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Entity fields" })).not.toContainText("extra");
+  await expect(page.getByRole("region", { name: "Entity fields" })).toContainText("note");
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Entity fields" })).toContainText("extra");
+  expect(await readFile(join(root, "app.kerangka.json"), "utf8")).toBe(model);
+});
+
 test("drafts an added entity field as a preview and never writes the file", async ({ page }) => {
   await page.goto(host.url);
   await expect(page.getByText("READ ONLY", { exact: true })).toBeVisible();
@@ -261,6 +291,14 @@ test.describe("writable host: save and conflict recovery", () => {
     await expect(page.getByText(/saved to disk/)).toBeVisible();
     const saved = JSON.parse(await readFile(join(writableRoot, "app.kerangka.json"), "utf8"));
     expect(saved.entities.Request.fields.note).toBe("string?");
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
+    await page.reload();
+    await page
+      .getByRole("navigation", { name: "Entities" })
+      .getByRole("button", { name: /^Request/ })
+      .click();
+    await expect(page.getByRole("region", { name: "Entity fields" })).toContainText("note");
+    await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeDisabled();
   });
 
   test("recovers from a revision conflict by keeping the file on disk", async ({ page }) => {

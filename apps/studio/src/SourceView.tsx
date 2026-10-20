@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export function SourceView({ text, line = 0, label = "Source text" }: { text: string; line?: number; label?: string }) {
   const mark = useRef<HTMLElement>(null);
@@ -28,5 +28,46 @@ export function SourceView({ text, line = 0, label = "Source text" }: { text: st
         )}
       </code>
     </pre>
+  );
+}
+
+export function SourceEditor({
+  text,
+  format,
+  busy,
+  onApply,
+}: {
+  text: string;
+  format: "json" | "yaml";
+  busy: boolean;
+  onApply: (text: string) => void;
+}) {
+  const [value, setValue] = useState(text);
+  useEffect(() => setValue(text), [text]);
+  const json = format === "json";
+  return (
+    <form
+      className="source-editor"
+      aria-label="Source editor"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (json && value !== text) onApply(value);
+      }}
+    >
+      <p className="muted">
+        Visual writes are JSON field operations. YAML stays source-only and is not applied from this panel.
+        Text changes join the same undo history after Apply source edit.
+      </p>
+      <textarea
+        aria-label="Source editor text"
+        value={value}
+        readOnly={!json}
+        spellCheck={false}
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <button type="submit" disabled={!json || busy || value === text}>
+        Apply source edit
+      </button>
+    </form>
   );
 }

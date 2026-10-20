@@ -63,6 +63,51 @@ describe("Studio draft endpoint", () => {
     expect(JSON.stringify(body)).not.toContain(root);
   });
 
+  it("applies a second field to the unsaved snapshot and a source edit without writing", async () => {
+    const before = await revision();
+    const first = await post({
+      expectedRevision: before,
+      operations: [{ op: "addEntityField", entity: "Request", field: "note", definition: "string?" }],
+    });
+    const preview = await first.json();
+    const second = await post({
+      expectedRevision: before,
+      operations: [{ op: "addEntityField", entity: "Request", field: "extra", definition: "string?" }],
+      sources: preview.bundle.sources,
+    });
+    expect(second.status).toBe(200);
+    const stacked = await second.json();
+    expect(stacked.applied).toEqual(["addEntityField Request.extra"]);
+    expect(stacked.bundle.sources[entry].text).toContain('"note": "string?"');
+    expect(stacked.bundle.sources[entry].text).toContain('"extra": "string?"');
+    const edited = stacked.bundle.sources[entry].text.replace("Synthetic Request Approval", "Renamed Approval");
+    const sourceEdit = await post({
+      expectedRevision: before,
+      operations: [],
+      sources: { ...stacked.bundle.sources, [entry]: { format: "json", text: edited } },
+    });
+    expect(sourceEdit.status).toBe(200);
+    const renamed = await sourceEdit.json();
+    expect(renamed.applied).toEqual([`setSource ${entry}`]);
+    expect(renamed.inspection.title).toBe("Renamed Approval");
+    expect(await onDisk()).toBe(model);
+  });
+
+  it("rejects a YAML text change and leaves the file untouched", async () => {
+    await writeFile(join(root, "notes.yaml"), "title: keep\n");
+    await host.close();
+    host = await startStudio({ target: root, port: 0, token });
+    const before = await revision();
+    const response = await post({
+      expectedRevision: before,
+      operations: [],
+      sources: { "notes.yaml": { format: "yaml", text: "title: changed\n" } },
+    });
+    expect(response.status).toBe(422);
+    expect((await response.json()).code).toBe("STUDIO_WRITE_UNSUPPORTED");
+    expect(await readFile(join(root, "notes.yaml"), "utf8")).toBe("title: keep\n");
+  });
+
   it("refuses a stale revision and leaves the source untouched", async () => {
     const response = await post({
       expectedRevision: `sha256:${"0".repeat(64)}`,

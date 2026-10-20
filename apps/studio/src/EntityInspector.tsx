@@ -87,9 +87,8 @@ export function EntityInspector({
       <form className="draft-form" aria-label={`Add a field to ${entity.name}`} onSubmit={submit}>
         <h3>Add a field</h3>
         <p className="muted">
-          {draft.spent
-            ? "One field is staged. Save writes it back to the file; discard reloads the source and drops it."
-            : "Studio recompiles the projection for preview. Save writes to the file only on a writable host."}
+          Visual writes are JSON field operations. YAML stays source-only. Each applied edit joins the
+          shared undo history. Save writes the current draft only on a writable host.
         </p>
         <div className="draft-form-controls">
           <div>
@@ -100,7 +99,7 @@ export function EntityInspector({
               value={name}
               autoComplete="off"
               spellCheck={false}
-              disabled={draft.spent}
+              disabled={draft.busy}
               aria-invalid={name.length > 0 && problem !== null}
               onChange={(event) => setName(event.target.value)}
             />
@@ -110,7 +109,7 @@ export function EntityInspector({
             <select
               id="new-field-type"
               value={type}
-              disabled={draft.spent}
+              disabled={draft.busy}
               onChange={(event) => setType(event.target.value)}
             >
               {DRAFT_FIELD_TYPES.map((item) => (
@@ -125,12 +124,12 @@ export function EntityInspector({
           <input
             type="checkbox"
             checked={required}
-            disabled={draft.spent}
+            disabled={draft.busy}
             onChange={(event) => setRequired(event.target.checked)}
           />
           Required
         </label>
-        <button type="submit" disabled={draft.spent || draft.busy || problem !== null}>
+        <button type="submit" disabled={draft.busy || problem !== null}>
           {draft.busy ? "Applying draft..." : "Add field"}
         </button>
         {name.length > 0 && problem ? (

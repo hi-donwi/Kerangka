@@ -88,6 +88,11 @@ export type DraftOperation =
 export interface DraftRequest {
   expectedRevision: string;
   operations: readonly DraftOperation[];
+  /**
+   * Optional unsaved snapshot. Operations apply to these sources instead of the file
+   * on disk. The expected revision is still the disk revision, so a stale file conflicts.
+   */
+  sources?: Record<string, SourceText>;
 }
 
 /** A draft preview: the same shape as a project read, plus what was applied. */
@@ -132,6 +137,7 @@ const messages = {
   STUDIO_SAVE_REQUEST: "The Studio save request is not a supported write.",
   STUDIO_SAVE_INVALID: "The edited model does not compile; nothing was written.",
   STUDIO_SAVE_UNSUPPORTED: "A save may only rewrite a JSON source the project already has.",
+  STUDIO_WRITE_UNSUPPORTED: "Only existing JSON sources can be edited in this version. YAML stays source-only.",
 } as const;
 
 export class StudioError extends Error {

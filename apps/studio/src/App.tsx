@@ -1,6 +1,17 @@
-import { startTransition, useState, type FormEvent, type KeyboardEvent } from "react";
+import { startTransition, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useStudio } from "./useStudio";
-import { SourceView } from "./SourceView";
+import { SourceEditor, SourceView } from "./SourceView";
+import {
+  canRedo,
+  canUndo,
+  currentStep,
+  openHistory,
+  pushHistory,
+  redoHistory,
+  undoHistory,
+  unsavedHistory,
+  type DraftHistory,
+} from "./draft-history";
 import { PreviewFrame } from "./PreviewFrame";
 import { ProjectExplorer, type Selection } from "./ProjectExplorer";
 import { EntityInspector } from "./EntityInspector";
@@ -44,6 +55,8 @@ export function App() {
   const [draft, setDraft] = useState<DraftState>(emptyDraft);
   const [conflict, setConflict] = useState<ConflictState | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const [history, setHistory] = useState<DraftHistory | null>(null);
+  const [awaitingDisk, setAwaitingDisk] = useState(false);
   const response = studio.response;
   const inspection = response?.inspection;
   const writable = response?.writable === true;
@@ -53,32 +66,109 @@ export function App() {
   const screen = selected?.kind === "screen" ? inspection?.screens.find((item) => item.id === selected.id) : undefined;
   const source = selected?.kind === "source" ? response?.bundle.sources[selected.id] : undefined;
   const missing = Boolean(selected && !source && !entity && !screen);
+  const unsaved = history ? unsavedHistory(history) : draft.spent;
   const refresh = () => {
+    setAwaitingDisk(true);
+    setHistory(null);
     setDraft(emptyDraft);
     setConflict(null);
     setFlash(null);
     studio.reload();
   };
+  useEffect(() => {
+    if (!response || studio.loading || history || awaitingDisk) return;
+    setHistory(openHistory(response, selection));
+  }, [response, studio.loading, history, selection, awaitingDisk]);
+  const sawReload = useRef(false);
+  useEffect(() => {
+    if (!awaitingDisk) return;
+    if (studio.loading) sawReload.current = true;
+    if (!sawReload.current || studio.loading || !response) return;
+    setHistory(openHistory(response, null));
+    setAwaitingDisk(false);
+    sawReload.current = false;
+  }, [awaitingDisk, studio.loading, response]);
+  const adoptHistory = (nextHistory: DraftHistory) => {
+    const step = currentStep(nextHistory);
+    setHistory(nextHistory);
+    studio.show(step.response);
+    setSelection(step.selection);
+    setDraft({
+      busy: false,
+      spent: unsavedHistory(nextHistory),
+      baseRevision: nextHistory.baseRevision,
+      sources: unsavedHistory(nextHistory) ? step.response.bundle.sources : null,
+      error: null,
+      notice: step.label === "Opened" ? null : step.label,
+    });
+    setConflict(null);
+  };
+  const undo = () => {
+    if (!history || !canUndo(history) || draft.busy) return;
+    adoptHistory(undoHistory(history));
+  };
+  const redo = () => {
+    if (!history || !canRedo(history) || draft.busy) return;
+    adoptHistory(redoHistory(history));
+  };
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "z") return;
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)
+        return;
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+  const remember = (nextHistory: DraftHistory, notice: string) => {
+    const step = currentStep(nextHistory);
+    setHistory(nextHistory);
+    studio.show(step.response);
+    setSelection(step.selection);
+    setDraft({
+      busy: false,
+      spent: unsavedHistory(nextHistory),
+      baseRevision: nextHistory.baseRevision,
+      sources: unsavedHistory(nextHistory) ? step.response.bundle.sources : null,
+      error: null,
+      notice,
+    });
+    setConflict(null);
+    setFlash(null);
+  };
   const addField = async (field: string, definition: string) => {
-    if (!response || !entity) return;
-    const expectedRevision = response.bundle.revision;
-    setDraft({ busy: true, spent: false, baseRevision: null, sources: null, error: null, notice: null });
+    if (!response || !entity || !history) return;
+    const base = history.baseRevision;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : undefined;
+    setDraft((state) => ({ ...state, busy: true, error: null }));
     setConflict(null);
     try {
       const next = await studio.applyDraft({
-        expectedRevision,
+        expectedRevision: base,
         operations: [{ op: "addEntityField", entity: entity.name, field, definition }],
+        ...(currentSources ? { sources: currentSources } : {}),
       });
-      setSelection({ kind: "entity", id: entity.name });
       setTab("definition");
-      setDraft({
-        busy: false,
-        spent: true,
-        baseRevision: expectedRevision,
-        sources: next.bundle.sources,
-        error: null,
-        notice: `${next.applied.join(", ") || "No change"} - preview only; the file on disk is unchanged.`,
-      });
+      if (next.applied.length === 0) {
+        setDraft((state) => ({
+          ...state,
+          busy: false,
+          error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "The draft could not be applied.",
+        }));
+        return;
+      }
+      remember(
+        pushHistory(history, {
+          label: next.applied.join(", "),
+          selection: { kind: "entity", id: entity.name },
+          response: next,
+        }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
     } catch (error) {
       if (error instanceof StudioConflict) {
         setDraft(emptyDraft);
@@ -95,6 +185,35 @@ export function App() {
       });
     }
   };
+  const applySource = async (path: string, text: string) => {
+    if (!response || !history) return;
+    const sources = {
+      ...(unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources),
+      [path]: { format: "json" as const, text },
+    };
+    setDraft((state) => ({ ...state, busy: true, error: null }));
+    try {
+      const next = await studio.applyDraft({ expectedRevision: history.baseRevision, operations: [], sources });
+      if (!next.applied.length) {
+        setDraft((state) => ({ ...state, busy: false, error: "The source text did not change." }));
+        return;
+      }
+      remember(
+        pushHistory(history, {
+          label: next.applied.join(", "),
+          selection: { kind: "source", id: path },
+          response: next,
+        }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    } catch (error) {
+      setDraft((state) => ({
+        ...state,
+        busy: false,
+        error: error instanceof Error ? error.message : "The source edit could not be applied.",
+      }));
+    }
+  };
   /** Write the previewed sources back; `forceRevision` retries after the operator picks the draft. */
   const saveDraft = async (forceRevision?: string) => {
     const sources = draft.sources;
@@ -104,6 +223,7 @@ export function App() {
       const next = await studio.saveDraft({ expectedRevision: forceRevision ?? draft.baseRevision ?? "", sources });
       setConflict(null);
       setFlash(`${next.saved.join(", ") || "No file"} saved to disk. The revision advanced.`);
+      setHistory(openHistory(next, selection));
       setDraft(emptyDraft);
     } catch (error) {
       if (error instanceof StudioConflict && error.sources) {
@@ -172,18 +292,28 @@ export function App() {
           </span>
         </button>
         <span className="mode-badge">{writable ? "WRITABLE HOST" : "READ ONLY"}</span>
-        {draft.spent ? (
+        {unsaved ? (
           <span className="draft-badge" role="status">
             UNSAVED DRAFT
           </span>
         ) : null}
         <span className="local-label">LOCAL WORKBENCH / P2</span>
-        {writable && draft.spent && !conflict ? (
+        {history ? (
+          <>
+            <button className="history-button" onClick={undo} disabled={!canUndo(history) || draft.busy}>
+              Undo
+            </button>
+            <button className="history-button" onClick={redo} disabled={!canRedo(history) || draft.busy}>
+              Redo
+            </button>
+          </>
+        ) : null}
+        {writable && unsaved && !conflict ? (
           <button className="save-button" onClick={() => void saveDraft()} disabled={draft.busy || studio.loading}>
             {draft.busy ? "Saving..." : "Save draft"}
           </button>
         ) : null}
-        {draft.spent ? (
+        {unsaved ? (
           <button className="refresh-button" onClick={refresh} disabled={draft.busy}>
             Discard
           </button>
@@ -346,7 +476,15 @@ export function App() {
                         Source pointer <code>{selected.pointer}</code>
                       </p>
                     )}
-                    {source && <SourceView text={source.text} line={selected?.line} />}
+                    {source && selected?.line ? <SourceView text={source.text} line={selected.line} /> : null}
+                    {source && selected?.kind === "source" ? (
+                      <SourceEditor
+                        text={source.text}
+                        format={source.format}
+                        busy={draft.busy}
+                        onApply={(text) => void applySource(selected.id, text)}
+                      />
+                    ) : null}
                     {entity && (
                       <EntityInspector
                         entity={entity}
@@ -419,7 +557,7 @@ export function App() {
                   ? "Inspecting refreshed source..."
                   : studio.error
                     ? "Previous snapshot / refresh failed"
-                    : draft.spent
+                    : unsaved
                       ? "Unsaved draft preview / file unchanged"
                       : writable
                         ? "Writable snapshot / saves rewrite the model file"

@@ -18,7 +18,8 @@ import {
 } from "./contracts.js";
 import { openProject } from "./project.js";
 import { inspectProject } from "./inspection.js";
-import { applyDraftOperations } from "./draft.js";
+import { applyDraftOperations, changedSources, overlaySources } from "./draft.js";
+import { sourceRevision } from "./revision.js";
 import { saveSources } from "./save.js";
 import { serveAsset } from "./assets.js";
 
@@ -44,7 +45,7 @@ function json(response: ServerResponse, status: number, value: unknown): void {
   response.end(body);
 }
 
-const DRAFT_BYTES = 64 * 1024;
+const DRAFT_BYTES = PROJECT_BYTES;
 const DRAFT_OPERATIONS = 32;
 const DRAFT_DEFINITION = 4096;
 
@@ -77,8 +78,9 @@ function parseDraftRequest(raw: string): DraftRequest {
   if (typeof expectedRevision !== "string" || expectedRevision.length < 1 || expectedRevision.length > 200)
     throw new StudioError("STUDIO_DRAFT_REQUEST");
   const items = candidate.operations;
-  if (!Array.isArray(items) || items.length < 1 || items.length > 32)
-    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  const sources = candidate.sources === undefined ? undefined : parseSourceMap(candidate.sources, "STUDIO_DRAFT_REQUEST");
+  if (!Array.isArray(items) || items.length > 32) throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (items.length < 1 && !sources) throw new StudioError("STUDIO_DRAFT_REQUEST");
   const operations: DraftOperation[] = [];
   for (const item of items) {
     if (typeof item !== "object" || item === null || Array.isArray(item)) throw new StudioError("STUDIO_DRAFT_REQUEST");
@@ -97,7 +99,26 @@ function parseDraftRequest(raw: string): DraftRequest {
     if (!stringDefinition && !objectDefinition) throw new StudioError("STUDIO_DRAFT_REQUEST");
     operations.push({ op: entry.op, entity, field, definition: definition as FieldDefinitionInput });
   }
-  return { expectedRevision, operations };
+  return sources ? { expectedRevision, operations, sources } : { expectedRevision, operations };
+}
+
+function parseSourceMap(map: unknown, code: "STUDIO_DRAFT_REQUEST" | "STUDIO_SAVE_REQUEST"): Record<string, SourceText> {
+  if (typeof map !== "object" || map === null || Array.isArray(map)) throw new StudioError(code);
+  const entries = Object.entries(map as Record<string, unknown>);
+  if (entries.length < 1 || entries.length > SOURCE_COUNT) throw new StudioError(code);
+  const sources: Record<string, SourceText> = Object.create(null) as Record<string, SourceText>;
+  let total = 0;
+  for (const [path, raw] of entries) {
+    if (!sourcePath(path) || typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new StudioError(code);
+    const source = raw as Record<string, unknown>;
+    const { format, text } = source;
+    if (format !== "json" && format !== "yaml") throw new StudioError(code);
+    if (typeof text !== "string" || Buffer.byteLength(text) > SOURCE_BYTES) throw new StudioError(code);
+    total += Buffer.byteLength(text);
+    if (total > PROJECT_BYTES) throw new StudioError(code);
+    sources[path] = { format, text };
+  }
+  return sources;
 }
 
 /** Read an untrusted save body, bounded by the whole-project budget. */
@@ -129,24 +150,7 @@ function parseSaveRequest(raw: string): SaveRequest {
   const expectedRevision = candidate.expectedRevision;
   if (typeof expectedRevision !== "string" || expectedRevision.length < 1 || expectedRevision.length > 200)
     throw new StudioError("STUDIO_SAVE_REQUEST");
-  const map = candidate.sources;
-  if (typeof map !== "object" || map === null || Array.isArray(map)) throw new StudioError("STUDIO_SAVE_REQUEST");
-  const entries = Object.entries(map as Record<string, unknown>);
-  if (entries.length < 1 || entries.length > SOURCE_COUNT) throw new StudioError("STUDIO_SAVE_REQUEST");
-  const sources: Record<string, SourceText> = Object.create(null) as Record<string, SourceText>;
-  let total = 0;
-  for (const [path, raw] of entries) {
-    if (!sourcePath(path) || typeof raw !== "object" || raw === null || Array.isArray(raw))
-      throw new StudioError("STUDIO_SAVE_REQUEST");
-    const source = raw as Record<string, unknown>;
-    const { format, text } = source;
-    if (format !== "json" && format !== "yaml") throw new StudioError("STUDIO_SAVE_REQUEST");
-    if (typeof text !== "string" || Buffer.byteLength(text) > SOURCE_BYTES) throw new StudioError("STUDIO_SAVE_REQUEST");
-    total += Buffer.byteLength(text);
-    if (total > PROJECT_BYTES) throw new StudioError("STUDIO_SAVE_REQUEST");
-    sources[path] = { format, text };
-  }
-  return { expectedRevision, sources };
+  return { expectedRevision, sources: parseSourceMap(candidate.sources, "STUDIO_SAVE_REQUEST") };
 }
 
 /** Project a source snapshot plus its inspection into the client bundle shape. */
@@ -243,7 +247,21 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
       return;
     }
     // A draft never touches disk; the compiler check runs once, in the inspection job.
-    const draft = applyDraftOperations(snapshot, draftRequest, { validate: () => [] });
+    const overlaid = overlaySources(snapshot.sources, draftRequest.sources);
+    const base: SourceSnapshot = {
+      entry: snapshot.entry,
+      revision: snapshot.revision,
+      sources: overlaid,
+      excluded: snapshot.excluded,
+    };
+    const draft = draftRequest.operations.length
+      ? applyDraftOperations(base, { expectedRevision: snapshot.revision, operations: draftRequest.operations }, { validate: () => [] })
+      : {
+          revision: sourceRevision(overlaid),
+          sources: overlaid,
+          applied: changedSources(snapshot.sources, overlaid).map((path) => `setSource ${path}`),
+          diagnostics: [],
+        };
     const edited: SourceSnapshot = {
       entry: snapshot.entry,
       revision: draft.revision,

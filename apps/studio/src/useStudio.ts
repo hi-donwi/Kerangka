@@ -40,7 +40,8 @@ export function useStudio() {
     return next;
   };
   // A save response is a full snapshot; adopt it instead of re-reading the project.
-  const adopt = (response: SaveResponse) => setState({ response, loading: false, error: null });
+  const show = (response: StudioResponse) => setState({ response, loading: false, error: null });
+  const adopt = (response: SaveResponse) => show(response);
   const saveDraft = async (request: SaveRequest) => {
     const next = await saveProject(token, request);
     adopt(next);
@@ -51,6 +52,7 @@ export function useStudio() {
     authorized: Boolean(token),
     applyDraft,
     saveDraft,
+    show,
     authenticate,
     reload: () => setRefresh((value) => value + 1),
   };

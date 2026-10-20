@@ -1,10 +1,5 @@
 import { compile, CompilerError } from "@kerangka/compiler";
-import type {
-  DraftRequest,
-  SourceSnapshot,
-  SourceText,
-  StudioDiagnostic,
-} from "./contracts.js";
+import { StudioError, sourcePath, type DraftRequest, type SourceSnapshot, type SourceText, type StudioDiagnostic } from "./contracts.js";
 import { findPath, insertEntry, parseJson, setValue, type JsonNode } from "./json-edit.js";
 import { sourceRevision } from "./revision.js";
 
@@ -23,6 +18,35 @@ export interface DraftOptions {
 const pointer = (key: string) => key.replace(/~/g, "~0").replace(/\//g, "~1");
 
 /** Compiler diagnostics for one edited source, shared by the draft and the save path. */
+/**
+ * Overlay an unsaved source map onto the disk snapshot.
+ *
+ * Unknown paths and YAML text changes are rejected. Unchanged YAML stays so a JSON
+ * edit can still carry the rest of the project. The disk map is not mutated.
+ */
+export function overlaySources(
+  disk: Record<string, SourceText>,
+  supplied: Record<string, SourceText> | undefined,
+): Record<string, SourceText> {
+  if (!supplied) return { ...disk };
+  const sources: Record<string, SourceText> = { ...disk };
+  for (const [path, source] of Object.entries(supplied)) {
+    const existing = disk[path];
+    if (!existing || !sourcePath(path)) throw new StudioError("STUDIO_WRITE_UNSUPPORTED");
+    if (source.format !== existing.format) throw new StudioError("STUDIO_WRITE_UNSUPPORTED");
+    if (existing.format !== "json") {
+      if (source.text !== existing.text) throw new StudioError("STUDIO_WRITE_UNSUPPORTED");
+      continue;
+    }
+    sources[path] = { format: "json", text: source.text };
+  }
+  return sources;
+}
+
+export function changedSources(before: Record<string, SourceText>, after: Record<string, SourceText>): string[] {
+  return Object.keys(after).filter((path) => after[path]?.text !== before[path]?.text);
+}
+
 export function sourceDiagnostics(entry: string, text: string): StudioDiagnostic[] {
   try {
     compile(text, { sourceFile: entry });
