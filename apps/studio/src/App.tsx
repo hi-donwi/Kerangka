@@ -22,6 +22,7 @@ import { MaterializePage } from "./MaterializePage";
 import { ScenarioPanel } from "./ScenarioPanel";
 import { BundleTools } from "./BundleTools";
 import { EjectPanel } from "./EjectPanel";
+import { RouteInspector } from "./RouteInspector";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
 import { Diagnostics } from "./Diagnostics";
@@ -641,6 +642,7 @@ export function App() {
                     ) : null}
                     {studio.authorized && token ? <BundleTools token={token} onImported={() => studio.reload()} /> : null}
                     {response ? <EjectPanel modelPath={response.bundle.entry} /> : null}
+                    {response ? <RouteInspector response={response} /> : null}
                     {entity.operations.length ? (
                       <ScenarioPanel
                         entity={entity.name}
