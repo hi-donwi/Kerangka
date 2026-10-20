@@ -21,6 +21,7 @@ import { inspectProject } from "./inspection.js";
 import { applyDraftOperations, changedSources, overlaySources } from "./draft.js";
 import { sourceRevision } from "./revision.js";
 import { saveSources } from "./save.js";
+import { runScenario } from "./scenario.js";
 import { serveAsset } from "./assets.js";
 
 export interface StudioOptions {
@@ -56,6 +57,21 @@ async function readDraftBody(request: IncomingMessage): Promise<string> {
     const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
     size += buffer.length;
     if (size > DRAFT_BYTES) {
+      request.destroy();
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function readScenarioBody(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+    size += buffer.length;
+    if (size > 64 * 1024) {
       request.destroy();
       throw new StudioError("STUDIO_DRAFT_REQUEST");
     }
@@ -400,6 +416,35 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
           const contentType = request.headers["content-type"] ?? "";
           if (!contentType.startsWith("application/json")) throw new StudioError("STUDIO_DRAFT_REQUEST");
           await handleDraft(request, response);
+          return;
+        }
+        if (request.url === `${prefix}/api/scenario`) {
+          if (request.method !== "POST") {
+            response.setHeader("Allow", "POST");
+            response.setHeader("Connection", "close");
+            json(response, 405, { code: "STUDIO_READ_ONLY", message: "Studio accepts POST for scenarios only." });
+            return;
+          }
+          const contentType = request.headers["content-type"] ?? "";
+          if (!contentType.startsWith("application/json")) throw new StudioError("STUDIO_DRAFT_REQUEST");
+          const raw = await readScenarioBody(request);
+          let value: unknown;
+          try { value = JSON.parse(raw); } catch { throw new StudioError("STUDIO_DRAFT_REQUEST"); }
+          if (typeof value !== "object" || value === null || Array.isArray(value)) throw new StudioError("STUDIO_DRAFT_REQUEST");
+          const candidate = value as Record<string, unknown>;
+          const source = candidate.source;
+          const entity = candidate.entity;
+          const operation = candidate.operation;
+          const record = candidate.record;
+          if (typeof source !== "string" || source.length < 1 || source.length > 512 * 1024) throw new StudioError("STUDIO_DRAFT_REQUEST");
+          if (typeof entity !== "string" || entity.length < 1 || entity.length > 128) throw new StudioError("STUDIO_DRAFT_REQUEST");
+          if (typeof operation !== "string" || operation.length < 1 || operation.length > 128) throw new StudioError("STUDIO_DRAFT_REQUEST");
+          if (typeof record !== "object" || record === null || Array.isArray(record)) throw new StudioError("STUDIO_DRAFT_REQUEST");
+          const actor = candidate.actor;
+          if (actor !== undefined && (typeof actor !== "object" || actor === null || Array.isArray(actor))) throw new StudioError("STUDIO_DRAFT_REQUEST");
+          const now = candidate.now;
+          if (now !== undefined && typeof now !== "string") throw new StudioError("STUDIO_DRAFT_REQUEST");
+          json(response, 200, runScenario(source, entity, operation, record as Record<string, unknown>, actor as Record<string, unknown> | undefined, now as string | undefined));
           return;
         }
         if (request.url === `${prefix}/api/save`) {

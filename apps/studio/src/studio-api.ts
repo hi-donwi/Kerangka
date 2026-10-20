@@ -92,3 +92,11 @@ export function submitDraft(token: string, request: DraftRequest, signal?: Abort
 export function saveProject(token: string, request: SaveRequest, signal?: AbortSignal): Promise<SaveResponse> {
   return post<SaveResponse>("api/save", request, token, signal);
 }
+
+export function runScenarioRequest(
+  token: string,
+  payload: { source: string; entity: string; operation: string; record: Record<string, unknown>; actor?: Record<string, unknown> },
+  signal?: AbortSignal,
+): Promise<unknown> {
+  return post<unknown>("api/scenario", payload, token, signal);
+}

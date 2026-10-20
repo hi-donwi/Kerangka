@@ -18,6 +18,8 @@ import { EntityInspector } from "./EntityInspector";
 import { FormSectionInspector } from "./FormSectionInspector";
 import { WorkflowGraph } from "./WorkflowGraph";
 import { AccessMatrix } from "./AccessMatrix";
+import { ScenarioPanel } from "./ScenarioPanel";
+import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
 import { Diagnostics } from "./Diagnostics";
 import { StudioConflict, StudioSaveRefused } from "./studio-api";
@@ -60,6 +62,8 @@ export function App() {
   const [conflict, setConflict] = useState<ConflictState | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [history, setHistory] = useState<DraftHistory | null>(null);
+  const [scenarioResult, setScenarioResult] = useState<unknown>(null);
+  const [scenarioBusy, setScenarioBusy] = useState(false);
   const [awaitingDisk, setAwaitingDisk] = useState(false);
   const response = studio.response;
   const inspection = response?.inspection;
@@ -605,15 +609,39 @@ export function App() {
                               ))}
                           </>
                         ) : null}
-                        {entity.permissions ? (
-                          <AccessMatrix
-                            entity={entity}
-                            roles={inspection?.roles ?? []}
-                            onOpenSource={() =>
-                              select({ kind: "source", id: response.bundle.entry, pointer: entity.pointer })
-                            }
-                          />
-                        ) : null}
+                    {entity.permissions ? (
+                      <AccessMatrix
+                        entity={entity}
+                        roles={inspection?.roles ?? []}
+                        onOpenSource={() =>
+                          select({ kind: "source", id: response.bundle.entry, pointer: entity.pointer })
+                        }
+                      />
+                    ) : null}
+                    {entity.operations.length ? (
+                      <ScenarioPanel
+                        entity={entity.name}
+                        operations={entity.operations.map((item) => item.name)}
+                        recordText={JSON.stringify(
+                          Object.fromEntries(entity.fields.map((field) => [field.name, field.type === "int" ? 1 : ""])),
+                          null,
+                          2,
+                        )}
+                        actorText={JSON.stringify({ roles: inspection?.roles?.slice(0, 1) ?? [] }, null, 2)}
+                        busy={scenarioBusy}
+                        result={scenarioResult}
+                        onRun={(operation, record, actor) => {
+                          if (!studio.authorized) return;
+                          const token = new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
+                          const sourceText = response.bundle.sources[response.bundle.entry]?.text ?? "";
+                          setScenarioBusy(true);
+                          void runScenarioRequest(token, { source: sourceText, entity: entity.name, operation, record, actor })
+                            .then((result) => setScenarioResult(result))
+                            .catch((error) => setScenarioResult({ ok: false, error: error instanceof Error ? error.message : "Scenario failed." }))
+                            .finally(() => setScenarioBusy(false));
+                        }}
+                      />
+                    ) : null}
                       </>
                     )}
                     {screen && (
