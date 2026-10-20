@@ -22,6 +22,7 @@ import { applyDraftOperations, changedSources, overlaySources } from "./draft.js
 import { sourceRevision } from "./revision.js";
 import { saveSources } from "./save.js";
 import { runScenario } from "./scenario.js";
+import { exportBundle, parseImportedBundle } from "./export.js";
 import { serveAsset } from "./assets.js";
 
 export interface StudioOptions {
@@ -416,6 +417,31 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
           const contentType = request.headers["content-type"] ?? "";
           if (!contentType.startsWith("application/json")) throw new StudioError("STUDIO_DRAFT_REQUEST");
           await handleDraft(request, response);
+          return;
+        }
+        if (request.url === `${prefix}/api/export`) {
+          if (request.method !== "GET") {
+            response.setHeader("Allow", "GET");
+            response.setHeader("Connection", "close");
+            json(response, 405, { code: "STUDIO_READ_ONLY", message: "Studio accepts GET for export only." });
+            return;
+          }
+          const snapshot = await project.read();
+          json(response, 200, exportBundle(snapshot));
+          return;
+        }
+        if (request.url === `${prefix}/api/import`) {
+          if (request.method !== "POST") {
+            response.setHeader("Allow", "POST");
+            response.setHeader("Connection", "close");
+            json(response, 405, { code: "STUDIO_READ_ONLY", message: "Studio accepts POST for import only." });
+            return;
+          }
+          const body = await readScenarioBody(request);
+          let value: unknown;
+          try { value = JSON.parse(body); } catch { throw new StudioError("STUDIO_DRAFT_REQUEST"); }
+          const imported = parseImportedBundle(value);
+          json(response, 200, { entry: imported.entry, sources: imported.sources, imported: true });
           return;
         }
         if (request.url === `${prefix}/api/scenario`) {

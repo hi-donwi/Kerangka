@@ -100,3 +100,18 @@ export function runScenarioRequest(
 ): Promise<unknown> {
   return post<unknown>("api/scenario", payload, token, signal);
 }
+
+export async function exportBundleRequest(token: string): Promise<unknown> {
+  const response = await fetch(`${studioBase()}api/export`, {
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: "omit",
+    cache: "no-store",
+    referrerPolicy: "no-referrer",
+  });
+  if (!response.ok) throw new Error("Export failed.");
+  return response.json();
+}
+
+export function importBundleRequest(token: string, bundle: unknown): Promise<unknown> {
+  return post<unknown>("api/import", bundle, token);
+}

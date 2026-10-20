@@ -19,6 +19,7 @@ import { FormSectionInspector } from "./FormSectionInspector";
 import { WorkflowGraph } from "./WorkflowGraph";
 import { AccessMatrix } from "./AccessMatrix";
 import { ScenarioPanel } from "./ScenarioPanel";
+import { BundleTools } from "./BundleTools";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
 import { Diagnostics } from "./Diagnostics";
@@ -55,6 +56,7 @@ const emptyDraft: DraftState = { busy: false, spent: false, baseRevision: null, 
 
 export function App() {
   const studio = useStudio();
+  const token = new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
   const [access, setAccess] = useState("");
   const [selection, setSelection] = useState<Selection | null>(null);
   const [tab, setTab] = useState<Tab>("definition");
@@ -618,6 +620,7 @@ export function App() {
                         }
                       />
                     ) : null}
+                    {studio.authorized && token ? <BundleTools token={token} onImported={() => studio.reload()} /> : null}
                     {entity.operations.length ? (
                       <ScenarioPanel
                         entity={entity.name}
