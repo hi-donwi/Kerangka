@@ -1,0 +1,51 @@
+---
+title: Samples Reference
+description: Cross-linked samples with generated contracts
+---
+
+## Samples manifest
+
+The `samples/manifest.json` file lists runnable samples with their models, inputs,
+and expected outcomes. Each sample is verified via `node scripts/verify-samples.mjs`.
+Each input declares `run: "Entity.operation"`, a record, an optional operation input,
+and an actor. Expected outcomes may specify an exact engine error code, not just denial.
+
+| ID | Title | Source | Notes |
+|---|---|---|---|
+| approval | Expense Approval | [examples/expense-approval.kerangka.json](https://github.com/hi-donwi/Kerangka/blob/main/examples/expense-approval.kerangka.json) | Minimal workflow, guard checks |
+| validation | Field, Expression, and Validation | [examples/invoicing.kerangka.json](https://github.com/hi-donwi/Kerangka/blob/main/examples/invoicing.kerangka.json) | Computed fields, rules, guards |
+| workflow | Action, Workflow, and Decision | [examples/leave-request.kerangka.json](https://github.com/hi-donwi/Kerangka/blob/main/examples/leave-request.kerangka.json) | Transitions, roles, routing by decision logic |
+
+## Generated artifacts
+
+`scripts/generate-samples.mjs` emits compiled `kir.json`, OpenAPI 3.1, JSON Schema 2020-12, and UIDL documents
+for all samples under `generated/<id>/`. These files are gitignored; regenerate with:
+
+```bash
+npm run build
+node scripts/generate-samples.mjs
+```
+
+## Browser execution
+
+The kitchen sink embeds generated KIR and runs each declared input through the real
+TypeScript engine in a disposable worker. It shows actual output beside expectations;
+effects are data only, never dispatched or persisted. Reset restores the fixture and
+cancels any running worker.
+
+Execution refuses models above 256 KiB, inputs above 16 KiB, more than 16 entities or
+128 operations, nesting deeper than 32, or more than 20,000 structural nodes. The UI
+terminates workers after 1000 ms and limits output previews to 8 KiB. Unsupported,
+unavailable, or timed-out runs show model source with a reason. These limits are for
+shipped synthetic fixtures, not arbitrary-code sandboxing.
+
+The kitchen sink can open a read-only UIDL preview of the generated screens. That
+preview does not run engine operations and cannot persist or apply writes.
+
+## Verification
+
+```bash
+node scripts/verify-samples.mjs  # validates manifest + expected outcomes
+npx vitest run conformance       # 200 passing
+npm run examples:verify          # 8/8 verified
+```

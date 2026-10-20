@@ -10,7 +10,7 @@ are not production-readiness or writable/shared-preview approval.
 |---|---|
 | [Read-only guide](read-only.md) | Launch, implemented profile, verification, and unsupported/remaining gates |
 | [Console design](design.md) | Workbench structure, tokens, responsiveness, and accessible states |
-| [ADR-0048](../adr/0048-studio-is-an-authoring-host-not-a-second-engine.md) | Ownership, source-backed reuse audit, app/service boundaries, and graph strategy |
+| [ADR-0049](../adr/0049-studio-is-an-authoring-host-not-a-second-engine.md) | Ownership, source-backed reuse audit, app/service boundaries, and graph strategy |
 | [Source-bundle contract](source-bundle.md) | Version, raw sources, page ownership, routes, revisions, and validation stages |
 | [JSON Schema](../../spec/studio/source-bundle.schema.json) | Offline structural authoring envelope, distinct from runtime/authorization validation |
 | [Security model](security.md) | Threats, enforcement owners, acceptance tests, resource budgets, and execution gates |
@@ -77,7 +77,7 @@ in the contract decide whether it can compile, preview, or release.
 
 The owner accepted the delivered P0 design on 2026-10-16 and authorized P1 read-only work:
 
-- [x] Accept ADR-0048, reuse boundaries, and reserved app/service locations.
+- [x] Accept ADR-0049, reuse boundaries, and reserved app/service locations.
 - [x] Accept source-bundle 0.1, JSON/YAML scope, and page ownership rules.
 - [x] Accept the threat model, budgets, and enforcement/test ownership.
 - [x] Accept the synthetic fixture's scope and the remaining direct API/browser criteria.

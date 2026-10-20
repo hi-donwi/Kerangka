@@ -77,6 +77,9 @@ jobs:
       - name: Examples (kerangka check + kerangka verify + kerangka test)
         run: npm run examples:verify
 
+      - name: Sample projections (KIR, OpenAPI, JSON Schema, UIDL)
+        run: node scripts/generate-samples.mjs
+
       - name: Sidecar from a non-JavaScript client (Python over stdio JSON-RPC)
         run: python3 scripts/sidecar-smoke.py
 
@@ -111,3 +114,65 @@ jobs:
           dart pub get
           dart analyze
           dart test
+
+  docs:
+    name: Docs site, kitchen sink, samples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          check-latest: true
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            docs-site/package-lock.json
+            kitchen-sink/package-lock.json
+
+      - name: Samples manifest
+        run: node scripts/verify-samples.mjs
+
+      - name: Install docs site
+        working-directory: docs-site
+        run: npm ci
+
+      - name: Audit docs dependencies (including build tools)
+        working-directory: docs-site
+        run: npm run audit:security
+
+      - name: Build docs site and check internal and sample links
+        working-directory: docs-site
+        run: npm run verify
+
+      - name: Install kitchen sink
+        working-directory: kitchen-sink
+        run: npm ci
+
+      - name: Audit kitchen sink dependencies (including build tools)
+        working-directory: kitchen-sink
+        run: npm run audit:security
+
+      - name: Build workspace for browser engine and sample KIR
+        run: |
+          npm ci
+          npm run build
+
+      - name: Typecheck and build kitchen sink
+        working-directory: kitchen-sink
+        run: |
+          npm run typecheck
+          npm run build
+
+      - name: Install Playwright browser
+        working-directory: kitchen-sink
+        run: npx playwright install --with-deps chromium
+
+      - name: Docs browser tests (content, navigation, search)
+        working-directory: docs-site
+        run: npm run test:e2e
+
+      - name: Kitchen sink browser tests (golden path, reset, mobile, keyboard, budget)
+        working-directory: kitchen-sink
+        run: npm run test:e2e

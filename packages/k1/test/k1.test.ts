@@ -148,6 +148,17 @@ describe("K1 Expression Lexer & Parser", () => {
     expect(evalExpression("len('hello')")).toBe(5);
     expect(evalExpression("contains('kerangka', 'rang')")).toBe(true);
     expect(evalExpression("coalesce(null, null, 'first')")).toBe("first");
+
+    // Extended math
+    expect(evalExpression("clamp(15, 0, 10)")).toBe(10);
+    expect(evalExpression("clamp(-5, 0, 10)")).toBe(0);
+    expect(evalExpression("clamp(5, 0, 10)")).toBe(5);
+    expect(evalExpression("pow(2, 3)")).toBe(8);
+    expect(evalExpression("power(10, 2)")).toBe(100);
+    expect(evalExpression("sqrt(16)")).toBe(4);
+    expect(evalExpression("round(exp(1), 4)")).toBe(2.7183);
+    expect(evalExpression("round(log(2.718281828), 4)")).toBe(1);
+    expect(evalExpression("log10(1000)")).toBe(3);
   });
 
   it("enforces maximum tree depth limit (64)", () => {

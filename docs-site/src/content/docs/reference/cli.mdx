@@ -1,0 +1,46 @@
+---
+title: CLI Reference
+description: Command-line surface of the Kerangka CLI
+---
+
+## Core commands
+
+The `kerangka` CLI provides commands for authoring, verifying, compiling, and emitting
+artifacts from `.kerangka.json` models.
+
+| Command | Purpose |
+|---|---|
+| `check <file>` | Verify model syntax, references, and expressions |
+| `build <file>` | Compile to canonical KIR JSON |
+| `verify <file>` | Static analysis of workflows, permissions, decision tables, and events |
+| `test <file>` | Execute declarative examples against the reference engine |
+| `run <file> <action>` | Execute one action and print the result (preview only) |
+
+## Emission
+
+| Command | Purpose |
+|---|---|
+| `openapi <file>` | Generate OpenAPI 3.1 specification JSON |
+| `json-schema <file>` | JSON Schema 2020-12 document |
+| `graphql <file>` | GraphQL SDL |
+| `mcp <file>` | Model Context Protocol tool declarations |
+| `uidl <file>` | Generate UIDL screen documents |
+| `emit <target> <file>` | Unified projector for all supported targets |
+
+## Code generation and database
+
+| Command | Purpose |
+|---|---|
+| `ddl <file>` | Generate SQL DDL (PostgreSQL or SQLite) |
+| `codegen <file>` | Generate typed models (TypeScript, Java 21, Python, Go, Rust, Dart) |
+| `db diff <old> <new>` | Generate plain SQL migration |
+| `compose <file>` | Generate Docker Compose infrastructure |
+
+## Development
+
+| Command | Purpose |
+|---|---|
+| `dev <file>` | Zero-config dev server with REST, MCP, and UIDL playground |
+| `serve <file>` | Sidecar with REST and metadata endpoints |
+
+See the [first model](/Kerangka/docs/v0.1.1/getting-started/first-model) for practical usage.

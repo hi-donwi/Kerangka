@@ -1,0 +1,32 @@
+---
+title: Actions, Workflows, and Decisions
+description: How transitions, roles, and decision tables drive state changes
+---
+
+## Transitions
+
+A workflow is declared on an entity with `field` (the status field) and `transitions`.
+Each transition has `from`, `to`, `roles`, and an optional `when` guard:
+
+```json
+"approve": { "from": ["submitted","escalated"], "to": "approved",
+  "roles": ["team-lead","department-manager","hr-director","admin"],
+  "when": "actor.role == assignedApproverRole || actor.role == 'admin'" }
+```
+
+The engine checks the role against the record, evaluates the guard, and only then
+applies the state change. A refused transition returns `ok: false` with a diagnostic.
+
+## Decision tables
+
+A decision table maps inputs to outcomes. Effective-dated versions (`validFrom`/`validTo`)
+let a rate or policy change over time while keeping history. `kerangka verify` reports
+overlapping or gapped periods.
+
+## Determinism
+
+Transitions and decisions are deterministic given the record, the actor, and the clock.
+There is no I/O inside the engine; effects (events, calls, persists) are returned for
+the host to apply.
+
+See the [leave-request sample](/Kerangka/docs/v0.1.1/reference/samples) for a routing example.

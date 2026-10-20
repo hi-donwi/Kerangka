@@ -1,0 +1,23 @@
+---
+title: Kerangka Model
+description: A brief introduction to the Kerangka model structure
+---
+
+## Overview
+
+Kerangka describes an application as a structured JSON document with the following core elements:
+
+- **Types and entities:** Define data shapes, constraints, and relationships.
+- **Traits:** Reusable behavior applied to types or entities.
+- **Workflows:** Describe processes and state transitions.
+- **Actions and views:** Define how users interact with the system.
+- **Projectors:** Transform domain state into presentation models.
+
+The canonical, machine-checked semantics live under `spec/` in the repository. For context on projectors and presentation, see `docs/projectors.md` and related reference pages.
+
+## Design Principles
+
+- JSON-first and human-readable.
+- Deterministic semantics with explicit constraints.
+- Separation between domain logic (Kerangka) and presentation (UIDL).
+- Safe, verifiable execution with clear boundaries.

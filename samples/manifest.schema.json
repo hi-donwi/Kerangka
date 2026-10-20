@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kerangka.dev/schema/v0.1/sample-manifest.schema.json",
+  "title": "Kerangka sample manifest",
+  "description": "Manifest describing the linked samples shipped with the Kerangka docs and kitchen sink.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "title", "modelPath", "docsPath", "allowedModes", "inputs", "expected", "support", "version"],
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$",
+        "description": "Stable, URL-safe sample id."
+      },
+      "title": { "type": "string", "minLength": 1 },
+      "modelPath": {
+        "type": "string",
+        "description": "Path from repo root to the model JSON file (must exist)."
+      },
+      "docsPath": {
+        "type": "string",
+        "description": "Absolute, query-free path under the docs base that must resolve to a built HTML page."
+      },
+      "sourcePath": {
+        "type": "string",
+        "description": "Path from repo root to a source snippet shown in the docs (optional)."
+      },
+      "allowedModes": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": { "enum": ["preview", "run", "export"] }
+      },
+      "inputs": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["name", "run", "record"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "run": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*\\.[A-Za-z][A-Za-z0-9_]*$" },
+            "input": { "type": "object" },
+            "record": { "type": "object" },
+            "actor": { "type": "object" }
+          }
+        }
+      },
+      "expected": {
+        "type": "object",
+        "required": ["outcomes"],
+        "additionalProperties": false,
+        "properties": {
+          "outcomes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["input", "status"],
+              "additionalProperties": false,
+              "properties": {
+                "input": { "type": "string", "minLength": 1 },
+                "status": { "enum": ["ok", "denied", "error"] },
+                "error": { "type": "string", "minLength": 1 },
+                "record": { "type": "object" }
+              }
+            }
+          }
+        }
+      },
+      "support": {
+        "enum": ["supported", "partial", "planned"]
+      },
+      "version": {
+        "type": "string",
+        "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+      }
+    }
+  }
+}

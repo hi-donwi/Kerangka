@@ -1,0 +1,23 @@
+:root { color-scheme: light; }
+body { margin: 0; font-family: system-ui, sans-serif; background: #f6f7f9; color: #1f2937; }
+.ks { max-width: 960px; margin: 0 auto; padding: 24px; }
+header h1 { margin: 0 0 4px; }
+nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+nav button { padding: 6px 12px; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer; }
+nav button:focus-visible { outline: 2px solid #1f2937; outline-offset: 2px; }
+nav button.active { background: #1f2937; color: #fff; border-color: #1f2937; }
+.sample { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }
+.meta { margin: 4px 0; }
+pre { background: #f3f4f6; padding: 8px; border-radius: 6px; overflow: auto; }
+.actor { color: #6b7280; }
+.note { color: #6b7280; font-style: italic; }
+button { padding: 8px 12px; cursor: pointer; }
+button:disabled { cursor: wait; opacity: 0.6; }
+button:focus-visible, summary:focus-visible { outline: 2px solid #1f2937; outline-offset: 2px; }
+.sample { min-width: 0; }
+.sample li { margin-block: 12px; }
+.sample code, .meta, .note { overflow-wrap: anywhere; }
+summary { cursor: pointer; padding-block: 12px; }
+.uidl-screens { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.uidl-screens button[aria-pressed="true"] { background: #1f2937; color: #fff; border-color: #1f2937; }
+.uidl-preview { max-width: 100%; min-width: 0; overflow-x: auto; }

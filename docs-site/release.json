@@ -1,0 +1,10 @@
+{
+  "version": "0.1.1",
+  "channel": "release",
+  "basePath": "/Kerangka/docs/v0.1.1",
+  "outDir": "./dist/Kerangka/docs/v0.1.1",
+  "publishTarget": "github-pages",
+  "site": "https://hi-donwi.github.io/Kerangka",
+  "latestAliasPath": "/Kerangka/docs/latest",
+  "requiresPublishApproval": true
+}

@@ -140,6 +140,11 @@ describe("Kerangka Projections", () => {
       expect(listDoc).toBeDefined();
       expect(listDoc.version).toBe("1.0.0");
       expect(listDoc.route).toBe("/invoices");
+      expect(listDoc.layout).toEqual({
+        container: "constrained",
+        maxWidth: "80rem",
+        padding: "responsive",
+      });
       const itemsQuery = (listDoc.dataSources as any)?.items?.["$query"];
       expect(itemsQuery?.collection).toBe("Invoice");
       expect(itemsQuery?.page?.number).toEqual({ $bind: "state.page" });
@@ -151,11 +156,42 @@ describe("Kerangka Projections", () => {
       expect(formDoc).toBeDefined();
       expect(formDoc.version).toBe("1.0.0");
       expect(formDoc.route).toBe("/invoice/:id");
+      expect(formDoc.layout).toEqual({
+        container: "constrained",
+        maxWidth: "80rem",
+        padding: "responsive",
+      });
       const recordQuery = (formDoc.dataSources as any)?.record?.["$query"];
       expect(recordQuery?.filters).toEqual([{ field: "id", op: "eq", value: { $bind: "state.params.id" } }]);
 
       // No invented navigation shell: nav lives as a Navbar inside each document.
       expect(docs["navigation-shell"]).toBeUndefined();
+    });
+
+    it("generates dynamic dashboard document when includeDynamicDashboards is true", () => {
+      const docs = generateUIDL(kir, { includeDynamicDashboards: true });
+      expect(docs["home"]).toBeDefined();
+      const homeDoc = docs["home"]!;
+      expect(homeDoc.layout?.container).toBe("constrained");
+      expect(homeDoc.dataSources?.dashboard).toEqual({
+        $query: { endpoint: "/screens/home" },
+      });
+      expect(UIDLGenerator.refusedDashboards(kir, { includeDynamicDashboards: true })).toEqual([]);
+    });
+
+    it("merges overlays cleanly onto base documents", () => {
+      const listDoc = generateUIDL(kir)["invoices"]!;
+      const overlay = {
+        name: "Custom Invoices Title",
+        layout: { maxWidth: "96rem" },
+        state: { customFilter: "active" },
+      };
+      const merged = UIDLGenerator.mergeOverlay(listDoc, overlay);
+      expect(merged.name).toBe("Custom Invoices Title");
+      expect(merged.layout?.maxWidth).toBe("96rem");
+      expect(merged.layout?.container).toBe("constrained");
+      expect(merged.state?.customFilter).toBe("active");
+      expect(merged.state?.page).toBe(1);
     });
   });
 

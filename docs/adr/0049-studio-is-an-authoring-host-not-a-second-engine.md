@@ -1,4 +1,4 @@
-# ADR-0048: Studio Is an Authoring Host, Not a Second Engine
+# ADR-0049: Studio Is an Authoring Host, Not a Second Engine
 
 - **Date:** 2026-10-16
 - **Status:** Accepted

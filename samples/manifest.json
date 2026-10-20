@@ -1,0 +1,186 @@
+[
+  {
+    "id": "approval",
+    "title": "Expense Approval",
+    "modelPath": "samples/approval/expense-approval.kerangka.json",
+    "docsPath": "/Kerangka/docs/v0.1.1/reference/samples/",
+    "sourcePath": "examples/expense-approval.kerangka.json",
+    "allowedModes": [
+      "preview",
+      "run"
+    ],
+    "inputs": [
+      {
+        "name": "submit-draft",
+        "run": "Expense.submit",
+        "record": {
+          "description": "Train ticket",
+          "amount": "42.00",
+          "status": "draft"
+        },
+        "actor": {
+          "roles": [
+            "employee"
+          ]
+        }
+      },
+      {
+        "name": "approve-as-manager",
+        "run": "Expense.approve",
+        "record": {
+          "description": "Train ticket",
+          "amount": "42.00",
+          "status": "submitted"
+        },
+        "actor": {
+          "roles": [
+            "manager"
+          ]
+        }
+      },
+      {
+        "name": "approve-as-employee",
+        "run": "Expense.approve",
+        "record": {
+          "description": "Train ticket",
+          "amount": "42.00",
+          "status": "submitted"
+        },
+        "actor": {
+          "roles": [
+            "employee"
+          ]
+        }
+      }
+    ],
+    "expected": {
+      "outcomes": [
+        {
+          "input": "submit-draft",
+          "status": "ok",
+          "record": {
+            "status": "submitted"
+          }
+        },
+        {
+          "input": "approve-as-manager",
+          "status": "ok",
+          "record": {
+            "status": "approved"
+          }
+        },
+        {
+          "input": "approve-as-employee",
+          "status": "denied",
+          "error": "PERMISSION_DENIED"
+        }
+      ]
+    },
+    "support": "supported",
+    "version": "v0.1.1"
+  },
+  {
+    "id": "validation",
+    "title": "Field, Expression, and Validation",
+    "modelPath": "samples/validation/invoicing.kerangka.json",
+    "docsPath": "/Kerangka/docs/v0.1.1/concepts/validation/",
+    "sourcePath": "examples/invoicing.kerangka.json",
+    "allowedModes": [
+      "preview",
+      "run"
+    ],
+    "inputs": [
+      {
+        "name": "empty-invoice",
+        "run": "Invoice.send",
+        "record": {
+          "status": "draft",
+          "lines": []
+        },
+        "actor": {
+          "roles": [
+            "billing"
+          ]
+        }
+      }
+    ],
+    "expected": {
+      "outcomes": [
+        {
+          "input": "empty-invoice",
+          "status": "denied",
+          "error": "GUARD_FAILED"
+        }
+      ]
+    },
+    "support": "supported",
+    "version": "v0.1.1"
+  },
+  {
+    "id": "workflow",
+    "title": "Action, Workflow, and Decision",
+    "modelPath": "samples/workflow/leave-request.kerangka.json",
+    "docsPath": "/Kerangka/docs/v0.1.1/concepts/workflow/",
+    "sourcePath": "examples/leave-request.kerangka.json",
+    "allowedModes": [
+      "preview",
+      "run"
+    ],
+    "inputs": [
+      {
+        "name": "submit-2-days",
+        "run": "LeaveRequest.submit",
+        "record": {
+          "employeeId": "emp-1",
+          "days": 2,
+          "status": "draft",
+          "startDate": "2026-10-01",
+          "endDate": "2026-10-02"
+        },
+        "actor": {
+          "roles": [
+            "employee"
+          ]
+        }
+      },
+      {
+        "name": "submit-6-days",
+        "run": "LeaveRequest.submit",
+        "record": {
+          "employeeId": "emp-1",
+          "days": 6,
+          "status": "draft",
+          "startDate": "2026-10-01",
+          "endDate": "2026-10-07"
+        },
+        "actor": {
+          "roles": [
+            "employee"
+          ]
+        }
+      }
+    ],
+    "expected": {
+      "outcomes": [
+        {
+          "input": "submit-2-days",
+          "status": "ok",
+          "record": {
+            "status": "submitted",
+            "assignedApproverRole": "team-lead"
+          }
+        },
+        {
+          "input": "submit-6-days",
+          "status": "ok",
+          "record": {
+            "status": "submitted",
+            "assignedApproverRole": "hr-director"
+          }
+        }
+      ]
+    },
+    "support": "supported",
+    "version": "v0.1.1"
+  }
+]

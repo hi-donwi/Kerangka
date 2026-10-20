@@ -33,7 +33,7 @@ import { AsyncAPIGenerator, AsyncAPIOptions } from "./projections/asyncapi.js";
 import { JSONSchemaGenerator, JSONSchemaOptions, JSON_SCHEMA_DIALECT } from "./projections/json-schema.js";
 import { GraphQLGenerator } from "./projections/graphql.js";
 import { McpGenerator, McpToolDefinition } from "./projections/mcp.js";
-import { UIDLGenerator, UIDLDocument } from "./projections/uidl.js";
+import { UIDLGenerator, UIDLDocument, UIDLGeneratorOptions } from "./projections/uidl.js";
 import { CodeGenerator, TargetLanguage, CodegenOptions } from "./codegen/index.js";
 import { ModelDiffer, ModelDiffResult } from "./diff/differ.js";
 import { DBMigrationDiffer, DBMigrationOptions, DBMigrationResult } from "./ddl/diff.js";
@@ -107,8 +107,8 @@ export function generateMcpTools(kir: KIRDocument): McpToolDefinition[] {
 /**
  * Generates canonical UIDL documents from views and entities in a compiled KIR document.
  */
-export function generateUIDL(kir: KIRDocument): Record<string, UIDLDocument> {
-  return UIDLGenerator.generate(kir);
+export function generateUIDL(kir: KIRDocument, options?: UIDLGeneratorOptions): Record<string, UIDLDocument> {
+  return UIDLGenerator.generate(kir, options);
 }
 
 /**

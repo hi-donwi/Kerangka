@@ -1,0 +1,35 @@
+---
+title: Reference Applications
+description: Ten business domains used to test whether a Kerangka model is enough
+---
+
+Kerangka evaluates expressive power against ten concrete business domains. Each
+reference domain is expected to be expressible in a Kerangka document without host
+code for the domain rules themselves.
+
+| Domain | Core capabilities | Profile |
+|---|---|---|
+| Invoicing and billing | Exact decimal arithmetic, embedded lines, workflow transitions, payment receipts | Starter |
+| HR leave requests | Decision-table approver routing, human tasks, generated inbox, SLA escalation | Starter |
+| Warehouse inventory | Aggregate invariants, stock movements, discriminator multi-tenancy | Starter |
+| Appointment booking | Time-slot reservation, recurring schedules, capacity limits, conflict detection | Standard |
+| B2B SaaS subscriptions | Tenant isolation, usage metering, recurring invoices, tenant overlays | Standard |
+| Helpdesk and ticket SLA | Multi-tier queues, customer portal permissions, SLA breach escalation | Standard |
+| Purchase order approval | Multi-level approval, department budget verification | Standard |
+| Retail point of sale | Offline action replay, optimistic stock deduction, cash drawer audit | Standard |
+| Course enrollment | Prerequisite rules, enrollment capacity, grading workflows | Distributed |
+| Clinic and prescriptions | Personal-data masking, appointment queues, prescription workflows | Distributed |
+
+## Inclusion criteria
+
+Every reference application must:
+
+1. Include at least two interconnected entities, or an aggregate with embedded records.
+2. Define at least one non-trivial business rule, workflow, or decision table.
+3. Run locally with `kerangka dev <file>` and no extra configuration.
+4. Pass conformance tests and `kerangka verify`.
+
+The shipped browser samples cover expense approval, invoicing validation, and leave
+requests. See the [samples reference](/Kerangka/docs/v0.1.1/reference/samples) for
+those fixtures. The remaining domains are the catalogue used to judge coverage; they
+are not all shipped as kitchen-sink samples.

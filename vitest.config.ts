@@ -45,9 +45,12 @@ const alias = [
 export default defineConfig({
   resolve: { alias },
   test: {
-    exclude: [...configDefaults.exclude, "apps/studio/e2e/**"],
     // The examples and the conformance suite are read from the repo root, so a test's
     // own directory is the wrong place to resolve them from.
-    root: repoRoot
+    root: repoRoot,
+    // kitchen-sink's Playwright specs live in this repository but run under
+    // `npm run test:e2e` inside that package; collecting them here fails, because
+    // @playwright/test is not installed at the root.
+    exclude: [...configDefaults.exclude, "kitchen-sink/e2e/**", "docs-site/**", "apps/studio/e2e/**"]
   }
 });

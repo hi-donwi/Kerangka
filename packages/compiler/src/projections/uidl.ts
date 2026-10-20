@@ -34,6 +34,13 @@ export interface UIDLNode {
   events?: Record<string, unknown>;
 }
 
+export interface UIDLLayoutConfig {
+  container?: "constrained" | "narrow" | "full" | "prose";
+  maxWidth?: string;
+  padding?: "none" | "compact" | "normal" | "spacious" | "responsive";
+  centered?: boolean;
+}
+
 export interface UIDLDocument {
   $schema?: string;
   version: string;
@@ -41,10 +48,23 @@ export interface UIDLDocument {
   name: string;
   route?: string;
   theme?: string;
+  layout?: UIDLLayoutConfig;
   state?: Record<string, unknown>;
   dataSources?: Record<string, unknown>;
   root: UIDLNode;
 }
+
+export interface UIDLGeneratorOptions {
+  /** If true, compiles dynamic dashboard documents bound to /screens/{viewId} instead of refusing them */
+  includeDynamicDashboards?: boolean;
+}
+
+/** Default layout configuration matching UIDL-Runtime fluid container standards */
+export const DEFAULT_DOCUMENT_LAYOUT: UIDLLayoutConfig = {
+  container: "constrained",
+  maxWidth: "80rem",
+  padding: "responsive",
+};
 
 /** Preset styles using values the runtime's Tailwind mapper understands. */
 const COLUMN_STYLE: Record<string, unknown> = { display: "flex", flexDirection: "column", gap: "gap-2" };
@@ -75,16 +95,21 @@ export class UIDLGenerator {
 
   /**
    * Generates one UIDL document per declared list or form view, plus scaffold list+form
-   * documents for entities that have no custom views. Dashboard views are not documents:
-   * {@link refusedDashboards} names them, and a server computes their figures at
-   * `GET /screens/{viewId}`. Every document carries a `Navbar` when the app declares navigation.
+   * documents for entities that have no custom views. Dashboard views can be emitted as dynamic
+   * screen bindings when `options.includeDynamicDashboards` is true; otherwise {@link refusedDashboards}
+   * names them. Every document carries a `Navbar` when the app declares navigation.
    */
-  static generate(kir: KIRDocument): Record<string, UIDLDocument> {
+  static generate(kir: KIRDocument, options?: UIDLGeneratorOptions): Record<string, UIDLDocument> {
     const documents: Record<string, UIDLDocument> = {};
     const views = (kir.views || {}) as Record<string, Record<string, unknown>>;
 
     for (const [viewId, viewDef] of Object.entries(views)) {
-      if (viewDef.dashboard) continue;
+      if (viewDef.dashboard) {
+        if (options?.includeDynamicDashboards) {
+          documents[viewId] = UIDLGenerator.generateDashboardView(viewId, viewDef, kir);
+        }
+        continue;
+      }
       if (viewDef.list) {
         documents[viewId] = UIDLGenerator.generateListView(viewId, viewDef, kir);
       } else if (viewDef.form) {
@@ -114,10 +139,12 @@ export class UIDLGenerator {
   }
 
   /**
-   * Dashboard views this generator will not write. A static document cannot compute a KPI,
-   * so emitting one would show a wrong number. The server computes them instead.
+   * Dashboard views this generator will not write statically.
    */
-  static refusedDashboards(kir: KIRDocument): RefusedDashboard[] {
+  static refusedDashboards(kir: KIRDocument, options?: UIDLGeneratorOptions): RefusedDashboard[] {
+    if (options?.includeDynamicDashboards) {
+      return [];
+    }
     const views = (kir.views || {}) as Record<string, Record<string, unknown>>;
     const refused: RefusedDashboard[] = [];
     for (const [viewId, viewDef] of Object.entries(views)) {
@@ -134,6 +161,140 @@ export class UIDLGenerator {
       });
     }
     return refused;
+  }
+
+  /**
+   * Deep-merges a partial UIDL overlay document into a base UIDL document.
+   */
+  static mergeOverlay(base: UIDLDocument, overlay: Partial<UIDLDocument>): UIDLDocument {
+    return {
+      ...base,
+      ...overlay,
+      layout: { ...(base.layout || {}), ...(overlay.layout || {}) },
+      state: { ...(base.state || {}), ...(overlay.state || {}) },
+      dataSources: { ...(base.dataSources || {}), ...(overlay.dataSources || {}) },
+      root: overlay.root ? UIDLGenerator.mergeNodes(base.root, overlay.root) : base.root,
+    };
+  }
+
+  private static mergeNodes(baseNode: UIDLNode, overlayNode: Partial<UIDLNode>): UIDLNode {
+    const merged: UIDLNode = {
+      ...baseNode,
+      ...overlayNode,
+      props: { ...(baseNode.props || {}), ...(overlayNode.props || {}) },
+      style: { ...(baseNode.style || {}), ...(overlayNode.style || {}) },
+      bindings: { ...(baseNode.bindings || {}), ...(overlayNode.bindings || {}) },
+      events: { ...(baseNode.events || {}), ...(overlayNode.events || {}) },
+    };
+
+    if (overlayNode.children && overlayNode.children.length > 0) {
+      if (!baseNode.children || baseNode.children.length === 0) {
+        merged.children = overlayNode.children;
+      } else {
+        const baseChildren = [...baseNode.children];
+        const overlayChildren = [...overlayNode.children];
+        const mergedChildren: UIDLNode[] = [];
+
+        for (const bChild of baseChildren) {
+          const matchIndex = overlayChildren.findIndex((o) => o.id === bChild.id);
+          if (matchIndex >= 0) {
+            const matchedOverlay = overlayChildren.splice(matchIndex, 1)[0]!;
+            mergedChildren.push(UIDLGenerator.mergeNodes(bChild, matchedOverlay));
+          } else {
+            mergedChildren.push(bChild);
+          }
+        }
+        mergedChildren.push(...overlayChildren);
+        merged.children = mergedChildren;
+      }
+    } else if (baseNode.children) {
+      merged.children = baseNode.children;
+    }
+
+    return merged;
+  }
+
+  // ---------------------------------------------------------------- dashboard
+
+  private static generateDashboardView(
+    viewId: string,
+    viewDef: Record<string, unknown>,
+    _kir: KIRDocument,
+  ): UIDLDocument {
+    const kpis = Array.isArray(viewDef.dashboard) ? (viewDef.dashboard as Record<string, unknown>[]) : [];
+    const route = viewId === "home" ? "/" : `/${viewId}`;
+
+    const kpiCards: UIDLNode[] = kpis.map((kpiDef, index) => {
+      const label = (kpiDef.kpi as string) || `KPI ${index + 1}`;
+      return {
+        id: `${viewId}-kpi-${index}`,
+        type: "Panel" as const,
+        props: {
+          title: label,
+          className: "uidl-kpi-card",
+        },
+        style: { minWidth: "220px", flex: "1 1 200px" },
+        children: [
+          {
+            id: `${viewId}-kpi-${index}-val`,
+            type: "Text" as const,
+            props: {
+              value: { $bind: `state.$data.dashboard.${index}.value` },
+              heading: 2,
+              className: "uidl-kpi-val",
+            },
+          },
+        ],
+      };
+    });
+
+    return {
+      $schema: UIDLGenerator.SCHEMA_URI,
+      version: UIDLGenerator.SPEC_VERSION,
+      id: viewId,
+      name: UIDLGenerator.capitalize(viewId),
+      route,
+      layout: DEFAULT_DOCUMENT_LAYOUT,
+      state: {},
+      dataSources: {
+        dashboard: {
+          $query: {
+            endpoint: `/screens/${viewId}`,
+          },
+        },
+      },
+      root: {
+        id: `root-${viewId}`,
+        type: "Container",
+        children: [
+          {
+            id: `${viewId}-content`,
+            type: "Column" as const,
+            style: { ...COLUMN_STYLE, gap: "gap-6", padding: "p-4" },
+            children: [
+              {
+                id: `${viewId}-header`,
+                type: "Row" as const,
+                style: { ...ROW_STYLE, justifyContent: "space-between", alignItems: "center" },
+                children: [
+                  {
+                    id: `${viewId}-title`,
+                    type: "Text" as const,
+                    props: { value: UIDLGenerator.capitalize(viewId), heading: 1 },
+                  },
+                ],
+              },
+              {
+                id: `${viewId}-kpi-grid`,
+                type: "Row" as const,
+                style: { display: "flex", flexDirection: "row", flexWrap: "wrap", gap: "gap-4" },
+                children: kpiCards,
+              },
+            ],
+          },
+        ],
+      },
+    };
   }
 
   // ---------------------------------------------------------------- list
@@ -170,6 +331,7 @@ export class UIDLGenerator {
       id: viewId,
       name: UIDLGenerator.capitalize(viewId),
       route,
+      layout: DEFAULT_DOCUMENT_LAYOUT,
       state: { page: 1, pageSize: 20, search: "" },
       dataSources: {
         items: {
@@ -331,6 +493,7 @@ export class UIDLGenerator {
       id: viewId,
       name: `${entityName} Details`,
       route,
+      layout: DEFAULT_DOCUMENT_LAYOUT,
       state: { params: {}, form: {}, mutation: {} },
       dataSources: {
         record: {
