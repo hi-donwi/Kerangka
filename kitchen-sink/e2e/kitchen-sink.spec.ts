@@ -2,6 +2,25 @@ import { expect, test } from "@playwright/test";
 
 const SAMPLES = 3;
 const JS_BUDGET_BYTES = 400 * 1024;
+const MID_TIER_TTI_MS = 8000;
+
+async function applyMidTierMobile(page: import("@playwright/test").Page) {
+  const client = await page.context().newCDPSession(page);
+  await client.send("Emulation.setDeviceMetricsOverride", {
+    width: 412,
+    height: 823,
+    deviceScaleFactor: 2,
+    mobile: true,
+  });
+  await client.send("Network.enable");
+  await client.send("Network.emulateNetworkConditions", {
+    offline: false,
+    latency: 150,
+    downloadThroughput: (1.6 * 1024 * 1024) / 8,
+    uploadThroughput: (750 * 1024) / 8,
+  });
+  await client.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+}
 
 test.describe("kitchen sink execution", () => {
   test("golden path: run real approval outcomes without host I/O", async ({ page }) => {
@@ -228,6 +247,17 @@ test.describe("kitchen sink execution", () => {
     expect(overflow, "UIDL preview must not widen the page").toBeLessThanOrEqual(0);
     expect(requests.filter((entry) => !entry.startsWith("GET ") && !entry.startsWith("HEAD "))).toEqual([]);
     expect(requests.filter((entry) => !entry.includes("127.0.0.1:4173") && !entry.includes("localhost:4173"))).toEqual([]);
+  });
+
+  test("mid-tier mobile profile becomes interactive within the TTI ceiling", async ({ page }) => {
+    await applyMidTierMobile(page);
+    await page.goto("/", { waitUntil: "commit" });
+    const run = page.getByRole("button", { name: "Run submit-draft", exact: true });
+    await expect(run).toBeVisible();
+    await expect(run).toBeEnabled();
+    const tti = await page.evaluate(() => performance.now());
+    expect(tti, "mid-tier mobile TTI").toBeGreaterThan(0);
+    expect(tti, "mid-tier mobile TTI").toBeLessThan(MID_TIER_TTI_MS);
   });
 
   test("execution budget: static assets stay under the JS budget", async ({ page }) => {

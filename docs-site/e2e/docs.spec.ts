@@ -1,4 +1,24 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+const MID_TIER_TTI_MS = 8000;
+
+async function applyMidTierMobile(page: Page) {
+  const client = await page.context().newCDPSession(page);
+  await client.send("Emulation.setDeviceMetricsOverride", {
+    width: 412,
+    height: 823,
+    deviceScaleFactor: 2,
+    mobile: true,
+  });
+  await client.send("Network.enable");
+  await client.send("Network.emulateNetworkConditions", {
+    offline: false,
+    latency: 150,
+    downloadThroughput: (1.6 * 1024 * 1024) / 8,
+    uploadThroughput: (750 * 1024) / 8,
+  });
+  await client.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+}
 import manifest from "../../samples/manifest.json" with { type: "json" };
 
 test("versioned content and sidebar navigation work on desktop and mobile", async ({ page }) => {
@@ -34,6 +54,16 @@ test("built Pagefind search opens a matching content page", async ({ page }) => 
   await expect(page).toHaveURL(/\/Kerangka\/docs\/v0\.1\.1\/concepts\/validation\/?(?:#.*)?$/);
   await expect(page.getByRole("heading", { name: "Field, Expression, and Validation", exact: true })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("mid-tier mobile profile becomes interactive within the TTI ceiling", async ({ page }) => {
+  await applyMidTierMobile(page);
+  await page.goto("/Kerangka/docs/v0.1.1/", { waitUntil: "commit" });
+  await expect(page.getByRole("heading", { name: "Kerangka Docs", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /menu/i })).toBeVisible();
+  const tti = await page.evaluate(() => performance.now());
+  expect(tti, "mid-tier mobile TTI").toBeGreaterThan(0);
+  expect(tti, "mid-tier mobile TTI").toBeLessThan(MID_TIER_TTI_MS);
 });
 
 test("reference catalogue and usability protocol are published", async ({ page }) => {

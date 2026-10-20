@@ -51,6 +51,11 @@ Each manifest input declares `run: "Entity.operation"`, `record`, optional opera
 as well as expected record fields. The UI shows actual output, PASS/MISMATCH, and engine
 time. Reset and navigation cancel pending work; every run starts from the fixture.
 
+Mid-tier mobile profile: 412x823 at 2x scale, 4x CPU, and Slow 4G (150 ms latency,
+1.6 Mbps down, 750 Kbps up). Interactive means the first run control is visible and
+enabled. A local run on 2026-10-20 reached that control in under 1.1 s. CI uses the
+same profile with an 8 s regression ceiling so a slower shared runner does not flake.
+
 Limits: 16 KiB input metadata, 256 KiB KIR, 16 entities, 128 declared operations,
 20,000 structural nodes, depth 32, one operation and a 1000 ms worker deadline, and an
 8 KiB output preview. Comparisons happen before truncation. Errors, unsupported targets,
