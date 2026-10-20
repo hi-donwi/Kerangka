@@ -28,6 +28,7 @@ import { BindingInspector } from "./BindingInspector";
 import { ThemeInspector } from "./ThemeInspector";
 import { StatementInspector } from "./StatementInspector";
 import { DecisionTable } from "./DecisionTable";
+import { EventPolicy } from "./EventPolicy";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
 import { Diagnostics } from "./Diagnostics";
@@ -650,6 +651,7 @@ export function App() {
                     <ThemeInspector />
                     {entity ? <StatementInspector entity={entity} /> : null}
                     {entity ? <DecisionTable entity={entity} /> : null}
+                    {entity ? <EventPolicy entity={entity} /> : null}
                     {studio.authorized && token ? <BundleTools token={token} onImported={() => studio.reload()} /> : null}
                     {response ? <EjectPanel modelPath={response.bundle.entry} /> : null}
                     {response ? <RouteInspector response={response} /> : null}
