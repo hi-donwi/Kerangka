@@ -44,6 +44,7 @@ export interface EntityInfo {
     to?: string;
     guarded: boolean;
   }>;
+  permissions?: Record<string, unknown>;
 }
 export interface Inspection {
   app: string;

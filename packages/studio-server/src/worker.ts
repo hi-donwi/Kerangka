@@ -274,6 +274,7 @@ function inspect(input: SourceSnapshot): InspectionResult {
               guarded: action.when !== undefined,
             })),
           ],
+          permissions: entity.permissions,
         })),
         outputs: {
           openapi: JSON.stringify(generateOpenAPI(kir), null, 2),

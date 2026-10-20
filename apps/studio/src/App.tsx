@@ -16,6 +16,8 @@ import { PreviewFrame } from "./PreviewFrame";
 import { ProjectExplorer, type Selection } from "./ProjectExplorer";
 import { EntityInspector } from "./EntityInspector";
 import { FormSectionInspector } from "./FormSectionInspector";
+import { WorkflowGraph } from "./WorkflowGraph";
+import { AccessMatrix } from "./AccessMatrix";
 import { Diagnostics } from "./Diagnostics";
 import { StudioConflict, StudioSaveRefused } from "./studio-api";
 import type { SourceText } from "../../../packages/studio-server/src/contracts.js";
@@ -533,15 +535,29 @@ export function App() {
                       />
                     ) : null}
                     {entity && (
-                      <EntityInspector
-                        entity={entity}
-                        roles={inspection?.roles ?? []}
-                        draft={draft}
-                        onAddField={addField}
-                        onOpenSource={() =>
-                          select({ kind: "source", id: response.bundle.entry, pointer: entity.pointer })
-                        }
-                      />
+                      <>
+                        <EntityInspector
+                          entity={entity}
+                          roles={inspection?.roles ?? []}
+                          draft={draft}
+                          onAddField={addField}
+                          onOpenSource={() =>
+                            select({ kind: "source", id: response.bundle.entry, pointer: entity.pointer })
+                          }
+                        />
+                        {entity.operations.some((item) => item.kind === "transition") ? (
+                          <WorkflowGraph entity={entity} />
+                        ) : null}
+                        {entity.permissions ? (
+                          <AccessMatrix
+                            entity={entity}
+                            roles={inspection?.roles ?? []}
+                            onOpenSource={() =>
+                              select({ kind: "source", id: response.bundle.entry, pointer: entity.pointer })
+                            }
+                          />
+                        ) : null}
+                      </>
                     )}
                     {screen && (
                       <>
