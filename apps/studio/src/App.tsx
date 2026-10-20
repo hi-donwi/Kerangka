@@ -24,6 +24,7 @@ import { BundleTools } from "./BundleTools";
 import { EjectPanel } from "./EjectPanel";
 import { RouteInspector } from "./RouteInspector";
 import { ComponentTree } from "./ComponentTree";
+import { BindingInspector } from "./BindingInspector";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
 import { Diagnostics } from "./Diagnostics";
@@ -642,6 +643,7 @@ export function App() {
                       />
                     ) : null}
                     {entity ? <ComponentTree entity={entity} /> : null}
+                    {entity ? <BindingInspector entity={entity} /> : null}
                     {studio.authorized && token ? <BundleTools token={token} onImported={() => studio.reload()} /> : null}
                     {response ? <EjectPanel modelPath={response.bundle.entry} /> : null}
                     {response ? <RouteInspector response={response} /> : null}
