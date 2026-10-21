@@ -3,10 +3,13 @@ import { useState } from "react";
 export function MaterializePage({
   view,
   sourceText,
+  document,
   onMaterialize,
 }: {
   view: string;
   sourceText: string;
+  /** The generated document, so the authored page starts as the real page. */
+  document?: unknown;
   onMaterialize: (path: string, text: string) => void;
 }) {
   const [status, setStatus] = useState<string | null>(null);
@@ -14,13 +17,24 @@ export function MaterializePage({
     <section className="materialize-panel" aria-label="Materialize recipe page">
       <h3>Materialize recipe page</h3>
       <p className="muted">
-        Convert the selected recipe view into an authored UIDL source. Regeneration leaves
-        authored files untouched.
+        Convert the selected recipe view into an authored UIDL source. The authored page starts
+        as the generated page, with its properties, bindings, and actions, and regeneration
+        leaves authored files untouched.
       </p>
       <button
         type="button"
         onClick={() => {
-          onMaterialize(`${view}.uidl.json`, JSON.stringify({ $schema: "https://uidl.dev/schema/v1/document.schema.json", version: "1.0.0", id: view, name: view, root: { id: "root", type: "Container", children: [] } }, null, 2));
+          if (!document) {
+            setStatus("This view has no generated document to copy.");
+            return;
+          }
+          const authored = {
+            ...(document as Record<string, unknown>),
+            $schema: "https://uidl.dev/schema/v1/document.schema.json",
+            id: view,
+            name: view,
+          };
+          onMaterialize(`${view}.uidl.json`, JSON.stringify(authored, null, 2));
           setStatus(`${view}.uidl.json created as authored source.`);
         }}
       >

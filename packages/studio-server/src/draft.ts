@@ -2,6 +2,7 @@ import { compile, CompilerError } from "@kerangka/compiler";
 import { StudioError, sourcePath, type DraftRequest, type SourceSnapshot, type SourceText, type StudioDiagnostic } from "./contracts.js";
 import { findPath, insertEntry, parseJson, setValue, type JsonNode } from "./json-edit.js";
 import { sourceRevision } from "./revision.js";
+import { uidlDocument } from "./uidl-document.js";
 
 export interface DraftResult {
   revision: string;
@@ -31,8 +32,16 @@ export function overlaySources(
   if (!supplied) return { ...disk };
   const sources: Record<string, SourceText> = { ...disk };
   for (const [path, source] of Object.entries(supplied)) {
+    if (!sourcePath(path)) throw new StudioError("STUDIO_WRITE_UNSUPPORTED");
     const existing = disk[path];
-    if (!existing || !sourcePath(path)) throw new StudioError("STUDIO_WRITE_UNSUPPORTED");
+    if (!existing) {
+      // A new source is a new file. It has to be a JSON document the runtime can
+      // render, and the save path checks the rest when it writes it.
+      if (source.format !== "json") throw new StudioError("STUDIO_WRITE_UNSUPPORTED");
+      if (!uidlDocument(source.text)) throw new StudioError("STUDIO_SAVE_NOT_DOCUMENT");
+      sources[path] = { format: "json", text: source.text };
+      continue;
+    }
     if (source.format !== existing.format) throw new StudioError("STUDIO_WRITE_UNSUPPORTED");
     if (existing.format !== "json") {
       if (source.text !== existing.text) throw new StudioError("STUDIO_WRITE_UNSUPPORTED");

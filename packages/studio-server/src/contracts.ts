@@ -144,6 +144,9 @@ const messages = {
   STUDIO_SAVE_REQUEST: "The Studio save request is not a supported write.",
   STUDIO_SAVE_INVALID: "The edited model does not compile; nothing was written.",
   STUDIO_SAVE_UNSUPPORTED: "A save may only rewrite a JSON source the project already has.",
+  STUDIO_SAVE_EXISTS: "The file is already there. Creating over it would replace work the console never saw.",
+  STUDIO_SAVE_NOT_DOCUMENT: "A new page must be a UIDL document the runtime can render.",
+  STUDIO_SAVE_NO_DIRECTORY: "The directory for a new page has to exist already.",
   STUDIO_WRITE_UNSUPPORTED: "Only existing JSON sources can be edited in this version. YAML stays source-only.",
 } as const;
 

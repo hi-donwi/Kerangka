@@ -95,13 +95,14 @@ describe("Studio save endpoint", () => {
     expect(await onDisk()).toBe(model);
   });
 
-  it("refuses to create a source, to edit a YAML source, and to accept an unsafe path", async () => {
+  it("refuses a new source that is not a document, to edit a YAML source, and to accept an unsafe path", async () => {
     await writeFile(join(root, "notes.kerangka.yaml"), "kerangka: '0.1'\n");
     const { base, sources } = await draft("note");
+    // A new file is allowed now, but it has to be a document the runtime can render.
     sources["new.kerangka.json"] = { format: "json", text: '{"kerangka":"0.1"}' };
     const created = await save({ expectedRevision: base, sources });
     expect(created.status).toBe(422);
-    expect((await created.json()).code).toBe("STUDIO_SAVE_UNSUPPORTED");
+    expect((await created.json()).code).toBe("STUDIO_SAVE_NOT_DOCUMENT");
 
     const baseAfterDraft = await revision();
     const { sources: yamlSources } = await draft("note");

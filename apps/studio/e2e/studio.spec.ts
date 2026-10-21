@@ -339,6 +339,37 @@ test.describe("writable host: save and conflict recovery", () => {
   test.beforeEach(async () => {
     await writeFile(join(writableRoot, "app.kerangka.json"), writableModel);
   });
+
+test("materializes the real generated page, saves it, and finds it again after a reload", async ({ page }) => {
+  await page.goto(writableHost.url);
+  // The form view is the one that can be materialized; the list view is generated.
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /request.*form/i })
+    .click();
+
+  const materialize = page.getByRole("button", { name: /Materialize/ });
+  await expect(materialize).toBeVisible();
+  await materialize.click();
+  await expect(page.getByText(/created as authored source/)).toBeVisible();
+
+  // It survives a save, and the console finds it again after a reload.
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByText(/saved to disk/)).toBeVisible();
+
+  // The authored page is the generated page, not an empty container.
+  const authored = JSON.parse(await readFile(join(writableRoot, "request.uidl.json"), "utf8"));
+  expect(authored.root).toBeTruthy();
+  expect(JSON.stringify(authored)).not.toBe('{"id":"root","type":"Container","children":[]}');
+
+  await page.reload();
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /request\.uidl\.json/ })
+    .click();
+  await expect(page.getByText(/authored/i).first()).toBeVisible();
+});
+
   test.afterAll(async () => {
     await writableHost?.close();
     if (writableRoot) await rm(writableRoot, { recursive: true, force: true });

@@ -568,6 +568,7 @@ export function App() {
                 <MaterializePage
                   view={screen.label}
                   sourceText={response?.bundle.sources[response.bundle.entry]?.text ?? ""}
+                  document={screen.document}
                   onMaterialize={(path, text) => {
                     void (async () => {
                       const currentSources = unsavedHistory(history ?? openHistory(response, selection)) ? currentStep(history!).response.bundle.sources : response.bundle.sources;
