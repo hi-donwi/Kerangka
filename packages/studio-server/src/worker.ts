@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { parseJourney, resolveJourney } from "./journey.js";
 import { parseDocument, LineCounter, isAlias, isMap, isSeq, isPair } from "yaml";
 import {
   compile,
@@ -18,6 +19,7 @@ import {
   type SourceText,
   type StudioDiagnostic,
   type ScreenInfo,
+  type JourneyInfo,
 } from "./contracts.js";
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -235,6 +237,79 @@ function inspect(input: SourceSnapshot): InspectionResult {
           });
       }
     }
+    // Journeys are read from the project and resolved against the pages and the
+    // operations that exist. A journey owns no behavior, so a broken one is reported,
+    // never repaired.
+    const journeys: JourneyInfo[] = [];
+    for (const [path, source] of Object.entries(input.sources)) {
+      if (!path.endsWith(".journey.json")) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(source.text);
+      } catch {
+        diagnostics.push({
+          severity: "error",
+          code: "STUDIO_JOURNEY_PARSE",
+          source: path,
+          message: "The journey is not valid JSON.",
+        });
+        continue;
+      }
+      const result = parseJourney(parsed);
+      for (const item of result.diagnostics) {
+        diagnostics.push({ ...item, source: path });
+      }
+      if (!result.journey) continue;
+      const journey = result.journey;
+      // An operation is named by the entity and the operation, the way the model names
+      // it. The entity's key is a field key, not its name.
+      const operationNames = new Set<string>();
+      for (const [entityName, entity] of Object.entries(kir.entities)) {
+        for (const name of Object.keys(entity.workflow?.transitions ?? {})) {
+          operationNames.add(`${entityName}.${name}`);
+        }
+        for (const name of Object.keys(entity.actions ?? {})) operationNames.add(`${entityName}.${name}`);
+      }
+      // A journey names a page the way the project names it: a view name for a
+      // generated page, a file path for an authored one.
+      const pageContext = screens.flatMap((screen) => [
+        { id: screen.label, document: screen.document },
+        { id: screen.id, document: screen.document },
+        // An authored page is also known by the name of its file, without the suffix.
+        ...(screen.source
+          ? [{ id: screen.source.replace(/\.uidl\.json$/, ""), document: screen.document }]
+          : []),
+      ]);
+      const resolved = resolveJourney(journey, { pages: pageContext, operations: [...operationNames] });
+      for (const item of resolved) {
+        diagnostics.push({ ...item, source: path });
+      }
+      journeys.push({
+        id: journey.id,
+        name: journey.name,
+        source: path,
+        entry: journey.entry,
+        steps: journey.steps.map((step) => ({
+          id: step.id,
+          kind: step.kind,
+          ...(step.page ? { page: step.page } : {}),
+          ...(step.operation ? { operation: step.operation } : {}),
+          ...(step.label ? { label: step.label } : {}),
+        })),
+        links: journey.links.map((link) => ({
+          id: link.id,
+          from: link.from,
+          to: link.to,
+          kind: link.kind,
+          ...(link.pointer ? { pointer: link.pointer } : {}),
+          ...(link.label ? { label: link.label } : {}),
+        })),
+        diagnostics: [
+          ...result.diagnostics.map((item) => ({ code: item.code, message: item.message, ...(item.path ? { path: item.path } : {}) })),
+          ...resolved.map((item) => ({ code: item.code, message: item.message, ...(item.path ? { path: item.path } : {}) })),
+        ],
+      });
+    }
     if (screens.length > 100)
       return unsupported("STUDIO_JOB_LIMIT", "/views", "The model and authored documents exceed the P1 screen budget.");
     return {
@@ -245,6 +320,7 @@ function inspect(input: SourceSnapshot): InspectionResult {
         roles: kir.roles ?? [],
         synthetic,
         screens,
+        journeys,
         sandbox: {
           filesystemWrites: process.permission.has("fs.write"),
           childProcesses: process.permission.has("child"),

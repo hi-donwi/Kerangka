@@ -53,12 +53,25 @@ export interface EntityInfo {
   workflow?: { states: string[]; initial?: string; terminal: string[] };
   permissions?: Record<string, unknown>;
 }
+export interface JourneyInfo {
+  id: string;
+  name: string;
+  /** The source file the journey came from. */
+  source: string;
+  entry: string;
+  steps: Array<{ id: string; kind: "page" | "operation"; page?: string; operation?: string; label?: string }>;
+  links: Array<{ id: string; from: string; to: string; kind: string; pointer?: string; label?: string }>;
+  /** What is wrong with the journey, if anything. The console shows it as it is. */
+  diagnostics: Array<{ code: string; message: string; path?: string }>;
+}
+
 export interface Inspection {
   app: string;
   title: string;
   roles: string[];
   entities: EntityInfo[];
   screens: ScreenInfo[];
+  journeys: JourneyInfo[];
   synthetic: Record<string, Array<Record<string, unknown>>>;
   outputs: { openapi: string; postgres: string; sqlite: string };
   sandbox: { filesystemWrites: boolean; childProcesses: boolean };

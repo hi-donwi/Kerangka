@@ -38,9 +38,26 @@ test.beforeAll(async () => {
   await writeFile(join(root, "app.kerangka.json"), model);
   host = await startStudio({ target: root, port: 0 });
 });
+const journey = () => ({
+  kind: "kerangka.studio.journey",
+  version: "0.1",
+  mode: "reference",
+  id: "request-approval",
+  name: "Synthetic request approval",
+  entry: "help",
+  steps: [
+    { id: "help", kind: "page", page: "help" },
+    { id: "submit", kind: "operation", operation: "Request.submit" },
+  ],
+  links: [
+    { id: "send", from: "help", to: "submit", kind: "action", pointer: "/root/children/1/events/onClick/0" },
+  ],
+});
+
 test.beforeEach(async () => {
   await writeFile(join(root, "app.kerangka.json"), model);
   await writeFile(join(root, "help.uidl.json"), JSON.stringify(help()));
+  await writeFile(join(root, "approval.journey.json"), JSON.stringify(journey()));
 });
 test.afterAll(async () => {
   await host?.close();
@@ -186,8 +203,8 @@ test("switches the design modes, searches the catalog, and inspects the selected
   await expect(catalog.getByRole("listitem").filter({ hasText: "TextField" }).first()).toBeVisible();
 
   await modes.getByRole("tab", { name: "Journeys" }).click();
-  await expect(page.getByRole("region", { name: "Journeys" })).toBeVisible();
-  await expect(page.getByText(/No journey is loaded yet/)).toBeVisible();
+  // The project declares a journey, so the console shows it rather than an empty state.
+  await expect(page.getByRole("region", { name: "Synthetic request approval journey" })).toBeVisible();
 
   // Back to the pages, and the inspector reports the node selected in the preview.
   await modes.getByRole("tab", { name: "Pages" }).click();
@@ -339,6 +356,23 @@ test.describe("writable host: save and conflict recovery", () => {
   test.beforeEach(async () => {
     await writeFile(join(writableRoot, "app.kerangka.json"), writableModel);
   });
+
+test("loads a journey from the project, checks it, and draws it", async ({ page }) => {
+  await page.goto(host.url);
+  await page.getByRole("tablist", { name: "Design mode" }).getByRole("tab", { name: "Journeys" }).click();
+
+  const canvas = page.getByRole("region", { name: "Synthetic request approval journey" });
+  await expect(canvas).toBeVisible();
+
+  // The journey is checked against the pages and the operations that exist, and a
+  // journey that checks out says nothing.
+  await expect(page.getByRole("list", { name: "Journey problems" })).toHaveCount(0);
+
+  // The canvas is there, and it draws the steps the journey declares.
+  await expect(canvas).toBeVisible();
+  await expect(canvas.locator(".react-flow__node")).toHaveCount(2);
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(1);
+});
 
 test("draws the workflow on a canvas, moves a state, and picks it", async ({ page }) => {
   await page.goto(host.url);

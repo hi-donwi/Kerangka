@@ -11,6 +11,10 @@ const WorkflowCanvasHost = lazy(() => import("./workflow-canvas.js").then((modul
   default: module.WorkflowCanvasHost,
 })));
 
+const JourneyCanvasHost = lazy(() => import("./journey-canvas.js").then((module) => ({
+  default: module.JourneyCanvasHost,
+})));
+
 /**
  * The workbench views.
  *
@@ -167,24 +171,62 @@ export function ModelWorkbench({
   );
 }
 
-export function JourneyWorkbench() {
+export function JourneyWorkbench({
+  inspection,
+  selectedStep,
+  onSelectStep,
+}: {
+  inspection: Inspection | null;
+  selectedStep?: string | null;
+  onSelectStep?: (step: string) => void;
+}) {
+  const journeys = inspection?.journeys ?? [];
   return (
-    <section className="catalog-panel" aria-label="Journeys">
-      <div className="inspector-heading">
-        <div>
-          <p className="eyebrow">journey</p>
-          <h2>Journeys</h2>
-        </div>
-      </div>
-      <p className="muted">
-        A journey is an index over existing pages, operations, and actions. It owns no behavior, so
-        there is nothing here to execute.
-      </p>
-      <p className="muted" role="status">
-        No journey is loaded yet. The journey contract is in the Kerangka source bundle, and the
-        console reads journeys when the project declares them.
-      </p>
-    </section>
+    <div className="workbench-views">
+      {journeys.map((journey) => (
+        <section className="catalog-panel" aria-label={`${journey.name} journey`} key={journey.id}>
+          <div className="inspector-heading">
+            <div>
+              <p className="eyebrow">journey</p>
+              <h2>{journey.name}</h2>
+            </div>
+            <span className="snapshot-id">{journey.source}</span>
+          </div>
+          <p className="muted">
+            A journey is an index over existing pages, operations, and actions. It owns no behavior,
+            so there is nothing here to execute.
+          </p>
+          {journey.diagnostics.length ? (
+            <ul className="catalog-list" role="list" aria-label="Journey problems">
+              {journey.diagnostics.map((item, index) => (
+                <li key={`${item.code}-${index}`}>
+                  <strong>{item.code}</strong>
+                  <span>{item.message}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <Suspense fallback={<p className="muted" role="status">Loading the canvas...</p>}>
+            <JourneyCanvasHost journey={journey} onSelectStep={onSelectStep} />
+          </Suspense>
+        </section>
+      ))}
+      {journeys.length === 0 ? (
+        <section className="catalog-panel" aria-label="Journeys">
+          <div className="inspector-heading">
+            <div>
+              <p className="eyebrow">journey</p>
+              <h2>Journeys</h2>
+            </div>
+          </div>
+          <p className="muted" role="status">
+            No journey is loaded yet. A journey is a <code>*.journey.json</code> file in the project,
+            and the console reads it, checks it against the pages and operations that exist, and
+            draws it.
+          </p>
+        </section>
+      ) : null}
+    </div>
   );
 }
 

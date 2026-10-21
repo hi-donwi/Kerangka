@@ -14,7 +14,7 @@ import { sourceRevision } from "./revision.js";
 
 const excludedNames = new Set(["node_modules", "dist", "build", "vendor"]);
 const conventional = (name: string) =>
-  /(?:\.kerangka\.(?:json|yaml|yml)|\.uidl\.json)$/.test(name) ||
+  /(?:\.kerangka\.(?:json|yaml|yml)|\.uidl\.json|\.journey\.json)$/.test(name) ||
   /^(?:kerangka\.(?:json|yaml|yml)|kerangka\.lock)$/.test(name);
 const inside = (root: string, path: string) => {
   const part = relative(root, path);

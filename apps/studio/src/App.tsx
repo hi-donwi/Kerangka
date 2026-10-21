@@ -97,6 +97,8 @@ export function App() {
   const [mode, setMode] = useState<WorkbenchMode>("page");
   /** The workflow state picked on the canvas. It is a view of the model, not an edit. */
   const [workflowState, setWorkflowState] = useState<string | null>(null);
+  /** The journey step picked on the canvas. It is a view, not an edit. */
+  const [journeyStep, setJourneyStep] = useState<string | null>(null);
   const response = studio.response;
   const inspection = response?.inspection;
   const writable = response?.writable === true;
@@ -618,7 +620,11 @@ export function App() {
               ) : null}
               {mode === "journey" ? (
                 <section id="journey-content" className="inspection-content" aria-label="Journey view">
-                  <JourneyWorkbench />
+                  <JourneyWorkbench
+                    inspection={inspection ?? null}
+                    selectedStep={journeyStep}
+                    onSelectStep={setJourneyStep}
+                  />
                 </section>
               ) : null}
               <section
