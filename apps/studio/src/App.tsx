@@ -45,6 +45,7 @@ import { ApiExplorer } from "./ApiExplorer";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
 import { JourneyWorkbench, ModelWorkbench, NodeInspector, WorkbenchModeBar } from "./workbench-panels.js";
+import type { JourneyRunResult } from "./JourneyRunner.js";
 import type { WorkbenchMode } from "./workbench-modes.js";
 import { findPage, firstActionPointer } from "./journey-pointer.js";
 import { Diagnostics } from "./Diagnostics";
@@ -100,6 +101,9 @@ export function App() {
   const [workflowState, setWorkflowState] = useState<string | null>(null);
   /** The journey step picked on the canvas. It is a view, not an edit. */
   const [journeyStep, setJourneyStep] = useState<string | null>(null);
+  /** The outcome of running a journey, shown as it is. */
+  const [journeyRun, setJourneyRun] = useState<JourneyRunResult | null>(null);
+  const [journeyRunBusy, setJourneyRunBusy] = useState(false);
   const response = studio.response;
   const inspection = response?.inspection;
   const writable = response?.writable === true;
@@ -327,6 +331,45 @@ export function App() {
         `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
       );
     }
+  };
+
+  /**
+   * Run the operations a journey names, in order, and show what happened.
+   *
+   * A step that is refused stops the run. The refusal is the engine's own, with the
+   * code it gave, so the console shows the same thing a host would see.
+   */
+  const runJourney = async (journey: { steps: Array<{ id: string; kind: string; operation?: string }> }, record: Record<string, unknown>, actor?: Record<string, unknown>) => {
+    if (!response || !studio.authorized) return;
+    const token = new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
+    const sourceText = response.bundle.sources[response.bundle.entry]?.text ?? "";
+    const steps: JourneyRunResult["steps"] = [];
+    let current = record;
+    for (const step of journey.steps) {
+      if (step.kind !== "operation" || !step.operation) continue;
+      const [entity, operation] = step.operation.split(".");
+      if (!entity || !operation) continue;
+      setJourneyRunBusy(true);
+      let result: { ok?: boolean; code?: string; error?: string; message?: string; record?: Record<string, unknown> };
+      try {
+        result = (await runScenarioRequest(token, { source: sourceText, entity, operation, record: current, actor })) as typeof result;
+      } catch (error) {
+        result = { ok: false, error: error instanceof Error ? error.message : "The scenario could not run." };
+      }
+      const ok = result.ok === true;
+      steps.push({
+        id: step.id,
+        operation: step.operation,
+        ok,
+        code: result.code,
+        message: result.error ?? result.message,
+        record: result.record,
+      });
+      if (!ok) break;
+      current = result.record ?? current;
+    }
+    setJourneyRun({ ok: steps.every((step) => step.ok), steps });
+    setJourneyRunBusy(false);
   };
 
   const setFormSections = async (view: string, sections: string[][], sectionTitles: string[]) => {
@@ -694,6 +737,9 @@ export function App() {
                     onSelectStep={setJourneyStep}
                     onConnect={connectJourneySteps}
                     onRemove={removeJourneyEntry}
+                    onRun={runJourney}
+                    runBusy={journeyRunBusy}
+                    runResult={journeyRun}
                   />
                 </section>
               ) : null}

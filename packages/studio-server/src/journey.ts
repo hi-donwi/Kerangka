@@ -481,6 +481,73 @@ export function resolveJourney(journey: JourneyDocument, context: JourneyResolut
 }
 
 /**
+ * What a link between two steps is allowed to be.
+ *
+ * A link says where a connection is realized, so its kind is not a label: it decides
+ * what the two steps have to be, and whether the link has to name the action that
+ * realizes it. An `action` link runs an operation, so it starts at a page that has the
+ * action and ends at an operation. A `navigation` link moves to another page. An
+ * `annotation` is a note, and it connects nothing.
+ */
+export interface JourneyLinkRule {
+  kind: string;
+  from: "page" | "operation" | "any";
+  to: "page" | "operation" | "any";
+  /** Whether the link has to name the action that realizes it. */
+  pointer: "required" | "none";
+  reason: string;
+}
+
+export const JOURNEY_LINK_RULES: readonly JourneyLinkRule[] = [
+  {
+    kind: "action",
+    from: "page",
+    to: "operation",
+    pointer: "required",
+    reason: "An action link starts at a page and runs an operation, so it names the action that runs it.",
+  },
+  {
+    kind: "navigation",
+    from: "page",
+    to: "page",
+    pointer: "required",
+    reason: "A navigation link moves to another page, so it names the action that navigates.",
+  },
+  {
+    kind: "annotation",
+    from: "any",
+    to: "any",
+    pointer: "none",
+    reason: "An annotation is a note. It connects nothing and runs nothing.",
+  },
+];
+
+export function journeyLinkRule(kind: string): JourneyLinkRule | undefined {
+  return JOURNEY_LINK_RULES.find((rule) => rule.kind === kind);
+}
+
+/** The problems of one link, given the kinds of the steps it joins. */
+export function journeyLinkProblems(
+  link: { id: string; kind: string; pointer?: string },
+  from: JourneyStep | undefined,
+  to: JourneyStep | undefined,
+): string[] {
+  const rule = journeyLinkRule(link.kind);
+  if (!rule) return [`The link '${link.id}' has the kind '${link.kind}', which is not one a journey knows.`];
+  const problems: string[] = [];
+  if (rule.from !== "any" && from && from.kind !== rule.from) {
+    problems.push(`A ${link.kind} link starts at a ${rule.from} step, and '${link.id}' starts at a ${from.kind} step.`);
+  }
+  if (rule.to !== "any" && to && to.kind !== rule.to) {
+    problems.push(`A ${link.kind} link ends at a ${rule.to} step, and '${link.id}' ends at a ${to.kind} step.`);
+  }
+  if (rule.pointer === "required" && !link.pointer) {
+    problems.push(rule.reason);
+  }
+  return problems;
+}
+
+/**
  * The problems inside a journey that need no project to find.
  *
  * The entry has to be a step of the journey, and a link has to join two steps that
@@ -489,11 +556,15 @@ export function resolveJourney(journey: JourneyDocument, context: JourneyResolut
  */
 export function journeyInternalErrors(journey: JourneyDocument): string[] {
   const errors: string[] = [];
-  const steps = new Set(journey.steps.map((step) => step.id));
+  const steps = new Map(journey.steps.map((step) => [step.id, step]));
   if (!steps.has(journey.entry)) errors.push(`The entry '${journey.entry}' is not a step of this journey.`);
   for (const link of journey.links) {
     if (!steps.has(link.from)) errors.push(`The link '${link.id}' starts at '${link.from}', which is not a step.`);
     if (!steps.has(link.to)) errors.push(`The link '${link.id}' ends at '${link.to}', which is not a step.`);
+    if (!steps.has(link.from) || !steps.has(link.to)) continue;
+    errors.push(
+      ...journeyLinkProblems(link, steps.get(link.from), steps.get(link.to)),
+    );
   }
   return errors;
 }

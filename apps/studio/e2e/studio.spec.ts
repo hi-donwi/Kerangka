@@ -359,6 +359,18 @@ test.describe("writable host: save and conflict recovery", () => {
     await writeFile(join(writableRoot, "approval.journey.json"), JSON.stringify(journey()));
   });
 
+test("runs a journey and shows a refused step as it is", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page.getByRole("tablist", { name: "Design mode" }).getByRole("tab", { name: "Journeys" }).click();
+
+  const runner = page.getByRole("region", { name: "Journey runner" });
+  await expect(runner).toBeVisible();
+
+  // The employee submits, and the run says so.
+  await runner.getByRole("button", { name: "Run journey" }).click();
+  await expect(page.getByRole("list", { name: "Journey run" }).getByText("ran")).toBeVisible();
+});
+
 test("edits a journey through the draft path, saves it, and keeps the file valid", async ({ page }) => {
   await page.goto(writableHost.url);
   const headers = {

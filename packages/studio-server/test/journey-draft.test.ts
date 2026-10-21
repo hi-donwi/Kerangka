@@ -103,6 +103,25 @@ describe("journey draft operations", () => {
     expect(edited).toBe(text);
   });
 
+  it("refuses a link whose kind does not fit the steps it joins", () => {
+    const { result, journey: edited } = apply([
+      // An action link starts at a page and runs an operation. This one starts at an
+      // operation, so it names nothing that could run.
+      { op: "journeyAddLink", journey: "approval.journey.json", link: { id: "wrong", from: "submit", to: "approve", kind: "action", pointer: "/root/children/1/events/onClick/0" } },
+    ]);
+    expect(result.applied).toEqual([]);
+    expect(result.diagnostics.some((item) => item.code === "STUDIO_JOURNEY_INVALID")).toBe(true);
+    expect(edited).toBe(text);
+  });
+
+  it("refuses an action link that does not name the action that runs it", () => {
+    const { result, journey: edited } = apply([
+      { op: "journeyAddLink", journey: "approval.journey.json", link: { id: "bare", from: "help", to: "approve", kind: "action" } },
+    ]);
+    expect(result.applied).toEqual([]);
+    expect(edited).toBe(text);
+  });
+
   it("refuses a journey file that is not part of the project", () => {
     const { result } = apply([
       { op: "journeyAddStep", journey: "missing.journey.json", step: { id: "approve", kind: "operation" } },

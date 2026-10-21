@@ -2,6 +2,7 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { defaultRegistry, type WidgetManifest } from "uidl-runtime";
 import type { Inspection, JourneyInfo, ScreenInfo } from "../../../packages/studio-server/src/contracts.js";
 import { findDocumentNode, nodeSummary, WORKBENCH_MODES, type WorkbenchMode } from "./workbench-modes.js";
+import { JourneyRunner, type JourneyRunResult } from "./JourneyRunner.js";
 
 /**
  * The canvas is loaded on demand. The graph library is a big dependency, and a person
@@ -177,12 +178,18 @@ export function JourneyWorkbench({
   onSelectStep,
   onConnect,
   onRemove,
+  onRun,
+  runBusy,
+  runResult,
 }: {
   inspection: Inspection | null;
   selectedStep?: string | null;
   onSelectStep?: (step: string) => void;
   onConnect?: (journey: JourneyInfo, from: string, to: string) => void;
   onRemove?: (journey: JourneyInfo, kind: "step" | "link", id: string) => void;
+  onRun?: (journey: JourneyInfo, record: Record<string, unknown>, actor?: Record<string, unknown>) => void;
+  runBusy?: boolean;
+  runResult?: JourneyRunResult | null;
 }) {
   const journeys = inspection?.journeys ?? [];
   return (
@@ -209,6 +216,16 @@ export function JourneyWorkbench({
                 </li>
               ))}
             </ul>
+          ) : null}
+          {onRun ? (
+            <JourneyRunner
+              journey={journey}
+              recordText={JSON.stringify({ id: "request-1", employeeId: "employee-1", title: "Synthetic leave", days: 2, status: "draft" }, null, 2)}
+              actorText={JSON.stringify({ id: "employee-1", roles: ["employee"] }, null, 2)}
+              busy={Boolean(runBusy)}
+              result={runResult ?? null}
+              onRun={(record, actor) => onRun(journey, record, actor)}
+            />
           ) : null}
           <Suspense fallback={<p className="muted" role="status">Loading the canvas...</p>}>
             <JourneyCanvasHost

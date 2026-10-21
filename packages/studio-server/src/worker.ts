@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { parseJourney, resolveJourney } from "./journey.js";
+import { journeyInternalErrors, parseJourney, resolveJourney } from "./journey.js";
 import { parseDocument, LineCounter, isAlias, isMap, isSeq, isPair } from "yaml";
 import {
   compile,
@@ -306,6 +306,7 @@ function inspect(input: SourceSnapshot): InspectionResult {
         })),
         diagnostics: [
           ...result.diagnostics.map((item) => ({ code: item.code, message: item.message, ...(item.path ? { path: item.path } : {}) })),
+          ...journeyInternalErrors(journey).map((message) => ({ code: "STUDIO_JOURNEY_INVALID", message })),
           ...resolved.map((item) => ({ code: item.code, message: item.message, ...(item.path ? { path: item.path } : {}) })),
         ],
       });
