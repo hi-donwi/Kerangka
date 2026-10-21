@@ -44,6 +44,13 @@ export interface EntityInfo {
     to?: string;
     guarded: boolean;
   }>;
+  /**
+   * The states the model declares, and which of them it calls initial and terminal.
+   *
+   * A state machine may lead back to an earlier state, so the initial state cannot be
+   * guessed from the transitions: the model says which one it is.
+   */
+  workflow?: { states: string[]; initial?: string; terminal: string[] };
   permissions?: Record<string, unknown>;
 }
 export interface Inspection {

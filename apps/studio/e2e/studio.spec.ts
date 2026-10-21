@@ -340,6 +340,30 @@ test.describe("writable host: save and conflict recovery", () => {
     await writeFile(join(writableRoot, "app.kerangka.json"), writableModel);
   });
 
+test("draws the workflow on a canvas, moves a state, and picks it", async ({ page }) => {
+  await page.goto(host.url);
+  await page.getByRole("tablist", { name: "Design mode" }).getByRole("tab", { name: "Model" }).click();
+
+  const canvas = page.getByRole("region", { name: "Workflow canvas" });
+  await expect(canvas).toBeVisible();
+
+  // The states and the transitions come from the model.
+  const states = canvas.locator(".react-flow__node");
+  await expect(states).toHaveCount(4);
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(3);
+  await expect(canvas.getByText("draft", { exact: true })).toBeVisible();
+
+  // A state can be picked, and the console says which one.
+  await canvas.locator(".react-flow__node").filter({ hasText: "approved" }).click();
+  await expect(page.getByText("approved", { exact: true }).first()).toBeVisible();
+
+  // The canvas is a controlled surface: the host owns the positions, and a state is
+  // marked as draggable for the person using it.
+  const node = canvas.locator(".react-flow__node").filter({ hasText: "submitted" });
+  await expect(node).toHaveClass(/draggable/);
+  expect(await node.getAttribute("style")).toContain("translate(");
+});
+
 test("materializes the real generated page, saves it, and finds it again after a reload", async ({ page }) => {
   await page.goto(writableHost.url);
   // The form view is the one that can be materialized; the list view is generated.

@@ -95,6 +95,8 @@ export function App() {
   const [previewSelection, setPreviewSelection] = useState<string | null>(null);
   /** Which way of working the console is showing. It never changes the source. */
   const [mode, setMode] = useState<WorkbenchMode>("page");
+  /** The workflow state picked on the canvas. It is a view of the model, not an edit. */
+  const [workflowState, setWorkflowState] = useState<string | null>(null);
   const response = studio.response;
   const inspection = response?.inspection;
   const writable = response?.writable === true;
@@ -607,7 +609,11 @@ export function App() {
               </section>
               {mode === "model" ? (
                 <section id="model-content" className="inspection-content" aria-label="Model view">
-                  <ModelWorkbench inspection={inspection ?? null} />
+                  <ModelWorkbench
+                    inspection={inspection ?? null}
+                    selectedState={workflowState}
+                    onSelectState={setWorkflowState}
+                  />
                 </section>
               ) : null}
               {mode === "journey" ? (

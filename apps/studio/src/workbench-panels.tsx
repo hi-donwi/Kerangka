@@ -1,7 +1,15 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { defaultRegistry, type WidgetManifest } from "uidl-runtime";
 import type { Inspection, ScreenInfo } from "../../../packages/studio-server/src/contracts.js";
 import { findDocumentNode, nodeSummary, WORKBENCH_MODES, type WorkbenchMode } from "./workbench-modes.js";
+
+/**
+ * The canvas is loaded on demand. The graph library is a big dependency, and a person
+ * who never opens a workflow should never download it.
+ */
+const WorkflowCanvasHost = lazy(() => import("./workflow-canvas.js").then((module) => ({
+  default: module.WorkflowCanvasHost,
+})));
 
 /**
  * The workbench views.
@@ -107,9 +115,34 @@ export function NodeInspector({ screen, nodeId }: { screen?: ScreenInfo; nodeId:
   );
 }
 
-export function ModelWorkbench({ inspection }: { inspection: Inspection | null }) {
+export function ModelWorkbench({
+  inspection,
+  selectedState,
+  onSelectState,
+}: {
+  inspection: Inspection | null;
+  selectedState?: string | null;
+  onSelectState?: (state: string) => void;
+}) {
+  const withWorkflow = inspection?.entities.find((entity) =>
+    entity.operations.some((operation) => operation.kind === "transition"),
+  );
   return (
     <div className="workbench-views">
+      {withWorkflow ? (
+        <section className="catalog-panel" aria-label="Workflow canvas">
+          <div className="inspector-heading">
+            <div>
+              <p className="eyebrow">workflow</p>
+              <h2>{withWorkflow.name}</h2>
+            </div>
+            {selectedState ? <span className="snapshot-id">{selectedState}</span> : null}
+          </div>
+          <Suspense fallback={<p className="muted" role="status">Loading the canvas...</p>}>
+            <WorkflowCanvasHost entity={withWorkflow} onSelectState={onSelectState} />
+          </Suspense>
+        </section>
+      ) : null}
       <section className="catalog-panel" aria-label="Model entities">
         <div className="inspector-heading">
           <div>

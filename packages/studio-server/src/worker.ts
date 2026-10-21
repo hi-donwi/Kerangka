@@ -258,6 +258,13 @@ function inspect(input: SourceSnapshot): InspectionResult {
             required: field.required,
             computed: field.compute !== undefined,
           })),
+          workflow: entity.workflow
+            ? {
+                states: entity.workflow.states ?? [],
+                initial: entity.workflow.initial,
+                terminal: entity.workflow.terminal ?? [],
+              }
+            : undefined,
           operations: [
             ...Object.entries(entity.workflow?.transitions ?? {}).map(([key, transition]) => ({
               name: key,

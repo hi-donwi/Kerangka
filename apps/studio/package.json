@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@xyflow/react": "12.12.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "uidl-runtime": "0.1.8"
