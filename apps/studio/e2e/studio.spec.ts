@@ -169,6 +169,26 @@ test("isolates the real renderer, refuses egress/forged messages, and supports f
   }
 });
 
+test("selects a node in the isolated preview and marks it for the author", async ({ page }) => {
+  await page.goto(host.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const content = page.frameLocator("iframe");
+  await expect(content.getByText("Synthetic help", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("preview-selection")).toHaveText("Select a node in the preview to inspect it.");
+
+  // A click inside the opaque frame travels over the channel, and the console
+  // answers by marking the node inside the frame.
+  await content.locator("[data-node-id='help-text']").first().click();
+  await expect(page.getByTestId("preview-selection")).toHaveText("Selected node: help-text");
+
+  const child = page.frames().find((frame) => frame.url().includes("/preview.html"))!;
+  await expect(child.locator("[data-node-id='help-text'][data-studio-selected='true']")).toHaveCount(1);
+});
+
 test("keeps unsupported network-bearing documents source-only", async ({ page }) => {
   await writeFile(
     join(root, "help.uidl.json"),

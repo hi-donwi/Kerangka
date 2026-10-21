@@ -691,12 +691,15 @@ tbody th {
   overflow: auto;
   border-block-start: 1px solid var(--color-border);
 }
+/* The frame receives the pointer so a person can select a node in the preview. It
+   stays inert: the document's own events are stripped before rendering, the controls
+   are disabled, the frame is sandboxed, and it holds no authoring credential. */
 .preview-scroll iframe {
   display: block;
   inline-size: 100%;
   min-block-size: 26rem;
   border: 0;
-  pointer-events: none;
+  pointer-events: auto;
 }
 .status-bar {
   display: flex;

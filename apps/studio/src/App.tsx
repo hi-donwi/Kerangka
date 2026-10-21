@@ -89,6 +89,8 @@ export function App() {
   const [scenarioResult, setScenarioResult] = useState<unknown>(null);
   const [scenarioBusy, setScenarioBusy] = useState(false);
   const [awaitingDisk, setAwaitingDisk] = useState(false);
+  /** The node selected inside the preview, so the console can show where the author is. */
+  const [previewSelection, setPreviewSelection] = useState<string | null>(null);
   const response = studio.response;
   const inspection = response?.inspection;
   const writable = response?.writable === true;
@@ -726,6 +728,7 @@ export function App() {
                       screen={screen}
                       revision={response.bundle.revision}
                       synthetic={inspection.synthetic}
+                      onSelectNode={setPreviewSelection}
                     />
                   ) : (
                     <div className="empty-state">
