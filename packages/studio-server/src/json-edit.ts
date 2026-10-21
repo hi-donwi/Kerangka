@@ -287,6 +287,34 @@ function nodeId(text: string, node: JsonNode): string | undefined {
   }
 }
 
+/**
+ * Insert an item at a position in a JSON array, keeping the author's formatting.
+ *
+ * A position matters when a page is rearranged: a node that moves to the front has to
+ * end up in front, not at the end. The new item takes the indentation of the item it
+ * is placed before.
+ */
+export function insertArrayItemAt(
+  text: string,
+  array: JsonNode,
+  index: number,
+  valueText: string,
+): string {
+  if (array.kind !== "array") throw new JsonEditError("Insert target is not a JSON array");
+  const open = array.start;
+  const close = array.end - 1;
+  if (array.items.length === 0) {
+    return `${text.slice(0, open + 1)}${valueText}${text.slice(close)}`;
+  }
+  const at = Math.max(0, Math.min(index, array.items.length));
+  if (at >= array.items.length) return insertArrayItem(text, array, valueText);
+  const item = array.items[at]!;
+  // The new item takes the indentation of the item it is placed before.
+  const before = text.slice(open + 1, item.start);
+  const indent = before.includes("\n") ? before.slice(before.lastIndexOf("\n") + 1) : "";
+  return `${text.slice(0, item.start)}${valueText},${indent}${text.slice(item.start)}`;
+}
+
 /** Remove one item from a JSON array, keeping the author's formatting. */
 export function removeArrayItem(text: string, array: JsonNode, index: number): string {
   if (array.kind !== "array") throw new JsonEditError("Remove target is not a JSON array");

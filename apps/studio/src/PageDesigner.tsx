@@ -45,11 +45,27 @@ export interface PageDesignerProps {
   onSelectNode: (nodeId: string) => void;
   /** Add a component under the selected node. */
   onAdd: (type: string, parent: string) => void;
+  /** Change one property of a node. */
+  onSetProp: (nodeId: string, key: string, value: unknown) => void;
+  /** Move a node to another place among its siblings. */
+  onMove: (nodeId: string, parent: string, index: number) => void;
+  /** The reusable definitions the document declares. */
+  definitions: Array<{ name: string; type: string }>;
   busy?: boolean;
   error?: string | null;
 }
 
-export function PageDesigner({ screen, selectedNode, onSelectNode, onAdd, busy, error }: PageDesignerProps) {
+export function PageDesigner({
+  screen,
+  selectedNode,
+  onSelectNode,
+  onAdd,
+  onSetProp,
+  onMove,
+  definitions,
+  busy,
+  error,
+}: PageDesignerProps) {
   const [query, setQuery] = useState("");
   const tree = useMemo(() => treeOf((screen.document as { root?: unknown })?.root)[0], [screen.document]);
   const widgets = useMemo(() => defaultRegistry.list().filter((widget) => !widget.hideFromPalette), []);
@@ -73,8 +89,31 @@ export function PageDesigner({ screen, selectedNode, onSelectNode, onAdd, busy, 
         </div>
         <p className="muted">The tree is the page's own document. A node is added under the one that is selected.</p>
         <ul className="page-tree">
-          {tree ? <TreeRow node={tree} selected={selectedNode} onSelect={onSelectNode} depth={0} /> : null}
+          {tree ? (
+            <TreeRow
+              node={tree}
+              selected={selectedNode}
+              onSelect={onSelectNode}
+              onMove={onMove}
+              busy={busy}
+              depth={0}
+            />
+          ) : null}
         </ul>
+        {selectedNode ? <NodeProperties node={selectedNode} onSetProp={onSetProp} busy={busy} /> : null}
+        {definitions.length ? (
+          <div className="catalog-panel" aria-label="Reusable definitions">
+            <h3>Definitions</h3>
+            <ul className="catalog-list">
+              {definitions.map((definition) => (
+                <li key={definition.name}>
+                  <strong>{definition.name}</strong>
+                  <span>{definition.type}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {error ? <p className="error-banner" role="alert">{error}</p> : null}
       </section>
       <section className="catalog-panel" aria-label="Page component catalog">
@@ -114,13 +153,24 @@ function TreeRow({
   node,
   selected,
   onSelect,
+  onMove,
+  busy,
   depth,
+  index,
+  parent,
 }: {
   node: TreeNode;
   selected: string | null;
   onSelect: (nodeId: string) => void;
+  onMove: (nodeId: string, parent: string, index: number) => void;
+  busy?: boolean;
   depth: number;
+  index?: number;
+  parent?: string;
 }) {
+  // A const keeps the narrowing inside the click handlers.
+  const parentId = parent;
+  const position = index;
   return (
     <li>
       <button
@@ -132,13 +182,85 @@ function TreeRow({
         {node.type}
         <span className="muted"> {node.id}</span>
       </button>
+      {parentId !== undefined && position !== undefined ? (
+        <span className="page-tree-actions">
+          <button
+            type="button"
+            aria-label={`Move ${node.id} up`}
+            disabled={busy || position === 0}
+            onClick={() => onMove(node.id, parentId, position - 1)}
+          >
+                Up
+          </button>
+          <button
+            type="button"
+            aria-label={`Move ${node.id} down`}
+            disabled={busy}
+            onClick={() => onMove(node.id, parentId, position + 1)}
+          >
+            Down
+          </button>
+        </span>
+      ) : null}
       {node.children.length ? (
         <ul>
-          {node.children.map((child) => (
-            <TreeRow key={child.id} node={child} selected={selected} onSelect={onSelect} depth={depth + 1} />
+          {node.children.map((child, childIndex) => (
+            <TreeRow
+              key={child.id}
+              node={child}
+              selected={selected}
+              onSelect={onSelect}
+              onMove={onMove}
+              busy={busy}
+              depth={depth + 1}
+              index={childIndex}
+              parent={node.id}
+            />
           ))}
         </ul>
       ) : null}
     </li>
+  );
+}
+
+/** The properties of the selected node, and the way to change them. */
+function NodeProperties({
+  node,
+  onSetProp,
+  busy,
+}: {
+  node: string;
+  onSetProp: (nodeId: string, key: string, value: unknown) => void;
+  busy?: boolean;
+}) {
+  const [key, setKey] = useState("");
+  const [value, setValue] = useState("");
+  return (
+    <form
+      className="draft-form"
+      aria-label="Node properties"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!key.trim()) return;
+        let parsed: unknown = value;
+        try {
+          parsed = JSON.parse(value);
+        } catch {
+          // A value that is not JSON is kept as text.
+        }
+        onSetProp(node, key.trim(), parsed);
+        setKey("");
+        setValue("");
+      }}
+    >
+      <h3>Properties of {node}</h3>
+      <label htmlFor="prop-key">Property</label>
+      <input id="prop-key" value={key} placeholder="value" onChange={(event) => setKey(event.target.value)} />
+      <label htmlFor="prop-value">Value</label>
+      <input id="prop-value" value={value} placeholder="Hello" onChange={(event) => setValue(event.target.value)} />
+      <button type="submit" disabled={busy || !key.trim()}>
+        {busy ? "Applying..." : "Set property"}
+      </button>
+    </form>
   );
 }

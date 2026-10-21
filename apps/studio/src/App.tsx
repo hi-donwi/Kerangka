@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useStudio } from "./useStudio";
 import { SourceEditor, SourceView } from "./SourceView";
 import {
@@ -403,6 +403,51 @@ export function App() {
     }
   };
 
+  /** The reusable definitions the selected page declares. */
+  const pageDefinitions = useMemo(() => {
+    const definitions = (screen?.document as { definitions?: Record<string, { type?: string }> } | undefined)?.definitions;
+    return Object.entries(definitions ?? {}).map(([name, value]) => ({ name, type: value?.type ?? "Node" }));
+  }, [screen?.document]);
+
+  /** Change one property of a node in the authored page. */
+  const setPageProperty = async (nodeId: string, key: string, value: unknown) => {
+    if (!response || !history || !screen || screen.kind !== "authored") return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [{ op: "uidlSetNodeProp", source: screen.source, node: nodeId, prop: { key, value } }],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    } else {
+      setDraft((state) => ({
+        ...state,
+        error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "The change was refused.",
+      }));
+    }
+  };
+
+  /** Move a node among its siblings. */
+  const movePageNode = async (nodeId: string, parent: string, index: number) => {
+    if (!response || !history || !screen || screen.kind !== "authored") return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [{ op: "uidlMoveNode", source: screen.source, node: nodeId, parent, index }],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    }
+  };
+
   const setFormSections = async (view: string, sections: string[][], sectionTitles: string[]) => {
     if (!response || !history || !screen) return;
     const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : undefined;
@@ -755,6 +800,9 @@ export function App() {
                   selectedNode={pageNode}
                   onSelectNode={setPageNode}
                   onAdd={addPageComponent}
+                  onSetProp={setPageProperty}
+                  onMove={movePageNode}
+                  definitions={pageDefinitions}
                   busy={draft.busy}
                   error={draft.error}
                 />

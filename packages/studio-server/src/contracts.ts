@@ -115,7 +115,16 @@ export type UidlDraftOperation =
       parent: string;
       node: { id: string; type: string };
     }
-  | { op: "uidlRemoveNode"; source: string; node: string };
+  | { op: "uidlRemoveNode"; source: string; node: string }
+  | {
+      op: "uidlSetNodeProp";
+      source: string;
+      node: string;
+      prop: { key: string; value: unknown };
+    }
+  | { op: "uidlMoveNode"; source: string; node: string; parent: string; index: number }
+  | { op: "uidlAddDefinition"; source: string; name: string; node: { id: string; type: string } }
+  | { op: "uidlUseDefinition"; source: string; node: string; definition: string };
 
 export type JourneyDraftOperation =
   | {

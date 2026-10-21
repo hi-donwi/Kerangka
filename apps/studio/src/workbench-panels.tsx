@@ -126,6 +126,9 @@ export function PageWorkbench({
   selectedNode,
   onSelectNode,
   onAdd,
+  onSetProp,
+  onMove,
+  definitions,
   busy,
   error,
 }: {
@@ -133,6 +136,9 @@ export function PageWorkbench({
   selectedNode: string | null;
   onSelectNode: (nodeId: string) => void;
   onAdd: (type: string, parent: string) => void;
+  onSetProp: (nodeId: string, key: string, value: unknown) => void;
+  onMove: (nodeId: string, parent: string, index: number) => void;
+  definitions: Array<{ name: string; type: string }>;
   busy?: boolean;
   error?: string | null;
 }) {
@@ -152,6 +158,9 @@ export function PageWorkbench({
       selectedNode={selectedNode}
       onSelectNode={onSelectNode}
       onAdd={onAdd}
+      onSetProp={onSetProp}
+      onMove={onMove}
+      definitions={definitions}
       busy={busy}
       error={error}
     />

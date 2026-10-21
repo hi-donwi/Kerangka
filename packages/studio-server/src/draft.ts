@@ -13,6 +13,7 @@ import {
   findPath,
   findTreeNode,
   insertArrayItem,
+  insertArrayItemAt,
   insertEntry,
   parseJson,
   removeArrayItem,
@@ -246,7 +247,7 @@ export function sourceDiagnostics(entry: string, text: string): StudioDiagnostic
 function applyUidlOperation(
   path: string,
   source: SourceText,
-  operation: Extract<DraftOperation, { op: "uidlAddNode" | "uidlRemoveNode" }>,
+  operation: Extract<DraftOperation, { op: `uidl${string}` }>,
   diagnostics: StudioDiagnostic[],
 ): string | undefined {
   if (source.format !== "json") {
@@ -276,7 +277,189 @@ function applyUidlOperation(
 
   let text: string;
   let summary: string;
-  if (operation.op === "uidlAddNode") {
+  if (operation.op === "uidlSetNodeProp") {
+    const found = findTreeNode(source.text, tree, operation.node);
+    if (!found) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The document has no node called '${operation.node}'.`,
+      });
+      return undefined;
+    }
+    if (found.node.kind !== "object") {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The node '${operation.node}' cannot be changed.`,
+      });
+      return undefined;
+    }
+    const props = found.node.entries.find((entry) => entry.key === "props");
+    if (!props || props.value.kind !== "object") {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The node '${operation.node}' has no properties to change.`,
+      });
+      return undefined;
+    }
+    const key = operation.prop.key;
+    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(key)) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `'${key}' is not a property name a node can carry.`,
+      });
+      return undefined;
+    }
+    const existing = props.value.entries.find((entry) => entry.key === key);
+    const valueText = JSON.stringify(operation.prop.value, null, 2);
+    try {
+      text = existing
+        ? setValue(source.text, existing.value, valueText)
+        : insertEntry(source.text, props.value, key, valueText);
+    } catch (error) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_DRAFT_PARSE",
+        source: path,
+        message: error instanceof Error ? error.message : "The document cannot be edited.",
+      });
+      return undefined;
+    }
+    summary = `uidlSetNodeProp ${operation.node}.${key}`;
+  } else if (operation.op === "uidlMoveNode") {
+    const found = findTreeNode(source.text, tree, operation.node);
+    if (!found || found.children === undefined || found.index === undefined) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The document has no node called '${operation.node}'.`,
+      });
+      return undefined;
+    }
+    const parent = findTreeNode(source.text, tree, operation.parent);
+    if (!parent) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The document has no node called '${operation.parent}'.`,
+      });
+      return undefined;
+    }
+    const children = parent.children ?? findPath(parent.node, ["children"]);
+    if (!children || children.kind !== "array") {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The node '${operation.parent}' cannot take a child.`,
+      });
+      return undefined;
+    }
+    try {
+      const without = removeArrayItem(source.text, found.children, found.index);
+      const again = parseJson(without);
+      const againTree = findPath(again, ["root"]) ?? again;
+      const againParent = findTreeNode(without, againTree, operation.parent);
+      const againChildren = againParent?.children ?? findPath(againParent?.node ?? again, ["children"]);
+      if (!againChildren || againChildren.kind !== "array") throw new Error("The target cannot take a child.");
+      const index = Math.max(0, Math.min(operation.index, againChildren.items.length));
+      // The node moves as the author wrote it, not as a re-serialized value.
+      const nodeText = source.text.slice(found.node.start, found.node.end);
+      text = insertArrayItemAt(without, againChildren, index, nodeText);
+    } catch (error) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_DRAFT_PARSE",
+        source: path,
+        message: error instanceof Error ? error.message : "The document cannot be edited.",
+      });
+      return undefined;
+    }
+    summary = `uidlMoveNode ${operation.node}`;
+  } else if (operation.op === "uidlAddDefinition" || operation.op === "uidlUseDefinition") {
+    if (operation.op === "uidlAddDefinition") {
+      const definitions = findPath(root, ["definitions"]);
+      const node = { id: operation.node.id, type: operation.node.type, props: {}, style: {}, children: [] };
+      const valueText = JSON.stringify(node, null, 2);
+      try {
+        if (definitions && definitions.kind === "object") {
+          const existing = definitions.entries.find((entry) => entry.key === operation.name);
+          text = existing
+            ? setValue(source.text, existing.value, valueText)
+            : insertEntry(source.text, definitions, operation.name, valueText);
+        } else {
+          const document = findPath(root, []);
+          if (!document || document.kind !== "object") throw new Error("The document cannot be edited.");
+          text = insertEntry(source.text, document, "definitions", JSON.stringify({ [operation.name]: node }, null, 2));
+        }
+      } catch (error) {
+        diagnostics.push({
+          severity: "error",
+          code: "STUDIO_DRAFT_PARSE",
+          source: path,
+          message: error instanceof Error ? error.message : "The document cannot be edited.",
+        });
+        return undefined;
+      }
+      summary = `uidlAddDefinition ${operation.name}`;
+    } else {
+      const found = findTreeNode(source.text, tree, operation.node);
+      if (!found) {
+        diagnostics.push({
+          severity: "error",
+          code: "STUDIO_OPERATION_TARGET",
+          source: path,
+          message: `The document has no node called '${operation.node}'.`,
+        });
+        return undefined;
+      }
+      const definitions = findPath(root, ["definitions"]);
+      const hasDefinition =
+        definitions && definitions.kind === "object" && definitions.entries.some((entry) => entry.key === operation.definition);
+      if (!hasDefinition) {
+        diagnostics.push({
+          severity: "error",
+          code: "STUDIO_OPERATION_TARGET",
+          source: path,
+          message: `The document has no definition called '${operation.definition}'.`,
+        });
+        return undefined;
+      }
+      if (found.node.kind !== "object") {
+        diagnostics.push({
+          severity: "error",
+          code: "STUDIO_OPERATION_TARGET",
+          source: path,
+          message: `The node '${operation.node}' cannot be changed.`,
+        });
+        return undefined;
+      }
+      const existing = found.node.entries.find((entry) => entry.key === "componentId");
+      try {
+        text = existing
+          ? setValue(source.text, existing.value, JSON.stringify(operation.definition))
+          : insertEntry(source.text, found.node, "componentId", JSON.stringify(operation.definition));
+      } catch (error) {
+        diagnostics.push({
+          severity: "error",
+          code: "STUDIO_DRAFT_PARSE",
+          source: path,
+          message: error instanceof Error ? error.message : "The document cannot be edited.",
+        });
+        return undefined;
+      }
+      summary = `uidlUseDefinition ${operation.node}`;
+    }
+  } else if (operation.op === "uidlAddNode") {
     if (findTreeNode(source.text, tree, operation.node.id)) {
       diagnostics.push({
         severity: "error",
@@ -539,22 +722,23 @@ export function applyDraftOperations(
   const editedPaths = new Set<string>();
 
   for (const operation of request.operations) {
-    if (operation.op === "uidlAddNode" || operation.op === "uidlRemoveNode") {
-      const target = sources[operation.source];
+    if (operation.op.startsWith("uidl")) {
+      const uidlOperation = operation as Extract<DraftOperation, { op: `uidl${string}` }>;
+      const target = sources[uidlOperation.source];
       if (!target) {
         diagnostics.push({
           severity: "error",
           code: "STUDIO_OPERATION_TARGET",
-          source: operation.source,
-          message: `The file '${operation.source}' is not part of this project.`,
+          source: uidlOperation.source,
+          message: `The file '${uidlOperation.source}' is not part of this project.`,
         });
         continue;
       }
-      const edited = applyUidlOperation(operation.source, target, operation, diagnostics);
+      const edited = applyUidlOperation(uidlOperation.source, target, uidlOperation, diagnostics);
       if (edited) {
-        sources[operation.source] = { format: "json", text: edited };
-        editedPaths.add(operation.source);
-        applied.push(`${operation.op} ${operation.source}`);
+        sources[uidlOperation.source] = { format: "json", text: edited };
+        editedPaths.add(uidlOperation.source);
+        applied.push(`${uidlOperation.op} ${uidlOperation.source}`);
       }
       continue;
     }

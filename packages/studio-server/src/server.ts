@@ -159,6 +159,58 @@ function parseUidlOperation(entry: Record<string, unknown>): UidlDraftOperation 
   const source = entry.source;
   if (typeof source !== "string" || source.length < 1 || source.length > 240)
     throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (entry.op === "uidlSetNodeProp") {
+    const prop = entry.prop;
+    if (typeof prop !== "object" || prop === null || Array.isArray(prop))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const record = prop as Record<string, unknown>;
+    if (typeof record.key !== "string" || record.key.length < 1 || record.key.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const node = entry.node;
+    if (typeof node !== "string" || node.length < 1 || node.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return {
+      op: "uidlSetNodeProp",
+      source,
+      node,
+      prop: { key: record.key, value: record.value },
+    };
+  }
+  if (entry.op === "uidlMoveNode") {
+    const node = entry.node;
+    const parent = entry.parent;
+    const index = entry.index;
+    if (typeof node !== "string" || node.length < 1 || node.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof parent !== "string" || parent.length < 1 || parent.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 10000)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlMoveNode", source, node, parent, index };
+  }
+  if (entry.op === "uidlAddDefinition") {
+    const name = entry.name;
+    const node = entry.node;
+    if (typeof name !== "string" || name.length < 1 || name.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof node !== "object" || node === null || Array.isArray(node))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const record = node as Record<string, unknown>;
+    if (typeof record.id !== "string" || record.id.length < 1 || record.id.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof record.type !== "string" || record.type.length < 1 || record.type.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlAddDefinition", source, name, node: { id: record.id, type: record.type } };
+  }
+  if (entry.op === "uidlUseDefinition") {
+    const node = entry.node;
+    const definition = entry.definition;
+    if (typeof node !== "string" || node.length < 1 || node.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof definition !== "string" || definition.length < 1 || definition.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlUseDefinition", source, node, definition };
+  }
   if (entry.op === "uidlAddNode") {
     const node = entry.node;
     if (typeof node !== "object" || node === null || Array.isArray(node))
@@ -207,7 +259,7 @@ function parseDraftRequest(raw: string): DraftRequest {
       operations.push(parseTransition(entry));
       continue;
     }
-    if (entry.op === "uidlAddNode" || entry.op === "uidlRemoveNode") {
+    if (typeof entry.op === "string" && entry.op.startsWith("uidl")) {
       operations.push(parseUidlOperation(entry));
       continue;
     }
