@@ -448,6 +448,49 @@ export function App() {
     }
   };
 
+  /** Copy a node, with identifiers of its own. */
+  const copyPageNode = async (nodeId: string, parent: string) => {
+    if (!response || !history || !screen || screen.kind !== "authored") return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [{ op: "uidlCopyNode", source: screen.source, node: nodeId, parent, index: 99 }],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    }
+  };
+
+  /** Change one style value of a node, at a breakpoint when one is given. */
+  const setPageStyle = async (nodeId: string, field: string, value: unknown, breakpoint?: string) => {
+    if (!response || !history || !screen || screen.kind !== "authored") return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [
+        breakpoint
+          ? { op: "uidlSetNodeResponsive", source: screen.source, node: nodeId, field, breakpoint, value }
+          : { op: "uidlSetNodeStyle", source: screen.source, node: nodeId, field, value },
+      ],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    } else {
+      setDraft((state) => ({
+        ...state,
+        error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "The change was refused.",
+      }));
+    }
+  };
+
   const setFormSections = async (view: string, sections: string[][], sectionTitles: string[]) => {
     if (!response || !history || !screen) return;
     const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : undefined;
@@ -802,6 +845,8 @@ export function App() {
                   onAdd={addPageComponent}
                   onSetProp={setPageProperty}
                   onMove={movePageNode}
+                  onCopy={copyPageNode}
+                  onSetStyle={setPageStyle}
                   definitions={pageDefinitions}
                   busy={draft.busy}
                   error={draft.error}

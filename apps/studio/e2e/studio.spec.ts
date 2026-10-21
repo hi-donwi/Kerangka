@@ -360,6 +360,26 @@ test.describe("writable host: save and conflict recovery", () => {
     await writeFile(join(writableRoot, "help.uidl.json"), JSON.stringify(help()));
   });
 
+test("sets a style value and copies a node in the page tree", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const tree = page.getByRole("region", { name: "Page tree" });
+  await tree.getByRole("button", { name: "Text help-text" }).click();
+
+  const properties = page.getByRole("form", { name: "Node properties" });
+  await properties.getByLabel("Field", { exact: true }).fill("gap");
+  await properties.getByPlaceholder("1rem").fill("1rem");
+  await properties.getByRole("button", { name: "Set style" }).click();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+
+  await properties.getByRole("button", { name: "Copy this node" }).click();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+});
+
 test("changes a property and moves a node in the page tree", async ({ page }) => {
   await page.goto(writableHost.url);
   await page
@@ -373,7 +393,7 @@ test("changes a property and moves a node in the page tree", async ({ page }) =>
   // A property of the selected node can be changed.
   const properties = page.getByRole("form", { name: "Node properties" });
   await properties.getByLabel("Property").fill("value");
-  await properties.getByLabel("Value").fill("Changed");
+  await properties.getByPlaceholder("Hello").fill("Changed");
   await properties.getByRole("button", { name: "Set property" }).click();
   await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
 

@@ -49,6 +49,10 @@ export interface PageDesignerProps {
   onSetProp: (nodeId: string, key: string, value: unknown) => void;
   /** Move a node to another place among its siblings. */
   onMove: (nodeId: string, parent: string, index: number) => void;
+  /** Copy a node, with identifiers of its own. */
+  onCopy: (nodeId: string, parent: string) => void;
+  /** Change one style value of a node. */
+  onSetStyle: (nodeId: string, field: string, value: unknown, breakpoint?: string) => void;
   /** The reusable definitions the document declares. */
   definitions: Array<{ name: string; type: string }>;
   busy?: boolean;
@@ -62,6 +66,8 @@ export function PageDesigner({
   onAdd,
   onSetProp,
   onMove,
+  onCopy,
+  onSetStyle,
   definitions,
   busy,
   error,
@@ -100,7 +106,15 @@ export function PageDesigner({
             />
           ) : null}
         </ul>
-        {selectedNode ? <NodeProperties node={selectedNode} onSetProp={onSetProp} busy={busy} /> : null}
+        {selectedNode ? (
+          <NodeProperties
+            node={selectedNode}
+            onSetProp={onSetProp}
+            onSetStyle={onSetStyle}
+            onCopy={onCopy}
+            busy={busy}
+          />
+        ) : null}
         {definitions.length ? (
           <div className="catalog-panel" aria-label="Reusable definitions">
             <h3>Definitions</h3>
@@ -227,14 +241,21 @@ function TreeRow({
 function NodeProperties({
   node,
   onSetProp,
+  onSetStyle,
+  onCopy,
   busy,
 }: {
   node: string;
   onSetProp: (nodeId: string, key: string, value: unknown) => void;
+  onSetStyle: (nodeId: string, field: string, value: unknown, breakpoint?: string) => void;
+  onCopy: (nodeId: string, parent: string) => void;
   busy?: boolean;
 }) {
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
+  const [breakpoint, setBreakpoint] = useState("");
+  const [styleField, setStyleField] = useState("");
+  const [styleValue, setStyleValue] = useState("");
   return (
     <form
       className="draft-form"
@@ -260,6 +281,41 @@ function NodeProperties({
       <input id="prop-value" value={value} placeholder="Hello" onChange={(event) => setValue(event.target.value)} />
       <button type="submit" disabled={busy || !key.trim()}>
         {busy ? "Applying..." : "Set property"}
+      </button>
+      <h3>Style of {node}</h3>
+      <label htmlFor="style-field">Field</label>
+      <input
+        id="style-field"
+        value={styleField}
+        placeholder="gap, display, padding"
+        onChange={(event) => setStyleField(event.target.value)}
+      />
+      <label htmlFor="style-value">Value</label>
+      <input id="style-value" value={styleValue} placeholder="1rem" onChange={(event) => setStyleValue(event.target.value)} />
+      <label htmlFor="style-breakpoint">Breakpoint (optional)</label>
+      <input
+        id="style-breakpoint"
+        value={breakpoint}
+        placeholder="base, md, lg"
+        onChange={(event) => setBreakpoint(event.target.value)}
+      />
+      <button
+        type="button"
+        disabled={busy || !styleField.trim()}
+        onClick={() => {
+          let parsed: unknown = styleValue;
+          try {
+            parsed = JSON.parse(styleValue);
+          } catch {
+            // A value that is not JSON is kept as text.
+          }
+          onSetStyle(node, styleField.trim(), parsed, breakpoint.trim() || undefined);
+        }}
+      >
+        {busy ? "Applying..." : "Set style"}
+      </button>
+      <button type="button" disabled={busy} onClick={() => onCopy(node, node)}>
+        Copy this node
       </button>
     </form>
   );

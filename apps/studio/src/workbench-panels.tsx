@@ -128,6 +128,8 @@ export function PageWorkbench({
   onAdd,
   onSetProp,
   onMove,
+  onCopy,
+  onSetStyle,
   definitions,
   busy,
   error,
@@ -138,6 +140,8 @@ export function PageWorkbench({
   onAdd: (type: string, parent: string) => void;
   onSetProp: (nodeId: string, key: string, value: unknown) => void;
   onMove: (nodeId: string, parent: string, index: number) => void;
+  onCopy: (nodeId: string, parent: string) => void;
+  onSetStyle: (nodeId: string, field: string, value: unknown, breakpoint?: string) => void;
   definitions: Array<{ name: string; type: string }>;
   busy?: boolean;
   error?: string | null;
@@ -160,6 +164,8 @@ export function PageWorkbench({
       onAdd={onAdd}
       onSetProp={onSetProp}
       onMove={onMove}
+      onCopy={onCopy}
+      onSetStyle={onSetStyle}
       definitions={definitions}
       busy={busy}
       error={error}

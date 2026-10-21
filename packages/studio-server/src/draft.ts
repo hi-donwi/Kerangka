@@ -238,6 +238,27 @@ export function sourceDiagnostics(entry: string, text: string): StudioDiagnostic
 
 
 /**
+ * Give a copied subtree identifiers of its own.
+ *
+ * A copy that keeps the original's identifiers would be a second name for the same
+ * node, and every reference to it would become ambiguous. The copy is new content, so
+ * its identifiers are remapped; the original is not touched.
+ */
+function remapIdentifiers(node: unknown, originalId: string): unknown {
+  if (Array.isArray(node)) return node.map((item) => remapIdentifiers(item, originalId));
+  if (typeof node !== "object" || node === null) return node;
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    if (key === "id" && typeof value === "string") {
+      result[key] = value === originalId ? `${value}-copy` : `${value}-copy`;
+      continue;
+    }
+    result[key] = remapIdentifiers(value, originalId);
+  }
+  return result;
+}
+
+/**
  * Apply one operation to a UIDL document.
  *
  * The document keeps every byte the author wrote, and only the node changes. The
@@ -459,6 +480,151 @@ function applyUidlOperation(
       }
       summary = `uidlUseDefinition ${operation.node}`;
     }
+  } else if (operation.op === "uidlSetNodeStyle" || operation.op === "uidlSetNodeResponsive") {
+    const found = findTreeNode(source.text, tree, operation.node);
+    if (!found || found.node.kind !== "object") {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The document has no node called '${operation.node}'.`,
+      });
+      return undefined;
+    }
+    const field = operation.op === "uidlSetNodeStyle" ? operation.field : operation.field;
+    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(field)) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `'${field}' is not a field a node can carry.`,
+      });
+      return undefined;
+    }
+    const valueText = JSON.stringify(operation.value, null, 2);
+    try {
+      if (operation.op === "uidlSetNodeStyle") {
+        const style = found.node.entries.find((entry) => entry.key === "style");
+        const existing = style && style.value.kind === "object" ? style.value.entries.find((entry) => entry.key === field) : undefined;
+        if (existing) {
+          text = setValue(source.text, existing.value, valueText);
+        } else if (style && style.value.kind === "object") {
+          text = insertEntry(source.text, style.value, field, valueText);
+        } else {
+          // A node that carries no style yet gets one. The value is what was asked for,
+          // and the rest of the node is untouched.
+          text = insertEntry(source.text, found.node, "style", JSON.stringify({ [field]: operation.value }, null, 2));
+        }
+        summary = `uidlSetNodeStyle ${operation.node}.${field}`;
+      } else {
+        const responsive = found.node.entries.find((entry) => entry.key === "responsive");
+        const fieldEntry =
+          responsive && responsive.value.kind === "object"
+            ? responsive.value.entries.find((entry) => entry.key === field)
+            : undefined;
+        if (!fieldEntry) {
+          // A node with no responsive value for this field gets one. The values it
+          // already has for other fields are kept.
+          if (responsive && responsive.value.kind === "object") {
+            text = insertEntry(
+              source.text,
+              responsive.value,
+              field,
+              JSON.stringify({ [operation.breakpoint]: operation.value }, null, 2),
+            );
+          } else {
+            text = insertEntry(
+              source.text,
+              found.node,
+              "responsive",
+              JSON.stringify({ [field]: { [operation.breakpoint]: operation.value } }, null, 2),
+            );
+          }
+          summary = `uidlSetNodeResponsive ${operation.node}.${field}.${operation.breakpoint}`;
+          return text;
+        }
+        if (fieldEntry.value.kind !== "object") {
+          diagnostics.push({
+            severity: "error",
+            code: "STUDIO_OPERATION_TARGET",
+            source: path,
+            message: `The responsive value for '${field}' is not a set of breakpoints.`,
+          });
+          return undefined;
+        }
+        const breakpointEntry = fieldEntry.value.entries.find((entry) => entry.key === operation.breakpoint);
+        text = breakpointEntry
+          ? setValue(source.text, breakpointEntry.value, valueText)
+          : insertEntry(source.text, fieldEntry.value, operation.breakpoint, valueText);
+        summary = `uidlSetNodeResponsive ${operation.node}.${field}.${operation.breakpoint}`;
+      }
+    } catch (error) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_DRAFT_PARSE",
+        source: path,
+        message: error instanceof Error ? error.message : "The document cannot be edited.",
+      });
+      return undefined;
+    }
+  } else if (operation.op === "uidlCopyNode") {
+    const found = findTreeNode(source.text, tree, operation.node);
+    if (!found) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The document has no node called '${operation.node}'.`,
+      });
+      return undefined;
+    }
+    const parent = findTreeNode(source.text, tree, operation.parent);
+    if (!parent) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The document has no node called '${operation.parent}'.`,
+      });
+      return undefined;
+    }
+    const children = parent.children ?? findPath(parent.node, ["children"]);
+    if (!children || children.kind !== "array") {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The node '${operation.parent}' cannot take a child.`,
+      });
+      return undefined;
+    }
+    // A copy is new content, so its identifiers are remapped. The original is untouched.
+    let copy: unknown;
+    try {
+      copy = JSON.parse(source.text.slice(found.node.start, found.node.end));
+    } catch {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_DRAFT_PARSE",
+        source: path,
+        message: "The node cannot be copied.",
+      });
+      return undefined;
+    }
+    const remapped = remapIdentifiers(copy, operation.node);
+    const index = Math.max(0, Math.min(operation.index, children.items.length));
+    try {
+      text = insertArrayItemAt(source.text, children, index, JSON.stringify(remapped, null, 2));
+    } catch (error) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_DRAFT_PARSE",
+        source: path,
+        message: error instanceof Error ? error.message : "The document cannot be edited.",
+      });
+      return undefined;
+    }
+    summary = `uidlCopyNode ${operation.node}`;
   } else if (operation.op === "uidlAddNode") {
     if (findTreeNode(source.text, tree, operation.node.id)) {
       diagnostics.push({

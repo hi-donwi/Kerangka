@@ -124,7 +124,17 @@ export type UidlDraftOperation =
     }
   | { op: "uidlMoveNode"; source: string; node: string; parent: string; index: number }
   | { op: "uidlAddDefinition"; source: string; name: string; node: { id: string; type: string } }
-  | { op: "uidlUseDefinition"; source: string; node: string; definition: string };
+  | { op: "uidlUseDefinition"; source: string; node: string; definition: string }
+  | { op: "uidlSetNodeStyle"; source: string; node: string; field: string; value: unknown }
+  | {
+      op: "uidlSetNodeResponsive";
+      source: string;
+      node: string;
+      field: string;
+      breakpoint: string;
+      value: unknown;
+    }
+  | { op: "uidlCopyNode"; source: string; node: string; parent: string; index: number };
 
 export type JourneyDraftOperation =
   | {

@@ -176,6 +176,33 @@ function parseUidlOperation(entry: Record<string, unknown>): UidlDraftOperation 
       prop: { key: record.key, value: record.value },
     };
   }
+  if (entry.op === "uidlSetNodeStyle" || entry.op === "uidlSetNodeResponsive") {
+    const node = entry.node;
+    const field = entry.field;
+    if (typeof node !== "string" || node.length < 1 || node.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof field !== "string" || field.length < 1 || field.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (entry.op === "uidlSetNodeStyle") {
+      return { op: "uidlSetNodeStyle", source, node, field, value: entry.value };
+    }
+    const breakpoint = entry.breakpoint;
+    if (typeof breakpoint !== "string" || breakpoint.length < 1 || breakpoint.length > 16)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlSetNodeResponsive", source, node, field, breakpoint, value: entry.value };
+  }
+  if (entry.op === "uidlCopyNode") {
+    const node = entry.node;
+    const parent = entry.parent;
+    const index = entry.index;
+    if (typeof node !== "string" || node.length < 1 || node.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof parent !== "string" || parent.length < 1 || parent.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 10000)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlCopyNode", source, node, parent, index };
+  }
   if (entry.op === "uidlMoveNode") {
     const node = entry.node;
     const parent = entry.parent;
