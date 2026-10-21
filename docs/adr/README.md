@@ -54,3 +54,4 @@ This directory records all significant architectural, semantic, and structural d
 | [0048](0048-browser-samples-run-in-disposable-workers.md) | Browser Samples Run in Disposable Workers | Accepted | 2026-10-18 |
 | [0049](0049-studio-is-an-authoring-host-not-a-second-engine.md) | Studio Is an Authoring Host, Not a Second Engine | Accepted | 2026-10-16 |
 | [0050](0050-a-journey-is-a-reference-index-not-a-second-program.md) | A Journey Is a Reference Index, Not a Second Program | Accepted | 2026-10-21 |
+| [0051](0051-the-studio-graph-surface-uses-a-pinned-graph-library.md) | The Studio Graph Surface Uses a Pinned Graph Library, Loaded on Demand | Accepted | 2026-10-21 |
