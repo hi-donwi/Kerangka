@@ -106,6 +106,17 @@ export type FieldDefinitionInput = string | Record<string, unknown>;
  * Authoring operations Studio can apply to raw JSON source. The union grows as later
  * slices add constructs; an operation outside it is rejected with a diagnostic.
  */
+export type UidlDraftOperation =
+  | {
+      op: "uidlAddNode";
+      /** The UIDL file the node is added to. */
+      source: string;
+      /** The node the new child goes under. */
+      parent: string;
+      node: { id: string; type: string };
+    }
+  | { op: "uidlRemoveNode"; source: string; node: string };
+
 export type JourneyDraftOperation =
   | {
       op: "journeyAddStep";
@@ -125,7 +136,8 @@ export type DraftOperation =
   | { op: "setEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
   | { op: "setFormSections"; view: string; sections: string[][]; sectionTitles: string[] }
   | { op: "setTransition"; entity: string; transition: string; from: string[]; to: string; roles: string[]; when?: string }
-  | JourneyDraftOperation;
+  | JourneyDraftOperation
+  | UidlDraftOperation;
 
 export interface DraftRequest {
   expectedRevision: string;

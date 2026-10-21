@@ -235,6 +235,58 @@ export function insertArrayItem(text: string, array: JsonNode, valueText: string
   return `${text.slice(0, last.end)}, ${valueText}${text.slice(last.end)}`;
 }
 
+/**
+ * Find a node in a document tree by its id.
+ *
+ * The tree is a document, not a flat list: a node may sit in its parent's `children` or
+ * in one of its `slots`. The caller needs the node itself and the array a new child
+ * would go into, so both are returned.
+ */
+export function findTreeNode(
+  text: string,
+  root: JsonNode,
+  id: string,
+): { node: JsonNode; children?: JsonNode; index?: number } | undefined {
+  if (root.kind !== "object") return undefined;
+  const childrenEntry = root.entries.find((entry) => entry.key === "children");
+  const children =
+    childrenEntry && childrenEntry.value.kind === "array" ? childrenEntry.value : undefined;
+  if (nodeId(text, root) === id) return { node: root, children };
+  if (children) {
+    for (const [index, item] of children.items.entries()) {
+      if (nodeId(text, item) === id) return { node: item, children, index };
+      const found = findTreeNode(text, item, id);
+      if (found) return found;
+    }
+  }
+  const slots = root.entries.find((entry) => entry.key === "slots");
+  if (slots && slots.value.kind === "object") {
+    for (const slot of slots.value.entries) {
+      if (slot.value.kind !== "array") continue;
+      for (const [index, item] of slot.value.items.entries()) {
+        if (nodeId(text, item) === id) return { node: item, children: slot.value, index };
+        const found = findTreeNode(text, item, id);
+        if (found) return found;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** The id a node carries, read from the source text. */
+function nodeId(text: string, node: JsonNode): string | undefined {
+  if (node.kind !== "object") return undefined;
+  const entry = node.entries.find((item) => item.key === "id");
+  if (!entry || entry.value.kind !== "string") return undefined;
+  const raw = text.slice(entry.value.start, entry.value.end);
+  try {
+    const value = JSON.parse(raw);
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Remove one item from a JSON array, keeping the author's formatting. */
 export function removeArrayItem(text: string, array: JsonNode, index: number): string {
   if (array.kind !== "array") throw new JsonEditError("Remove target is not a JSON array");

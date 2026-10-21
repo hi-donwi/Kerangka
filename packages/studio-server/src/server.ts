@@ -8,6 +8,7 @@ import {
   sourcePath,
   type DraftOperation,
   type JourneyDraftOperation,
+  type UidlDraftOperation,
   type DraftRequest,
   type FieldDefinitionInput,
   type InspectionResult,
@@ -153,6 +154,31 @@ function parseJourneyOperation(entry: Record<string, unknown>): JourneyDraftOper
     : { op: "journeyRemoveLink", journey, link: target };
 }
 
+/** Read one UIDL operation from the request. */
+function parseUidlOperation(entry: Record<string, unknown>): UidlDraftOperation {
+  const source = entry.source;
+  if (typeof source !== "string" || source.length < 1 || source.length > 240)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (entry.op === "uidlAddNode") {
+    const node = entry.node;
+    if (typeof node !== "object" || node === null || Array.isArray(node))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const record = node as Record<string, unknown>;
+    if (typeof record.id !== "string" || record.id.length < 1 || record.id.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof record.type !== "string" || record.type.length < 1 || record.type.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const parent = entry.parent;
+    if (typeof parent !== "string" || parent.length < 1 || parent.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlAddNode", source, parent, node: { id: record.id, type: record.type } };
+  }
+  const node = entry.node;
+  if (typeof node !== "string" || node.length < 1 || node.length > 64)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  return { op: "uidlRemoveNode", source, node };
+}
+
 function parseDraftRequest(raw: string): DraftRequest {
   let value: unknown;
   try {
@@ -179,6 +205,10 @@ function parseDraftRequest(raw: string): DraftRequest {
     }
     if (entry.op === "setTransition") {
       operations.push(parseTransition(entry));
+      continue;
+    }
+    if (entry.op === "uidlAddNode" || entry.op === "uidlRemoveNode") {
+      operations.push(parseUidlOperation(entry));
       continue;
     }
     if (typeof entry.op === "string" && entry.op.startsWith("journey")) {

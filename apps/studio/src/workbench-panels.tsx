@@ -3,6 +3,7 @@ import { defaultRegistry, type WidgetManifest } from "uidl-runtime";
 import type { Inspection, JourneyInfo, ScreenInfo } from "../../../packages/studio-server/src/contracts.js";
 import { findDocumentNode, nodeSummary, WORKBENCH_MODES, type WorkbenchMode } from "./workbench-modes.js";
 import { JourneyRunner, type JourneyRunResult } from "./JourneyRunner.js";
+import { PageDesigner } from "./PageDesigner.js";
 
 /**
  * The canvas is loaded on demand. The graph library is a big dependency, and a person
@@ -117,6 +118,43 @@ export function NodeInspector({ screen, nodeId }: { screen?: ScreenInfo; nodeId:
         <dd>{summary.childCount}</dd>
       </dl>
     </section>
+  );
+}
+
+export function PageWorkbench({
+  screen,
+  selectedNode,
+  onSelectNode,
+  onAdd,
+  busy,
+  error,
+}: {
+  screen?: ScreenInfo;
+  selectedNode: string | null;
+  onSelectNode: (nodeId: string) => void;
+  onAdd: (type: string, parent: string) => void;
+  busy?: boolean;
+  error?: string | null;
+}) {
+  if (!screen) {
+    return (
+      <section className="catalog-panel" aria-label="Page designer">
+        <p className="muted" role="status">
+          Select a screen to design it. A recipe page is generated from the model, so it is read
+          only until it is materialized as an authored page.
+        </p>
+      </section>
+    );
+  }
+  return (
+    <PageDesigner
+      screen={screen}
+      selectedNode={selectedNode}
+      onSelectNode={onSelectNode}
+      onAdd={onAdd}
+      busy={busy}
+      error={error}
+    />
   );
 }
 

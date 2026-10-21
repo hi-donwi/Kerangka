@@ -44,7 +44,7 @@ import { TargetProfile } from "./TargetProfile";
 import { ApiExplorer } from "./ApiExplorer";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
-import { JourneyWorkbench, ModelWorkbench, NodeInspector, WorkbenchModeBar } from "./workbench-panels.js";
+import { JourneyWorkbench, ModelWorkbench, NodeInspector, PageWorkbench, WorkbenchModeBar } from "./workbench-panels.js";
 import type { JourneyRunResult } from "./JourneyRunner.js";
 import type { WorkbenchMode } from "./workbench-modes.js";
 import { findPage, firstActionPointer } from "./journey-pointer.js";
@@ -101,6 +101,8 @@ export function App() {
   const [workflowState, setWorkflowState] = useState<string | null>(null);
   /** The journey step picked on the canvas. It is a view, not an edit. */
   const [journeyStep, setJourneyStep] = useState<string | null>(null);
+  /** The node picked in the page tree. */
+  const [pageNode, setPageNode] = useState<string | null>(null);
   /** The outcome of running a journey, shown as it is. */
   const [journeyRun, setJourneyRun] = useState<JourneyRunResult | null>(null);
   const [journeyRunBusy, setJourneyRunBusy] = useState(false);
@@ -370,6 +372,35 @@ export function App() {
     }
     setJourneyRun({ ok: steps.every((step) => step.ok), steps });
     setJourneyRunBusy(false);
+  };
+
+  /**
+   * Add a component to an authored page.
+   *
+   * The page is the author's document, so the change is a change to that document and
+   * the host checks the result before it is written. A generated page is not editable
+   * until it is materialized, so there is nothing to add to.
+   */
+  const addPageComponent = async (type: string, parent: string) => {
+    if (!response || !history || !screen || screen.kind !== "authored") return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const id = `${type.toLowerCase()}-${Math.random().toString(36).slice(2, 7)}`;
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [{ op: "uidlAddNode", source: screen.source, parent, node: { id, type } }],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    } else {
+      setDraft((state) => ({
+        ...state,
+        error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "The component was refused.",
+      }));
+    }
   };
 
   const setFormSections = async (view: string, sections: string[][], sectionTitles: string[]) => {
@@ -719,6 +750,14 @@ export function App() {
                 <div className="workbench-views">
                   <NodeInspector screen={screen} nodeId={previewSelection} />
                 </div>
+                <PageWorkbench
+                  screen={screen}
+                  selectedNode={pageNode}
+                  onSelectNode={setPageNode}
+                  onAdd={addPageComponent}
+                  busy={draft.busy}
+                  error={draft.error}
+                />
               </section>
               {mode === "model" ? (
                 <section id="model-content" className="inspection-content" aria-label="Model view">

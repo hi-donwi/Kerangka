@@ -357,7 +357,42 @@ test.describe("writable host: save and conflict recovery", () => {
   test.beforeEach(async () => {
     await writeFile(join(writableRoot, "app.kerangka.json"), writableModel);
     await writeFile(join(writableRoot, "approval.journey.json"), JSON.stringify(journey()));
+    await writeFile(join(writableRoot, "help.uidl.json"), JSON.stringify(help()));
   });
+
+test("adds a component to an authored page and finds it again after a save", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const designer = page.getByRole("region", { name: "Page tree" });
+  await expect(designer).toBeVisible();
+  await expect(designer.getByRole("button", { name: /help-text/ })).toBeVisible();
+
+  // The catalog is the runtime's own registry.
+  const catalog = page.getByRole("region", { name: "Page component catalog" });
+  await catalog.getByRole("searchbox").fill("Button");
+  await catalog.getByRole("button", { name: "Add Button" }).click();
+
+  // The page now carries the new node, and the draft says so.
+  const draft = page.getByRole("button", { name: "Save draft", exact: true });
+  await expect(draft).toBeEnabled();
+
+  // The new node is in the document, and it survives a save and a reload.
+  await draft.click();
+  await expect(page.getByText(/saved to disk/)).toBeVisible();
+  const onDisk = JSON.parse(await readFile(join(writableRoot, "help.uidl.json"), "utf8"));
+  expect(onDisk.root.children).toHaveLength(3);
+  expect(onDisk.root.children[2].type).toBe("Button");
+  await page.reload();
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+  await expect(page.getByRole("region", { name: "Page tree" }).getByRole("button", { name: /button-/ }).first()).toBeVisible();
+});
 
 test("runs a journey and shows a refused step as it is", async ({ page }) => {
   await page.goto(writableHost.url);

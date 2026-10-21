@@ -9,7 +9,16 @@ import {
   type SourceText,
   type StudioDiagnostic,
 } from "./contracts.js";
-import { findPath, insertArrayItem, insertEntry, parseJson, removeArrayItem, setValue, type JsonNode } from "./json-edit.js";
+import {
+  findPath,
+  findTreeNode,
+  insertArrayItem,
+  insertEntry,
+  parseJson,
+  removeArrayItem,
+  setValue,
+  type JsonNode,
+} from "./json-edit.js";
 import { journeyInternalErrors, parseJourney } from "./journey.js";
 import { sourceRevision } from "./revision.js";
 import { uidlDocument } from "./uidl-document.js";
@@ -228,6 +237,129 @@ export function sourceDiagnostics(entry: string, text: string): StudioDiagnostic
 
 
 /**
+ * Apply one operation to a UIDL document.
+ *
+ * The document keeps every byte the author wrote, and only the node changes. The
+ * result is checked against the runtime's document rules before it is returned, so an
+ * edit that would break the document is refused and the file is left as it was.
+ */
+function applyUidlOperation(
+  path: string,
+  source: SourceText,
+  operation: Extract<DraftOperation, { op: "uidlAddNode" | "uidlRemoveNode" }>,
+  diagnostics: StudioDiagnostic[],
+): string | undefined {
+  if (source.format !== "json") {
+    diagnostics.push({
+      severity: "error",
+      code: "STUDIO_WRITE_UNSUPPORTED",
+      source: path,
+      message: "Only JSON sources accept visual writes in this version.",
+    });
+    return undefined;
+  }
+  let root: JsonNode;
+  try {
+    root = parseJson(source.text);
+  } catch (error) {
+    diagnostics.push({
+      severity: "error",
+      code: "STUDIO_DRAFT_PARSE",
+      source: path,
+      message: error instanceof Error ? error.message : "The source is not valid JSON.",
+    });
+    return undefined;
+  }
+
+  // The node tree hangs under the document's `root`.
+  const tree = findPath(root, ["root"]) ?? root;
+
+  let text: string;
+  let summary: string;
+  if (operation.op === "uidlAddNode") {
+    if (findTreeNode(source.text, tree, operation.node.id)) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The document already has a node called '${operation.node.id}'.`,
+      });
+      return undefined;
+    }
+    const parent = findTreeNode(source.text, tree, operation.parent);
+    if (!parent) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The document has no node called '${operation.parent}'.`,
+      });
+      return undefined;
+    }
+    const children = parent.children ?? findPath(parent.node, ["children"]);
+    if (!children || children.kind !== "array") {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The node '${operation.parent}' cannot take a child.`,
+      });
+      return undefined;
+    }
+    const node = { id: operation.node.id, type: operation.node.type, props: {}, style: {}, children: [] };
+    try {
+      text = insertArrayItem(source.text, children, JSON.stringify(node, null, 2));
+    } catch (error) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_DRAFT_PARSE",
+        source: path,
+        message: error instanceof Error ? error.message : "The document cannot be edited.",
+      });
+      return undefined;
+    }
+    summary = `uidlAddNode ${operation.node.id}`;
+  } else {
+    const found = findTreeNode(source.text, tree, operation.node);
+    if (!found || found.children === undefined || found.index === undefined) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        message: `The document has no node called '${operation.node}'.`,
+      });
+      return undefined;
+    }
+    try {
+      text = removeArrayItem(source.text, found.children, found.index);
+    } catch (error) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_DRAFT_PARSE",
+        source: path,
+        message: error instanceof Error ? error.message : "The document cannot be edited.",
+      });
+      return undefined;
+    }
+    summary = `uidlRemoveNode ${operation.node}`;
+  }
+
+  // The edited document has to still be a document. The runtime's own rules are checked
+  // when the document is inspected; this is the cheap gate that keeps a broken edit
+  // from ever reaching the author.
+  if (!uidlDocument(text)) {
+    diagnostics.push({
+      severity: "error",
+      code: "STUDIO_UIDL_INVALID",
+      source: path,
+      message: `${summary} is refused: the edited document is not a UIDL document.`,
+    });
+    return undefined;
+  }
+  return text;
+}
+
+/**
  * Apply one journey operation to a journey source.
  *
  * The edit is source-preserving: the journey file keeps every byte the author wrote,
@@ -407,6 +539,25 @@ export function applyDraftOperations(
   const editedPaths = new Set<string>();
 
   for (const operation of request.operations) {
+    if (operation.op === "uidlAddNode" || operation.op === "uidlRemoveNode") {
+      const target = sources[operation.source];
+      if (!target) {
+        diagnostics.push({
+          severity: "error",
+          code: "STUDIO_OPERATION_TARGET",
+          source: operation.source,
+          message: `The file '${operation.source}' is not part of this project.`,
+        });
+        continue;
+      }
+      const edited = applyUidlOperation(operation.source, target, operation, diagnostics);
+      if (edited) {
+        sources[operation.source] = { format: "json", text: edited };
+        editedPaths.add(operation.source);
+        applied.push(`${operation.op} ${operation.source}`);
+      }
+      continue;
+    }
     if (operation.op.startsWith("journey")) {
       const journeyOperation = operation as JourneyDraftOperation;
       const journey = journeyOperation.journey;
