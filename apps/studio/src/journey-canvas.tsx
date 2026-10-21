@@ -65,9 +65,19 @@ const nodeTypes = { journey: JourneyNodeView };
 export interface JourneyCanvasProps {
   journey: JourneyInfo;
   onSelectStep?: (step: string) => void;
+  /**
+   * Called when a person connects two steps.
+   *
+   * The canvas proposes the connection; the host decides whether it is allowed, because
+   * a link has to name where the connection is realized, and only the host knows the
+   * pages and the operations that exist.
+   */
+  onConnect?: (from: string, to: string) => void;
+  /** Called when a person removes a step or a link. */
+  onRemove?: (kind: "step" | "link", id: string) => void;
 }
 
-export function JourneyCanvas({ journey, onSelectStep }: JourneyCanvasProps) {
+export function JourneyCanvas({ journey, onSelectStep, onConnect, onRemove }: JourneyCanvasProps) {
   const graph = useMemo(() => journeyGraph(journey), [journey]);
   const positions = useMemo(() => journeyPositions(graph), [graph]);
   const [nodes, setNodes] = useState<Node[]>(() =>
@@ -110,7 +120,17 @@ export function JourneyCanvas({ journey, onSelectStep }: JourneyCanvasProps) {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={(_, node) => onSelectStep?.(node.id)}
+        onConnect={(connection) => {
+          if (connection.source && connection.target) onConnect?.(connection.source, connection.target);
+        }}
+        onEdgesDelete={(removed) => {
+          for (const edge of removed) onRemove?.("link", edge.id);
+        }}
+        onNodesDelete={(removed) => {
+          for (const node of removed) onRemove?.("step", node.id);
+        }}
         nodeTypes={nodeTypes}
+        deleteKeyCode={["Backspace", "Delete"]}
         fitView
         minZoom={0.2}
         maxZoom={2}

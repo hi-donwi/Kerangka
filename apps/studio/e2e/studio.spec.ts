@@ -48,6 +48,7 @@ const journey = () => ({
   steps: [
     { id: "help", kind: "page", page: "help" },
     { id: "submit", kind: "operation", operation: "Request.submit" },
+    { id: "approve", kind: "operation", operation: "Request.approve" },
   ],
   links: [
     { id: "send", from: "help", to: "submit", kind: "action", pointer: "/root/children/1/events/onClick/0" },
@@ -355,7 +356,53 @@ test.describe("writable host: save and conflict recovery", () => {
   });
   test.beforeEach(async () => {
     await writeFile(join(writableRoot, "app.kerangka.json"), writableModel);
+    await writeFile(join(writableRoot, "approval.journey.json"), JSON.stringify(journey()));
   });
+
+test("edits a journey through the draft path, saves it, and keeps the file valid", async ({ page }) => {
+  await page.goto(writableHost.url);
+  const headers = {
+    Authorization: `Bearer ${writableHost.token}`,
+    Origin: writableHost.origin,
+    "Content-Type": "application/json",
+  };
+  const before = await (await page.request.get(`${writableHost.origin}/studio/api/project`, { headers })).json();
+  const revision = before.bundle.revision;
+
+  // A person connects two steps on the canvas. The canvas proposes the connection, and
+  // the draft path turns it into a change of the journey file.
+  const drafted = await page.request.post(`${writableHost.origin}/studio/api/draft`, {
+    headers,
+    data: {
+      expectedRevision: revision,
+      operations: [
+        {
+          op: "journeyAddLink",
+          journey: "approval.journey.json",
+          link: { id: "review", from: "submit", to: "approve", kind: "annotation" },
+        },
+      ],
+    },
+  });
+  expect(drafted.ok()).toBe(true);
+  const draft = await drafted.json();
+  expect(draft.applied).toContain("journeyAddLink approval.journey.json");
+
+  // The connection is in the draft, and the console shows it.
+  const edited = JSON.parse(draft.bundle.sources["approval.journey.json"].text);
+  expect(edited.links.map((link: { id: string }) => link.id)).toEqual(["send", "review"]);
+
+  // Saving writes the file, and the file is still a journey.
+  const saved = await page.request.post(`${writableHost.origin}/studio/api/save`, {
+    headers,
+    // The save is checked against the file on disk, not against the draft.
+    data: { expectedRevision: revision, sources: draft.bundle.sources },
+  });
+  expect(saved.ok()).toBe(true);
+  const onDisk = JSON.parse(await readFile(join(writableRoot, "approval.journey.json"), "utf8"));
+  expect(onDisk.links.map((link: { id: string }) => link.id)).toEqual(["send", "review"]);
+  expect(onDisk.entry).toBe("help");
+});
 
 test("loads a journey from the project, checks it, and draws it", async ({ page }) => {
   await page.goto(host.url);
@@ -370,7 +417,7 @@ test("loads a journey from the project, checks it, and draws it", async ({ page 
 
   // The canvas is there, and it draws the steps the journey declares.
   await expect(canvas).toBeVisible();
-  await expect(canvas.locator(".react-flow__node")).toHaveCount(2);
+  await expect(canvas.locator(".react-flow__node")).toHaveCount(3);
   await expect(canvas.locator(".react-flow__edge")).toHaveCount(1);
 });
 

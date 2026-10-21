@@ -1,6 +1,6 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { defaultRegistry, type WidgetManifest } from "uidl-runtime";
-import type { Inspection, ScreenInfo } from "../../../packages/studio-server/src/contracts.js";
+import type { Inspection, JourneyInfo, ScreenInfo } from "../../../packages/studio-server/src/contracts.js";
 import { findDocumentNode, nodeSummary, WORKBENCH_MODES, type WorkbenchMode } from "./workbench-modes.js";
 
 /**
@@ -175,10 +175,14 @@ export function JourneyWorkbench({
   inspection,
   selectedStep,
   onSelectStep,
+  onConnect,
+  onRemove,
 }: {
   inspection: Inspection | null;
   selectedStep?: string | null;
   onSelectStep?: (step: string) => void;
+  onConnect?: (journey: JourneyInfo, from: string, to: string) => void;
+  onRemove?: (journey: JourneyInfo, kind: "step" | "link", id: string) => void;
 }) {
   const journeys = inspection?.journeys ?? [];
   return (
@@ -207,7 +211,12 @@ export function JourneyWorkbench({
             </ul>
           ) : null}
           <Suspense fallback={<p className="muted" role="status">Loading the canvas...</p>}>
-            <JourneyCanvasHost journey={journey} onSelectStep={onSelectStep} />
+            <JourneyCanvasHost
+              journey={journey}
+              onSelectStep={onSelectStep}
+              onConnect={(from, to) => onConnect?.(journey, from, to)}
+              onRemove={(kind, id) => onRemove?.(journey, kind, id)}
+            />
           </Suspense>
         </section>
       ))}

@@ -7,6 +7,7 @@ import {
   StudioError,
   sourcePath,
   type DraftOperation,
+  type JourneyDraftOperation,
   type DraftRequest,
   type FieldDefinitionInput,
   type InspectionResult,
@@ -82,6 +83,76 @@ async function readScenarioBody(request: IncomingMessage): Promise<string> {
 }
 
 /** Parse and strictly bound an untrusted draft request into the engine's shape. */
+/**
+ * Read one journey operation from the request.
+ *
+ * The console proposes the change; the server checks the shape and the bounds, and the
+ * journey contract checks the meaning. Nothing is trusted because it came from the
+ * browser.
+ */
+function parseJourneyOperation(entry: Record<string, unknown>): JourneyDraftOperation {
+  const journey = entry.journey;
+  if (typeof journey !== "string" || journey.length < 1 || journey.length > 240)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (entry.op === "journeyAddStep" || entry.op === "journeyAddLink") {
+    const value = entry.op === "journeyAddStep" ? entry.step : entry.link;
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const record = value as Record<string, unknown>;
+    const id = record.id;
+    if (typeof id !== "string" || id.length < 1 || id.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (entry.op === "journeyAddStep") {
+      const kind = record.kind;
+      if (kind !== "page" && kind !== "operation") throw new StudioError("STUDIO_DRAFT_REQUEST");
+      const page = record.page;
+      const operation = record.operation;
+      if (kind === "page" && (typeof page !== "string" || page.length < 1 || page.length > 64))
+        throw new StudioError("STUDIO_DRAFT_REQUEST");
+      if (kind === "operation" && (typeof operation !== "string" || operation.length < 1 || operation.length > 128))
+        throw new StudioError("STUDIO_DRAFT_REQUEST");
+      return {
+        op: "journeyAddStep",
+        journey,
+        step: {
+          id,
+          kind,
+          ...(typeof page === "string" ? { page } : {}),
+          ...(typeof operation === "string" ? { operation } : {}),
+          ...(typeof record.label === "string" && record.label.length <= 128 ? { label: record.label } : {}),
+        },
+      };
+    }
+    const from = record.from;
+    const to = record.to;
+    const kind = record.kind;
+    if (typeof from !== "string" || typeof to !== "string" || typeof kind !== "string")
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (from.length > 64 || to.length > 64 || kind.length > 32) throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const pointer = record.pointer;
+    if (pointer !== undefined && (typeof pointer !== "string" || pointer.length > 512))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return {
+      op: "journeyAddLink",
+      journey,
+      link: {
+        id,
+        from,
+        to,
+        kind,
+        ...(typeof pointer === "string" ? { pointer } : {}),
+        ...(typeof record.label === "string" && record.label.length <= 128 ? { label: record.label } : {}),
+      },
+    };
+  }
+  const target = entry.op === "journeyRemoveStep" ? entry.step : entry.link;
+  if (typeof target !== "string" || target.length < 1 || target.length > 64)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  return entry.op === "journeyRemoveStep"
+    ? { op: "journeyRemoveStep", journey, step: target }
+    : { op: "journeyRemoveLink", journey, link: target };
+}
+
 function parseDraftRequest(raw: string): DraftRequest {
   let value: unknown;
   try {
@@ -108,6 +179,10 @@ function parseDraftRequest(raw: string): DraftRequest {
     }
     if (entry.op === "setTransition") {
       operations.push(parseTransition(entry));
+      continue;
+    }
+    if (typeof entry.op === "string" && entry.op.startsWith("journey")) {
+      operations.push(parseJourneyOperation(entry));
       continue;
     }
     if (entry.op !== "addEntityField" && entry.op !== "setEntityField") throw new StudioError("STUDIO_DRAFT_REQUEST");

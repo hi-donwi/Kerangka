@@ -1,6 +1,16 @@
 import { compile, CompilerError } from "@kerangka/compiler";
-import { StudioError, sourcePath, type DraftRequest, type SourceSnapshot, type SourceText, type StudioDiagnostic } from "./contracts.js";
-import { findPath, insertEntry, parseJson, setValue, type JsonNode } from "./json-edit.js";
+import {
+  StudioError,
+  sourcePath,
+  type DraftOperation,
+  type JourneyDraftOperation,
+  type DraftRequest,
+  type SourceSnapshot,
+  type SourceText,
+  type StudioDiagnostic,
+} from "./contracts.js";
+import { findPath, insertArrayItem, insertEntry, parseJson, removeArrayItem, setValue, type JsonNode } from "./json-edit.js";
+import { journeyInternalErrors, parseJourney } from "./journey.js";
 import { sourceRevision } from "./revision.js";
 import { uidlDocument } from "./uidl-document.js";
 
@@ -216,6 +226,155 @@ export function sourceDiagnostics(entry: string, text: string): StudioDiagnostic
   }
 }
 
+
+/**
+ * Apply one journey operation to a journey source.
+ *
+ * The edit is source-preserving: the journey file keeps every byte the author wrote,
+ * and only the step or the link changes. The result is checked against the journey
+ * contract before it is returned, so an edit that would break the journey is refused
+ * and the file is left as it was.
+ */
+function applyJourneyOperation(
+  path: string,
+  source: SourceText,
+  operation: JourneyDraftOperation,
+  diagnostics: StudioDiagnostic[],
+): string | undefined {
+  if (source.format !== "json") {
+    diagnostics.push({
+      severity: "error",
+      code: "STUDIO_WRITE_UNSUPPORTED",
+      source: path,
+      message: "Only JSON sources accept visual writes in this version.",
+    });
+    return undefined;
+  }
+  let root: JsonNode;
+  try {
+    root = parseJson(source.text);
+  } catch (error) {
+    diagnostics.push({
+      severity: "error",
+      code: "STUDIO_DRAFT_PARSE",
+      source: path,
+      message: error instanceof Error ? error.message : "The source is not valid JSON.",
+    });
+    return undefined;
+  }
+
+  let text: string;
+  let summary: string;
+  if (operation.op === "journeyAddStep" || operation.op === "journeyAddLink") {
+    const key = operation.op === "journeyAddStep" ? "steps" : "links";
+    const array = findPath(root, [key]);
+    if (!array || array.kind !== "array") {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        path: `/${key}`,
+        message: `The journey has no '${key}' to change.`,
+      });
+      return undefined;
+    }
+    const value = operation.op === "journeyAddStep" ? operation.step : operation.link;
+    const id = "id" in value ? value.id : "";
+    if (
+      array.items.some(
+        (item) =>
+          item.kind === "object" &&
+          item.entries.some((entry) => entry.key === "id" && stringValue(source.text, entry.value) === id),
+      )
+    ) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        path: `/${key}`,
+        message: `The journey already has an entry called '${id}'.`,
+      });
+      return undefined;
+    }
+    try {
+      text = insertArrayItem(source.text, array, JSON.stringify(value, null, 2));
+    } catch (error) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_DRAFT_PARSE",
+        source: path,
+        message: error instanceof Error ? error.message : "The journey cannot be edited.",
+      });
+      return undefined;
+    }
+    summary = `${operation.op} ${id}`;
+  } else {
+    const key = operation.op === "journeyRemoveStep" ? "steps" : "links";
+    const id = operation.op === "journeyRemoveStep" ? operation.step : operation.link;
+    const array = findPath(root, [key]);
+    if (!array || array.kind !== "array") {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        path: `/${key}`,
+        message: `The journey has no '${key}' to change.`,
+      });
+      return undefined;
+    }
+    const index = array.items.findIndex(
+      (item) =>
+        item.kind === "object" &&
+        item.entries.some((entry) => entry.key === "id" && stringValue(source.text, entry.value) === id),
+    );
+    if (index < 0) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_OPERATION_TARGET",
+        source: path,
+        path: `/${key}`,
+        message: `The journey has no entry called '${id}'.`,
+      });
+      return undefined;
+    }
+    try {
+      text = removeArrayItem(source.text, array, index);
+    } catch (error) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_DRAFT_PARSE",
+        source: path,
+        message: error instanceof Error ? error.message : "The journey cannot be edited.",
+      });
+      return undefined;
+    }
+    summary = `${operation.op} ${id}`;
+  }
+
+  // The edited journey has to still be a journey. An edit that breaks it is refused,
+  // and the file keeps the bytes the author wrote.
+  const parsed = parseJourney(JSON.parse(text));
+  if (!parsed.ok) {
+    for (const item of parsed.diagnostics) {
+      diagnostics.push({ ...item, source: path, message: `${summary} is refused: ${item.message}` });
+    }
+    return undefined;
+  }
+  const internal = journeyInternalErrors(parsed.journey!);
+  if (internal.length) {
+    for (const message of internal) {
+      diagnostics.push({
+        severity: "error",
+        code: "STUDIO_JOURNEY_INVALID",
+        source: path,
+        message: `${summary} is refused: ${message}`,
+      });
+    }
+    return undefined;
+  }
+  return text;
+}
+
 /**
  * Apply authored operations to the raw entry source at an expected revision.
  *
@@ -245,8 +404,30 @@ export function applyDraftOperations(
   const validate = options.validate ?? sourceDiagnostics;
   const sources: Record<string, SourceText> = { ...snapshot.sources };
   const edited = new Set<string>();
+  const editedPaths = new Set<string>();
 
   for (const operation of request.operations) {
+    if (operation.op.startsWith("journey")) {
+      const journeyOperation = operation as JourneyDraftOperation;
+      const journey = journeyOperation.journey;
+      const journeySource = sources[journey];
+      if (!journeySource) {
+        diagnostics.push({
+          severity: "error",
+          code: "STUDIO_OPERATION_TARGET",
+          source: journey,
+          message: `The journey file '${journey}' is not part of this project.`,
+        });
+        continue;
+      }
+      const edited = applyJourneyOperation(journey, journeySource, journeyOperation, diagnostics);
+      if (edited) {
+        sources[journey] = { format: "json", text: edited };
+        editedPaths.add(journey);
+        applied.push(`${journeyOperation.op} ${journey}`);
+      }
+      continue;
+    }
     const source = sources[snapshot.entry]!;
     if (operation.op === "setTransition") {
       const editedText = applyTransition(

@@ -106,11 +106,26 @@ export type FieldDefinitionInput = string | Record<string, unknown>;
  * Authoring operations Studio can apply to raw JSON source. The union grows as later
  * slices add constructs; an operation outside it is rejected with a diagnostic.
  */
+export type JourneyDraftOperation =
+  | {
+      op: "journeyAddStep";
+      journey: string;
+      step: { id: string; kind: "page" | "operation"; page?: string; operation?: string; label?: string };
+    }
+  | { op: "journeyRemoveStep"; journey: string; step: string }
+  | {
+      op: "journeyAddLink";
+      journey: string;
+      link: { id: string; from: string; to: string; kind: string; pointer?: string; label?: string };
+    }
+  | { op: "journeyRemoveLink"; journey: string; link: string };
+
 export type DraftOperation =
   | { op: "addEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
   | { op: "setEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
   | { op: "setFormSections"; view: string; sections: string[][]; sectionTitles: string[] }
-  | { op: "setTransition"; entity: string; transition: string; from: string[]; to: string; roles: string[]; when?: string };
+  | { op: "setTransition"; entity: string; transition: string; from: string[]; to: string; roles: string[]; when?: string }
+  | JourneyDraftOperation;
 
 export interface DraftRequest {
   expectedRevision: string;

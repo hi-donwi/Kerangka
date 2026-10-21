@@ -481,6 +481,24 @@ export function resolveJourney(journey: JourneyDocument, context: JourneyResolut
 }
 
 /**
+ * The problems inside a journey that need no project to find.
+ *
+ * The entry has to be a step of the journey, and a link has to join two steps that
+ * exist. These hold whatever the project contains, so an edit that breaks one of them
+ * breaks the journey itself.
+ */
+export function journeyInternalErrors(journey: JourneyDocument): string[] {
+  const errors: string[] = [];
+  const steps = new Set(journey.steps.map((step) => step.id));
+  if (!steps.has(journey.entry)) errors.push(`The entry '${journey.entry}' is not a step of this journey.`);
+  for (const link of journey.links) {
+    if (!steps.has(link.from)) errors.push(`The link '${link.id}' starts at '${link.from}', which is not a step.`);
+    if (!steps.has(link.to)) errors.push(`The link '${link.id}' ends at '${link.to}', which is not a step.`);
+  }
+  return errors;
+}
+
+/**
  * Report behavior that two journeys claim at once.
  *
  * The same operation reachable from two journeys, or the same event action leading to two

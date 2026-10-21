@@ -14,6 +14,7 @@ import {
 } from "./contracts.js";
 import { sourceDiagnostics } from "./draft.js";
 import { uidlDocument } from "./uidl-document.js";
+import { journeyInternalErrors, parseJourney } from "./journey.js";
 import type { StudioProject } from "./project.js";
 import { sourceRevision } from "./revision.js";
 
@@ -75,6 +76,38 @@ async function replaceFile(root: string, path: string, text: string): Promise<vo
   } catch {
     // Directory fsync is unsupported on some filesystems; the rename already replaced the file.
   }
+}
+
+/**
+ * The problems of a journey source.
+ *
+ * A journey that is not a journey is refused before it is written, so a broken file
+ * never reaches the disk. The problems that need the project are reported by the
+ * inspection, not here.
+ */
+function journeyDiagnostics(path: string, text: string): StudioDiagnostic[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [
+      {
+        severity: "error",
+        code: "STUDIO_JOURNEY_PARSE",
+        source: path,
+        message: "The journey is not valid JSON.",
+      },
+    ];
+  }
+  const result = parseJourney(parsed);
+  if (!result.ok) return result.diagnostics;
+  const internal = journeyInternalErrors(result.journey!);
+  return internal.map((message) => ({
+    severity: "error" as const,
+    code: "STUDIO_JOURNEY_INVALID",
+    source: path,
+    message,
+  }));
 }
 
 /**
@@ -206,7 +239,18 @@ export async function saveSources(project: StudioProject, request: SaveRequest):
   }
   if (Object.keys(sources).length > SOURCE_COUNT) throw new StudioError("STUDIO_SOURCE_LIMIT");
 
-  const diagnostics = sourceDiagnostics(project.entry, sources[project.entry]!.text);
+  // Every changed source is checked for what it is. The model is compiled; a journey is
+  // read as a journey. A source that is neither is refused by the source rules above.
+  const diagnostics: StudioDiagnostic[] = [];
+  for (const { path, text } of changed) {
+    if (path === project.entry) {
+      diagnostics.push(...sourceDiagnostics(project.entry, text));
+      continue;
+    }
+    if (path.endsWith(".journey.json")) {
+      diagnostics.push(...journeyDiagnostics(path, text));
+    }
+  }
   if (diagnostics.some((item) => item.severity === "error")) {
     return { status: "invalid", snapshot: current, saved: [], diagnostics };
   }

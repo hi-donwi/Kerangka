@@ -214,3 +214,49 @@ export function insertEntry(text: string, node: JsonNode, key: string, valueText
 export function setValue(text: string, node: JsonNode, valueText: string): string {
   return `${text.slice(0, node.start)}${valueText}${text.slice(node.end)}`;
 }
+
+/** Append an item to a JSON array, keeping the author's formatting. */
+export function insertArrayItem(text: string, array: JsonNode, valueText: string): string {
+  if (array.kind !== "array") throw new JsonEditError("Insert target is not a JSON array");
+  const open = array.start;
+  const close = array.end - 1;
+  if (array.items.length === 0) {
+    return `${text.slice(0, open + 1)}${valueText}${text.slice(close)}`;
+  }
+  const last = array.items[array.items.length - 1]!;
+  const gap = text.slice(last.end, close);
+  if (gap.includes("\n")) {
+    const newline = gap.includes("\r\n") ? "\r\n" : "\n";
+    const closeIndent = gap.slice(gap.lastIndexOf(newline) + newline.length);
+    const lead = text.slice(open + 1, last.start);
+    const itemIndent = lead.includes("\n") ? lead.slice(lead.lastIndexOf("\n") + 1) : `${closeIndent}  `;
+    return `${text.slice(0, last.end)},${newline}${itemIndent}${valueText}${text.slice(last.end)}`;
+  }
+  return `${text.slice(0, last.end)}, ${valueText}${text.slice(last.end)}`;
+}
+
+/** Remove one item from a JSON array, keeping the author's formatting. */
+export function removeArrayItem(text: string, array: JsonNode, index: number): string {
+  if (array.kind !== "array") throw new JsonEditError("Remove target is not a JSON array");
+  const item = array.items[index];
+  if (!item) throw new JsonEditError("No such array item");
+  const open = array.start;
+  const close = array.end - 1;
+  if (array.items.length === 1) {
+    return `${text.slice(0, open + 1)}${text.slice(close)}`;
+  }
+  const after = text.slice(item.end, close);
+  const comma = after.indexOf(",");
+  if (comma >= 0) {
+    // The item is followed by a comma. Take the item, the comma, and the space that
+    // belonged to the item's line, so the next item keeps its place.
+    let end = item.end + comma + 1;
+    while (end < text.length && /\s/.test(text[end]!)) end++;
+    return `${text.slice(0, item.start)}${text.slice(end)}`;
+  }
+  // The item is the last one. Take the comma before it with it.
+  const before = text.slice(open + 1, item.start);
+  const lastComma = before.lastIndexOf(",");
+  if (lastComma < 0) return `${text.slice(0, open + 1)}${text.slice(close)}`;
+  return `${text.slice(0, open + 1 + lastComma)}${text.slice(item.end)}`;
+}

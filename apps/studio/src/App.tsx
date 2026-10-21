@@ -46,9 +46,10 @@ import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
 import { JourneyWorkbench, ModelWorkbench, NodeInspector, WorkbenchModeBar } from "./workbench-panels.js";
 import type { WorkbenchMode } from "./workbench-modes.js";
+import { findPage, firstActionPointer } from "./journey-pointer.js";
 import { Diagnostics } from "./Diagnostics";
 import { StudioConflict, StudioSaveRefused } from "./studio-api";
-import type { SourceText } from "../../../packages/studio-server/src/contracts.js";
+import type { SourceText, StudioResponse } from "../../../packages/studio-server/src/contracts.js";
 
 type Tab = "definition" | "openapi" | "postgres" | "sqlite" | "preview";
 const tabs: Array<[Tab, string]> = [
@@ -261,6 +262,73 @@ export function App() {
       }));
     }
   };
+  /**
+   * Connect two steps on a journey canvas.
+   *
+   * The link names where the connection is realized, so it carries the pointer of the
+   * action it points at. The server checks the link against the journey contract and
+   * the project before it is written.
+   */
+  const connectJourneySteps = async (journey: { source: string }, from: string, to: string) => {
+    if (!response || !history) return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const id = `${from}-${to}`;
+    const pointer = journeyPointer(response, from);
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [
+        {
+          op: "journeyAddLink",
+          journey: journey.source,
+          link: { id, from, to, kind: "action", ...(pointer ? { pointer } : {}) },
+        },
+      ],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "source", id: journey.source }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    } else {
+      setDraft((state) => ({ ...state, error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "The connection was refused." }));
+    }
+  };
+
+  /**
+   * The pointer of the action a connection starts from.
+   *
+   * The step that starts the connection names a page, and the page's own document
+   * holds the action. The pointer is found there, so it names something that exists.
+   */
+  const journeyPointer = (bundle: StudioResponse, step: string): string | undefined => {
+    const journey = bundle.inspection?.journeys.find((item) =>
+      item.steps.some((entry) => entry.id === step),
+    );
+    const page = journey?.steps.find((entry) => entry.id === step);
+    if (!page || page.kind !== "page" || !page.page) return undefined;
+    const screen = findPage(bundle.inspection?.screens ?? [], page.page);
+    if (!screen) return undefined;
+    return firstActionPointer(screen.document) ?? undefined;
+  };
+
+  /** Remove a step or a link from a journey. */
+  const removeJourneyEntry = async (journey: { source: string }, kind: "step" | "link", id: string) => {
+    if (!response || !history) return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [kind === "step" ? { op: "journeyRemoveStep", journey: journey.source, step: id } : { op: "journeyRemoveLink", journey: journey.source, link: id }],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "source", id: journey.source }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    }
+  };
+
   const setFormSections = async (view: string, sections: string[][], sectionTitles: string[]) => {
     if (!response || !history || !screen) return;
     const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : undefined;
@@ -624,6 +692,8 @@ export function App() {
                     inspection={inspection ?? null}
                     selectedStep={journeyStep}
                     onSelectStep={setJourneyStep}
+                    onConnect={connectJourneySteps}
+                    onRemove={removeJourneyEntry}
                   />
                 </section>
               ) : null}
