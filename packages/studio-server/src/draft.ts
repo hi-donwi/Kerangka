@@ -1,4 +1,5 @@
 import { compile, CompilerError } from "@kerangka/compiler";
+import { propertyProblem, type EditorCatalog } from "./editor-catalog.js";
 import {
   StudioError,
   sourcePath,
@@ -32,6 +33,8 @@ export interface DraftResult {
 }
 
 export interface DraftOptions {
+  /** Host-owned catalog generated from the pinned renderer, never request metadata. */
+  catalog?: EditorCatalog;
   /** Validate an edited source and return diagnostics. Defaults to a compiler check. */
   validate?: (entry: string, text: string) => StudioDiagnostic[];
 }
@@ -270,6 +273,7 @@ function applyUidlOperation(
   source: SourceText,
   operation: Extract<DraftOperation, { op: `uidl${string}` }>,
   diagnostics: StudioDiagnostic[],
+  catalog?: EditorCatalog,
 ): string | undefined {
   if (source.format !== "json") {
     diagnostics.push({
@@ -298,7 +302,29 @@ function applyUidlOperation(
 
   let text: string;
   let summary: string;
-  if (operation.op === "uidlSetNodeProp") {
+  if (operation.op === "uidlSetTheme" || operation.op === "uidlSetNodeThemeRef") {
+    if (root.kind !== "object") return undefined;
+    const current = JSON.parse(source.text) as { theme?: string };
+    let target: JsonNode = root;
+    const key = operation.op === "uidlSetTheme" ? "theme" : "themeRef";
+    const value = operation.op === "uidlSetTheme" ? operation.theme : operation.themeRef;
+    let valid = Boolean(catalog?.themes.some((theme) => theme.id === value));
+    if (operation.op === "uidlSetNodeThemeRef") {
+      const found = findTreeNode(source.text, tree, operation.node);
+      if (!found || found.node.kind !== "object") return undefined;
+      target = found.node;
+      const type = stringValue(source.text, findPath(target, ["type"])) ?? "";
+      const theme = catalog?.themes.find((entry) => entry.id === (current.theme || "theme-light"));
+      valid = value === "" || Boolean(theme?.variants[type.toLowerCase()]?.includes(value));
+    }
+    if (!valid || target.kind !== "object") {
+      diagnostics.push({ severity: "error", code: "STUDIO_UIDL_THEME", source: path, message: "Choose a theme or variant available in the host renderer." });
+      return undefined;
+    }
+    const existing = findPath(target, [key]);
+    text = existing ? setValue(source.text, existing, JSON.stringify(value)) : insertEntry(source.text, target, key, JSON.stringify(value));
+    summary = operation.op;
+  } else if (operation.op === "uidlSetNodeProp") {
     const found = findTreeNode(source.text, tree, operation.node);
     if (!found) {
       diagnostics.push({
@@ -319,7 +345,7 @@ function applyUidlOperation(
       return undefined;
     }
     const props = found.node.entries.find((entry) => entry.key === "props");
-    if (!props || props.value.kind !== "object") {
+    if (props && props.value.kind !== "object") {
       diagnostics.push({
         severity: "error",
         code: "STUDIO_OPERATION_TARGET",
@@ -329,7 +355,7 @@ function applyUidlOperation(
       return undefined;
     }
     const key = operation.prop.key;
-    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(key)) {
+    if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(key) || ["__proto__", "prototype", "constructor"].includes(key)) {
       diagnostics.push({
         severity: "error",
         code: "STUDIO_OPERATION_TARGET",
@@ -338,12 +364,19 @@ function applyUidlOperation(
       });
       return undefined;
     }
-    const existing = props.value.entries.find((entry) => entry.key === key);
+    const type = stringValue(source.text, findPath(found.node, ["type"])) ?? "";
+    const problem = propertyProblem(catalog, type, key, operation.prop.value);
+    if (problem) {
+      diagnostics.push({ severity: "error", code: "STUDIO_UIDL_PROPERTY", source: path, message: problem });
+      return undefined;
+    }
+    const existing = props?.value.kind === "object" ? props.value.entries.find((entry) => entry.key === key) : undefined;
     const valueText = JSON.stringify(operation.prop.value, null, 2);
     try {
       text = existing
         ? setValue(source.text, existing.value, valueText)
-        : insertEntry(source.text, props.value, key, valueText);
+        : props ? insertEntry(source.text, props.value, key, valueText)
+          : insertEntry(source.text, found.node, "props", JSON.stringify({ [key]: operation.prop.value }));
     } catch (error) {
       diagnostics.push({
         severity: "error",
@@ -375,7 +408,15 @@ function applyUidlOperation(
       });
       return undefined;
     }
-    const children = parent.children ?? findPath(parent.node, ["children"]);
+    const type = stringValue(source.text, findPath(parent.node, ["type"])) ?? "";
+    const widget = catalog?.components[type];
+    if ((parent.node.start >= found.node.start && parent.node.end <= found.node.end) ||
+        (widget && (operation.slot ? !widget.slots.includes(operation.slot) : !widget.acceptsChildren))) {
+      diagnostics.push({ severity: "error", code: "STUDIO_UIDL_MOVE", source: path, message: "A node cannot move into itself, a descendant, or an incompatible container." });
+      return undefined;
+    }
+    const destination = operation.slot ? ["slots", operation.slot] : ["children"];
+    const children = findPath(parent.node, destination);
     if (!children || children.kind !== "array") {
       diagnostics.push({
         severity: "error",
@@ -385,14 +426,16 @@ function applyUidlOperation(
       });
       return undefined;
     }
+    const finalIndex = Math.max(0, Math.min(operation.index, children.items.length - (children.start === found.children.start ? 1 : 0)));
+    if (children.start === found.children.start && finalIndex === found.index) return undefined;
     try {
       const without = removeArrayItem(source.text, found.children, found.index);
       const again = parseJson(without);
       const againTree = findPath(again, ["root"]) ?? again;
       const againParent = findTreeNode(without, againTree, operation.parent);
-      const againChildren = againParent?.children ?? findPath(againParent?.node ?? again, ["children"]);
+      const againChildren = againParent ? findPath(againParent.node, destination) : undefined;
       if (!againChildren || againChildren.kind !== "array") throw new Error("The target cannot take a child.");
-      const index = Math.max(0, Math.min(operation.index, againChildren.items.length));
+      const index = Math.max(0, Math.min(finalIndex, againChildren.items.length));
       // The node moves as the author wrote it, not as a re-serialized value.
       const nodeText = source.text.slice(found.node.start, found.node.end);
       text = insertArrayItemAt(without, againChildren, index, nodeText);
@@ -900,7 +943,7 @@ export function applyDraftOperations(
         });
         continue;
       }
-      const edited = applyUidlOperation(uidlOperation.source, target, uidlOperation, diagnostics);
+      const edited = applyUidlOperation(uidlOperation.source, target, uidlOperation, diagnostics, options.catalog);
       if (edited) {
         sources[uidlOperation.source] = { format: "json", text: edited };
         editedPaths.add(uidlOperation.source);

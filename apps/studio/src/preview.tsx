@@ -3,6 +3,7 @@ import { useState } from "react";
 import { UIDocumentRenderer, createDocumentState, type DocumentStateStore, type UIDLDocument } from "uidl-runtime";
 import { preparePreview, readOnlyAdapter } from "./preview-policy";
 import { PREVIEW_HIGHLIGHT, previewSelectionMessage, readPreviewHighlight } from "./preview-selection";
+import { editorThemes } from "./editor-catalog";
 import "uidl-runtime/style.css";
 import "./preview.css";
 
@@ -41,7 +42,8 @@ function ReadOnlyDocument({
     };
   });
   const [adapter] = useState(() => readOnlyAdapter(seed));
-  return <UIDocumentRenderer document={document} dataAdapter={adapter} stateStore={stateStore} />;
+  const theme = editorThemes.find((entry) => entry.id === document.theme) ?? editorThemes[0];
+  return <UIDocumentRenderer document={document} theme={theme} dataAdapter={adapter} stateStore={stateStore} />;
 }
 window.addEventListener("message", (event: MessageEvent<unknown>) => {
   if (

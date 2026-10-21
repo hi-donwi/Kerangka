@@ -50,7 +50,7 @@ import type { WorkbenchMode } from "./workbench-modes.js";
 import { findPage, firstActionPointer } from "./journey-pointer.js";
 import { Diagnostics } from "./Diagnostics";
 import { StudioConflict, StudioSaveRefused } from "./studio-api";
-import type { SourceText, StudioResponse } from "../../../packages/studio-server/src/contracts.js";
+import type { SourceText, StudioResponse, UidlDraftOperation } from "../../../packages/studio-server/src/contracts.js";
 
 type Tab = "definition" | "openapi" | "postgres" | "sqlite" | "preview";
 const tabs: Array<[Tab, string]> = [
@@ -409,44 +409,33 @@ export function App() {
     return Object.entries(definitions ?? {}).map(([name, value]) => ({ name, type: value?.type ?? "Node" }));
   }, [screen?.document]);
 
-  /** Change one property of a node in the authored page. */
-  const setPageProperty = async (nodeId: string, key: string, value: unknown) => {
-    if (!response || !history || !screen || screen.kind !== "authored") return;
+  const pageEditInFlight = useRef(false);
+  const applyPageOperation = async (operation: UidlDraftOperation) => {
+    if (!response || !history || !screen || screen.kind !== "authored" || draft.busy || pageEditInFlight.current) return;
     const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
-    const next = await studio.applyDraft({
-      expectedRevision: history.baseRevision,
-      operations: [{ op: "uidlSetNodeProp", source: screen.source, node: nodeId, prop: { key, value } }],
-      ...(currentSources ? { sources: currentSources } : {}),
-    });
-    if (next.applied.length) {
-      remember(
-        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }),
-        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
-      );
-    } else {
-      setDraft((state) => ({
-        ...state,
-        error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "The change was refused.",
-      }));
+    pageEditInFlight.current = true;
+    setDraft((state) => ({ ...state, busy: true, error: null }));
+    try {
+      const next = await studio.applyDraft({ expectedRevision: history.baseRevision, operations: [operation], sources: currentSources });
+      if (next.applied.length) {
+        remember(pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }), `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`);
+      } else {
+        setDraft((state) => ({ ...state, error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "No change was applied." }));
+      }
+    } catch (reason) {
+      setDraft((state) => ({ ...state, error: reason instanceof Error ? reason.message : "The page edit failed." }));
+    } finally {
+      pageEditInFlight.current = false;
+      setDraft((state) => ({ ...state, busy: false }));
     }
   };
 
+  const setPageProperty = (nodeId: string, key: string, value: unknown) =>
+    applyPageOperation({ op: "uidlSetNodeProp", source: screen?.source ?? "", node: nodeId, prop: { key, value } });
+
   /** Move a node among its siblings. */
-  const movePageNode = async (nodeId: string, parent: string, index: number) => {
-    if (!response || !history || !screen || screen.kind !== "authored") return;
-    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
-    const next = await studio.applyDraft({
-      expectedRevision: history.baseRevision,
-      operations: [{ op: "uidlMoveNode", source: screen.source, node: nodeId, parent, index }],
-      ...(currentSources ? { sources: currentSources } : {}),
-    });
-    if (next.applied.length) {
-      remember(
-        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }),
-        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
-      );
-    }
-  };
+  const movePageNode = (nodeId: string, parent: string, index: number, slot?: string) =>
+    applyPageOperation({ op: "uidlMoveNode", source: screen?.source ?? "", node: nodeId, parent, index, ...(slot ? { slot } : {}) });
 
   /** Copy a node, with identifiers of its own. */
   const copyPageNode = async (nodeId: string, parent: string) => {
@@ -467,29 +456,13 @@ export function App() {
 
   /** Change one style value of a node, at a breakpoint when one is given. */
   const setPageStyle = async (nodeId: string, field: string, value: unknown, breakpoint?: string) => {
-    if (!response || !history || !screen || screen.kind !== "authored") return;
-    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
-    const next = await studio.applyDraft({
-      expectedRevision: history.baseRevision,
-      operations: [
-        breakpoint
-          ? { op: "uidlSetNodeResponsive", source: screen.source, node: nodeId, field, breakpoint, value }
-          : { op: "uidlSetNodeStyle", source: screen.source, node: nodeId, field, value },
-      ],
-      ...(currentSources ? { sources: currentSources } : {}),
-    });
-    if (next.applied.length) {
-      remember(
-        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }),
-        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
-      );
-    } else {
-      setDraft((state) => ({
-        ...state,
-        error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "The change was refused.",
-      }));
-    }
+    await applyPageOperation(breakpoint
+      ? { op: "uidlSetNodeResponsive", source: screen?.source ?? "", node: nodeId, field, breakpoint, value }
+      : { op: "uidlSetNodeStyle", source: screen?.source ?? "", node: nodeId, field, value });
   };
+
+  const setPageTheme = (theme: string) => applyPageOperation({ op: "uidlSetTheme", source: screen?.source ?? "", theme });
+  const setPageThemeRef = (node: string, themeRef: string) => applyPageOperation({ op: "uidlSetNodeThemeRef", source: screen?.source ?? "", node, themeRef });
 
   const setFormSections = async (view: string, sections: string[][], sectionTitles: string[]) => {
     if (!response || !history || !screen) return;
@@ -847,6 +820,8 @@ export function App() {
                   onMove={movePageNode}
                   onCopy={copyPageNode}
                   onSetStyle={setPageStyle}
+                  onSetTheme={setPageTheme}
+                  onSetThemeRef={setPageThemeRef}
                   definitions={pageDefinitions}
                   busy={draft.busy}
                   error={draft.error}
@@ -1018,7 +993,7 @@ export function App() {
                       screen={screen}
                       revision={response.bundle.revision}
                       synthetic={inspection.synthetic}
-                      onSelectNode={setPreviewSelection}
+                      onSelectNode={(id) => { setPreviewSelection(id); setPageNode(id); }}
                     />
                   ) : (
                     <div className="empty-state">

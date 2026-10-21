@@ -122,7 +122,9 @@ export type UidlDraftOperation =
       node: string;
       prop: { key: string; value: unknown };
     }
-  | { op: "uidlMoveNode"; source: string; node: string; parent: string; index: number }
+  | { op: "uidlMoveNode"; source: string; node: string; parent: string; index: number; slot?: string }
+  | { op: "uidlSetTheme"; source: string; theme: string }
+  | { op: "uidlSetNodeThemeRef"; source: string; node: string; themeRef: string }
   | { op: "uidlAddDefinition"; source: string; name: string; node: { id: string; type: string } }
   | { op: "uidlUseDefinition"; source: string; node: string; definition: string }
   | { op: "uidlSetNodeStyle"; source: string; node: string; field: string; value: unknown }

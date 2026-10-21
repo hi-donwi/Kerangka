@@ -1,7 +1,14 @@
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
+import { editorCatalog } from "./src/editor-catalog";
 
 export default defineConfig({
+  plugins: [{
+    name: "studio-editor-catalog",
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: "editor-metadata.json", source: JSON.stringify(editorCatalog()) });
+    },
+  }],
   base: "./",
   build: {
     assetsInlineLimit: 0,

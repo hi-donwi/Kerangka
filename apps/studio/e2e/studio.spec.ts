@@ -218,6 +218,8 @@ test("switches the design modes, searches the catalog, and inspects the selected
   const inspector = page.getByRole("region", { name: "Node inspector" });
   await expect(inspector).toContainText("help-text");
   await expect(inspector).toContainText("Text");
+  // The selected node is also the one the typed inspector describes.
+  await expect(page.getByRole("region", { name: "Typed property fields" })).toContainText("Text Properties");
 });
 
 test("selects a node in the isolated preview and marks it for the author", async ({ page }) => {
@@ -370,13 +372,13 @@ test("sets a style value and copies a node in the page tree", async ({ page }) =
   const tree = page.getByRole("region", { name: "Page tree" });
   await tree.getByRole("button", { name: "Text help-text" }).click();
 
-  const properties = page.getByRole("form", { name: "Node properties" });
-  await properties.getByLabel("Field", { exact: true }).fill("gap");
-  await properties.getByPlaceholder("1rem").fill("1rem");
-  await properties.getByRole("button", { name: "Set style" }).click();
+  const style = page.getByRole("form", { name: "Node style" });
+  await style.getByLabel("Field", { exact: true }).fill("gap");
+  await style.getByLabel("Style Value", { exact: true }).fill("gap-4");
+  await style.getByRole("button", { name: "Set style" }).click();
   await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
 
-  await properties.getByRole("button", { name: "Copy this node" }).click();
+  await style.getByRole("button", { name: "Copy this node" }).click();
   await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
 });
 
@@ -390,11 +392,10 @@ test("changes a property and moves a node in the page tree", async ({ page }) =>
   const tree = page.getByRole("region", { name: "Page tree" });
   await tree.getByRole("button", { name: "Text help-text" }).click();
 
-  // A property of the selected node can be changed.
-  const properties = page.getByRole("form", { name: "Node properties" });
-  await properties.getByLabel("Property").fill("value");
-  await properties.getByPlaceholder("Hello").fill("Changed");
-  await properties.getByRole("button", { name: "Set property" }).click();
+  // A declared property of the selected node can be changed.
+  const value = page.getByRole("form", { name: "value property" });
+  await value.getByLabel("value", { exact: true }).fill("Changed");
+  await value.getByRole("button", { name: "Apply value" }).click();
   await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
 
   // A node can be moved among its siblings, with the keyboard.
@@ -434,6 +435,83 @@ test("adds a component to an authored page and finds it again after a save", asy
     .getByRole("button", { name: /help\.uidl\.json/ })
     .click();
   await expect(page.getByRole("region", { name: "Page tree" }).getByRole("button", { name: /button-/ }).first()).toBeVisible();
+});
+
+test("edits a declared property through the typed inspector", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const tree = page.getByRole("region", { name: "Page tree" });
+  await tree.getByRole("button", { name: /Text help-text/ }).click();
+
+  // The inspector shows the properties the installed runtime declares, with the
+  // control the declared type asks for.
+  const valueField = page.getByRole("form", { name: "value property" });
+  await expect(valueField).toBeVisible();
+  await valueField.getByLabel("value", { exact: true }).fill("Changed");
+  await valueField.getByRole("button", { name: "Apply value" }).click();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+
+  // A declared boolean is a checkbox, and a declared enum is a select of its values.
+  await tree.getByRole("button", { name: /Button no-call/ }).click();
+  await expect(page.getByRole("form", { name: "disabled property" }).getByRole("checkbox")).toBeVisible();
+  const variant = page.getByRole("form", { name: "variant property" }).getByLabel("variant", { exact: true });
+  await expect(variant).toBeVisible();
+  await expect(variant.locator("option")).toHaveText(["Not Set", "primary", "secondary"]);
+});
+
+test("applies a theme and a theme reference to an authored page", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const tree = page.getByRole("region", { name: "Page tree" });
+  await tree.getByRole("button", { name: /Button no-call/ }).click();
+
+  const themeForm = page.getByRole("form", { name: "Document theme" });
+  await themeForm.getByLabel("Document Theme").selectOption("theme-dark");
+  await themeForm.getByRole("button", { name: "Apply document theme" }).click();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+
+  // The document now carries the theme, and it survives a save.
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByText(/saved to disk/)).toBeVisible();
+  const onDisk = JSON.parse(await readFile(join(writableRoot, "help.uidl.json"), "utf8"));
+  expect(onDisk.theme).toBe("theme-dark");
+});
+
+test("drags a layer with the pointer and keeps the document valid", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const tree = page.getByRole("region", { name: "Page tree" });
+  const handle = tree.getByRole("button", { name: "Drag no-call" });
+  const target = tree.getByRole("button", { name: /Text help-text/ });
+  const from = await handle.boundingBox();
+  const to = await target.boundingBox();
+  if (!from || !to) throw new Error("The layer rows have no geometry.");
+
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + 2, { steps: 8 });
+  await page.mouse.up();
+
+  // The change is a draft, and it says what it did.
+  await expect(page.getByRole("status").filter({ hasText: /Moved no-call/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByText(/saved to disk/)).toBeVisible();
+  const onDisk = JSON.parse(await readFile(join(writableRoot, "help.uidl.json"), "utf8"));
+  // The dragged layer now comes first, and the document is still valid.
+  expect(onDisk.root.children.map((child: { id: string }) => child.id)).toEqual(["no-call", "help-text"]);
 });
 
 test("runs a journey and shows a refused step as it is", async ({ page }) => {

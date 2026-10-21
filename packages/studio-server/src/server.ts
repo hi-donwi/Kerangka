@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { loadEditorCatalog } from "./editor-catalog.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   PROJECT_BYTES,
@@ -159,6 +160,17 @@ function parseUidlOperation(entry: Record<string, unknown>): UidlDraftOperation 
   const source = entry.source;
   if (typeof source !== "string" || source.length < 1 || source.length > 240)
     throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (entry.op === "uidlSetTheme") {
+    if (typeof entry.theme !== "string" || entry.theme.length < 1 || entry.theme.length > 128)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: entry.op, source, theme: entry.theme };
+  }
+  if (entry.op === "uidlSetNodeThemeRef") {
+    if (typeof entry.node !== "string" || !entry.node || entry.node.length > 256 ||
+        typeof entry.themeRef !== "string" || entry.themeRef.length > 128)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: entry.op, source, node: entry.node, themeRef: entry.themeRef };
+  }
   if (entry.op === "uidlSetNodeProp") {
     const prop = entry.prop;
     if (typeof prop !== "object" || prop === null || Array.isArray(prop))
@@ -213,7 +225,9 @@ function parseUidlOperation(entry: Record<string, unknown>): UidlDraftOperation 
       throw new StudioError("STUDIO_DRAFT_REQUEST");
     if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 10000)
       throw new StudioError("STUDIO_DRAFT_REQUEST");
-    return { op: "uidlMoveNode", source, node, parent, index };
+    if (entry.slot !== undefined && (typeof entry.slot !== "string" || !entry.slot || entry.slot.length > 128))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlMoveNode", source, node, parent, index, ...(typeof entry.slot === "string" ? { slot: entry.slot } : {}) };
   }
   if (entry.op === "uidlAddDefinition") {
     const name = entry.name;
@@ -252,6 +266,7 @@ function parseUidlOperation(entry: Record<string, unknown>): UidlDraftOperation 
       throw new StudioError("STUDIO_DRAFT_REQUEST");
     return { op: "uidlAddNode", source, parent, node: { id: record.id, type: record.type } };
   }
+  if (entry.op !== "uidlRemoveNode") throw new StudioError("STUDIO_DRAFT_REQUEST");
   const node = entry.node;
   if (typeof node !== "string" || node.length < 1 || node.length > 64)
     throw new StudioError("STUDIO_DRAFT_REQUEST");
@@ -474,6 +489,7 @@ function dedupeDiagnostics(diagnostics: StudioResponse["diagnostics"]): StudioRe
 }
 
 export async function startStudio(options: StudioOptions): Promise<StudioHost> {
+  const catalog = loadEditorCatalog();
   const project = await openProject(options.target);
   const token = options.token ?? randomBytes(32).toString("base64url");
   if (token.length < 32 || token.length > 128) throw new StudioError("STUDIO_FORBIDDEN");
@@ -516,7 +532,7 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
       excluded: snapshot.excluded,
     };
     const draft = draftRequest.operations.length
-      ? applyDraftOperations(base, { expectedRevision: snapshot.revision, operations: draftRequest.operations }, { validate: () => [] })
+      ? applyDraftOperations(base, { expectedRevision: snapshot.revision, operations: draftRequest.operations }, { validate: () => [], catalog })
       : {
           revision: sourceRevision(overlaid),
           sources: overlaid,

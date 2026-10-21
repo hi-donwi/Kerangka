@@ -130,6 +130,8 @@ export function PageWorkbench({
   onMove,
   onCopy,
   onSetStyle,
+  onSetTheme,
+  onSetThemeRef,
   definitions,
   busy,
   error,
@@ -139,9 +141,11 @@ export function PageWorkbench({
   onSelectNode: (nodeId: string) => void;
   onAdd: (type: string, parent: string) => void;
   onSetProp: (nodeId: string, key: string, value: unknown) => void;
-  onMove: (nodeId: string, parent: string, index: number) => void;
+  onMove: (nodeId: string, parent: string, index: number, slot?: string) => void;
   onCopy: (nodeId: string, parent: string) => void;
   onSetStyle: (nodeId: string, field: string, value: unknown, breakpoint?: string) => void;
+  onSetTheme: (theme: string) => void;
+  onSetThemeRef: (nodeId: string, reference: string) => void;
   definitions: Array<{ name: string; type: string }>;
   busy?: boolean;
   error?: string | null;
@@ -166,6 +170,8 @@ export function PageWorkbench({
       onMove={onMove}
       onCopy={onCopy}
       onSetStyle={onSetStyle}
+      onSetTheme={onSetTheme}
+      onSetThemeRef={onSetThemeRef}
       definitions={definitions}
       busy={busy}
       error={error}
