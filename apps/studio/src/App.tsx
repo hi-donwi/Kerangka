@@ -44,6 +44,8 @@ import { TargetProfile } from "./TargetProfile";
 import { ApiExplorer } from "./ApiExplorer";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
+import { JourneyWorkbench, ModelWorkbench, NodeInspector, WorkbenchModeBar } from "./workbench-panels.js";
+import type { WorkbenchMode } from "./workbench-modes.js";
 import { Diagnostics } from "./Diagnostics";
 import { StudioConflict, StudioSaveRefused } from "./studio-api";
 import type { SourceText } from "../../../packages/studio-server/src/contracts.js";
@@ -91,6 +93,8 @@ export function App() {
   const [awaitingDisk, setAwaitingDisk] = useState(false);
   /** The node selected inside the preview, so the console can show where the author is. */
   const [previewSelection, setPreviewSelection] = useState<string | null>(null);
+  /** Which way of working the console is showing. It never changes the source. */
+  const [mode, setMode] = useState<WorkbenchMode>("page");
   const response = studio.response;
   const inspection = response?.inspection;
   const writable = response?.writable === true;
@@ -533,6 +537,7 @@ export function App() {
           <div className="workbench">
             <ProjectExplorer response={response} selected={selected} onSelect={select} />
             <main className="inspection-pane">
+              <WorkbenchModeBar mode={mode} onChange={setMode} />
               <div className="inspector-heading">
                 <div>
                   <p className="eyebrow">{selected?.kind ?? "source"}</p>
@@ -558,6 +563,7 @@ export function App() {
                   </button>
                 ))}
               </div>
+              <div hidden={mode !== "page"}>
               {screen?.kind === "form" ? (
                 <MaterializePage
                   view={screen.label}
@@ -586,11 +592,34 @@ export function App() {
                   onApply={(sections, sectionTitles) => void setFormSections(screen.label, sections, sectionTitles)}
                 />
               ) : null}
+              </div>
+              <section
+                id="workbench-content"
+                className="inspection-content"
+                role="tabpanel"
+                aria-labelledby={`mode-${mode}`}
+                hidden={mode !== "page"}
+              >
+                <div className="workbench-views">
+                  <NodeInspector screen={screen} nodeId={previewSelection} />
+                </div>
+              </section>
+              {mode === "model" ? (
+                <section id="model-content" className="inspection-content" aria-label="Model view">
+                  <ModelWorkbench inspection={inspection ?? null} />
+                </section>
+              ) : null}
+              {mode === "journey" ? (
+                <section id="journey-content" className="inspection-content" aria-label="Journey view">
+                  <JourneyWorkbench />
+                </section>
+              ) : null}
               <section
                 id="inspection-content"
                 className="inspection-content"
                 role="tabpanel"
                 aria-labelledby={`tab-${tab}`}
+                hidden={mode !== "page"}
               >
                 {missing ? (
                   <div className="empty-state">

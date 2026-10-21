@@ -169,6 +169,39 @@ test("isolates the real renderer, refuses egress/forged messages, and supports f
   }
 });
 
+test("switches the design modes, searches the catalog, and inspects the selected node", async ({ page }) => {
+  await page.goto(host.url);
+
+  // The three ways of working are one tab strip, and each one is reachable by keyboard.
+  const modes = page.getByRole("tablist", { name: "Design mode" });
+  await expect(modes.getByRole("tab")).toHaveText(["Pages", "Journeys", "Model"]);
+
+  await modes.getByRole("tab", { name: "Model" }).click();
+  const catalog = page.getByRole("region", { name: "Component catalog" });
+  await expect(catalog).toBeVisible();
+  await expect(page.getByRole("region", { name: "Model entities" })).toBeVisible();
+
+  // The catalog is read from the runtime registry, so a search finds a real component.
+  await catalog.getByRole("searchbox").fill("TextField");
+  await expect(catalog.getByRole("listitem").filter({ hasText: "TextField" }).first()).toBeVisible();
+
+  await modes.getByRole("tab", { name: "Journeys" }).click();
+  await expect(page.getByRole("region", { name: "Journeys" })).toBeVisible();
+  await expect(page.getByText(/No journey is loaded yet/)).toBeVisible();
+
+  // Back to the pages, and the inspector reports the node selected in the preview.
+  await modes.getByRole("tab", { name: "Pages" }).click();
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+  const content = page.frameLocator("iframe");
+  await content.locator("[data-node-id='help-text']").first().click();
+  const inspector = page.getByRole("region", { name: "Node inspector" });
+  await expect(inspector).toContainText("help-text");
+  await expect(inspector).toContainText("Text");
+});
+
 test("selects a node in the isolated preview and marks it for the author", async ({ page }) => {
   await page.goto(host.url);
   await page
