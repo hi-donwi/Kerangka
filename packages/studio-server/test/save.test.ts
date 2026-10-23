@@ -160,4 +160,15 @@ describe("Studio save endpoint", () => {
     expect(wrongMethod.headers.get("allow")).toBe("POST");
     expect(await onDisk()).toBe(model);
   });
+  it("accepts only one concurrent save for the same source revision", async () => {
+    const left = await draft("left_note");
+    const right = await draft("right_note");
+    expect(left.base).toBe(right.base);
+    const responses = await Promise.all([
+      save({ expectedRevision: left.base, sources: left.sources }),
+      save({ expectedRevision: right.base, sources: right.sources }),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+  });
+
 });

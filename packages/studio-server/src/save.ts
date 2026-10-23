@@ -31,6 +31,7 @@ const inside = (root: string, path: string) => {
 };
 
 const utf8 = (text: string) => Buffer.from(text, "utf8").toString("utf8") === text;
+const saveQueues = new Map<string, Promise<void>>();
 
 /**
  * Replace one existing source with new text, atomically.
@@ -86,6 +87,23 @@ async function replaceFile(root: string, path: string, text: string): Promise<vo
  * compile is refused with its diagnostics instead of being left broken on disk.
  */
 export async function saveSources(project: StudioProject, request: SaveRequest): Promise<SaveResult> {
+  const previous = saveQueues.get(project.root) ?? Promise.resolve();
+  let release!: () => void;
+  const queued = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => queued);
+  saveQueues.set(project.root, tail);
+  await previous;
+  try {
+    return await saveSourcesUnlocked(project, request);
+  } finally {
+    release();
+    if (saveQueues.get(project.root) === tail) saveQueues.delete(project.root);
+  }
+}
+
+async function saveSourcesUnlocked(project: StudioProject, request: SaveRequest): Promise<SaveResult> {
   const current = await project.read();
   if (request.expectedRevision !== current.revision) {
     return {
