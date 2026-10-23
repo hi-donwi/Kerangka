@@ -19,7 +19,7 @@
     "@kerangka/compiler": "*",
     "@kerangka/engine-ts": "*",
     "@kerangka/ports": "*",
-    "hono": "^4.7.0"
+    "hono": "^4.13.13"
   },
   "license": "Apache-2.0"
 }
