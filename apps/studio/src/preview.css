@@ -16,11 +16,15 @@ body {
 #root {
   min-height: 1px;
 }
-button,
-input,
-select,
-textarea {
-  pointer-events: none;
+/* A node element receives the pointer so the console can learn which node a
+   person clicked. The document's own events are stripped before rendering and the
+   controls are disabled, so a click still changes nothing. */
+[data-node-id] {
+  pointer-events: auto;
+}
+[data-studio-selected="true"] {
+  outline: 2px solid #a33819;
+  outline-offset: 1px;
 }
 input:disabled,
 select:disabled,

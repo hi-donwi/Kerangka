@@ -6,6 +6,7 @@ import {
   type UIDLDocument,
   type UIDLNode,
 } from "uidl-runtime";
+import { editorThemes } from "./editor-catalog";
 import type { ScreenInfo } from "../../../packages/studio-server/src/contracts.js";
 
 const allowed = new Set([
@@ -70,6 +71,8 @@ export function preparePreview(screen: Pick<ScreenInfo, "kind" | "document">): U
   if (!parsed.success) throw new Error("The UIDL document does not match the runtime schema.");
   assertSupportedDocumentVersion(parsed.data.version);
   const document = structuredClone(parsed.data) as UIDLDocument;
+  if (document.theme && !editorThemes.some((theme) => theme.id === document.theme))
+    throw new Error("The document theme is unavailable in the host renderer; source is unchanged.");
   if (Object.keys(document.definitions ?? {}).length)
     throw new Error("Reusable definitions require a separately verified preview profile.");
   if (screen.kind === "authored") document.state = {};

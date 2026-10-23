@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { loadEditorCatalog } from "./editor-catalog.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
   PROJECT_BYTES,
@@ -7,6 +8,8 @@ import {
   StudioError,
   sourcePath,
   type DraftOperation,
+  type JourneyDraftOperation,
+  type UidlDraftOperation,
   type DraftRequest,
   type FieldDefinitionInput,
   type InspectionResult,
@@ -82,6 +85,194 @@ async function readScenarioBody(request: IncomingMessage): Promise<string> {
 }
 
 /** Parse and strictly bound an untrusted draft request into the engine's shape. */
+/**
+ * Read one journey operation from the request.
+ *
+ * The console proposes the change; the server checks the shape and the bounds, and the
+ * journey contract checks the meaning. Nothing is trusted because it came from the
+ * browser.
+ */
+function parseJourneyOperation(entry: Record<string, unknown>): JourneyDraftOperation {
+  const journey = entry.journey;
+  if (typeof journey !== "string" || journey.length < 1 || journey.length > 240)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (entry.op === "journeyAddStep" || entry.op === "journeyAddLink") {
+    const value = entry.op === "journeyAddStep" ? entry.step : entry.link;
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const record = value as Record<string, unknown>;
+    const id = record.id;
+    if (typeof id !== "string" || id.length < 1 || id.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (entry.op === "journeyAddStep") {
+      const kind = record.kind;
+      if (kind !== "page" && kind !== "operation") throw new StudioError("STUDIO_DRAFT_REQUEST");
+      const page = record.page;
+      const operation = record.operation;
+      if (kind === "page" && (typeof page !== "string" || page.length < 1 || page.length > 64))
+        throw new StudioError("STUDIO_DRAFT_REQUEST");
+      if (kind === "operation" && (typeof operation !== "string" || operation.length < 1 || operation.length > 128))
+        throw new StudioError("STUDIO_DRAFT_REQUEST");
+      return {
+        op: "journeyAddStep",
+        journey,
+        step: {
+          id,
+          kind,
+          ...(typeof page === "string" ? { page } : {}),
+          ...(typeof operation === "string" ? { operation } : {}),
+          ...(typeof record.label === "string" && record.label.length <= 128 ? { label: record.label } : {}),
+        },
+      };
+    }
+    const from = record.from;
+    const to = record.to;
+    const kind = record.kind;
+    if (typeof from !== "string" || typeof to !== "string" || typeof kind !== "string")
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (from.length > 64 || to.length > 64 || kind.length > 32) throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const pointer = record.pointer;
+    if (pointer !== undefined && (typeof pointer !== "string" || pointer.length > 512))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return {
+      op: "journeyAddLink",
+      journey,
+      link: {
+        id,
+        from,
+        to,
+        kind,
+        ...(typeof pointer === "string" ? { pointer } : {}),
+        ...(typeof record.label === "string" && record.label.length <= 128 ? { label: record.label } : {}),
+      },
+    };
+  }
+  const target = entry.op === "journeyRemoveStep" ? entry.step : entry.link;
+  if (typeof target !== "string" || target.length < 1 || target.length > 64)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  return entry.op === "journeyRemoveStep"
+    ? { op: "journeyRemoveStep", journey, step: target }
+    : { op: "journeyRemoveLink", journey, link: target };
+}
+
+/** Read one UIDL operation from the request. */
+function parseUidlOperation(entry: Record<string, unknown>): UidlDraftOperation {
+  const source = entry.source;
+  if (typeof source !== "string" || source.length < 1 || source.length > 240)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  if (entry.op === "uidlSetTheme") {
+    if (typeof entry.theme !== "string" || entry.theme.length < 1 || entry.theme.length > 128)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: entry.op, source, theme: entry.theme };
+  }
+  if (entry.op === "uidlSetNodeThemeRef") {
+    if (typeof entry.node !== "string" || !entry.node || entry.node.length > 256 ||
+        typeof entry.themeRef !== "string" || entry.themeRef.length > 128)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: entry.op, source, node: entry.node, themeRef: entry.themeRef };
+  }
+  if (entry.op === "uidlSetNodeProp") {
+    const prop = entry.prop;
+    if (typeof prop !== "object" || prop === null || Array.isArray(prop))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const record = prop as Record<string, unknown>;
+    if (typeof record.key !== "string" || record.key.length < 1 || record.key.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const node = entry.node;
+    if (typeof node !== "string" || node.length < 1 || node.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return {
+      op: "uidlSetNodeProp",
+      source,
+      node,
+      prop: { key: record.key, value: record.value },
+    };
+  }
+  if (entry.op === "uidlSetNodeStyle" || entry.op === "uidlSetNodeResponsive") {
+    const node = entry.node;
+    const field = entry.field;
+    if (typeof node !== "string" || node.length < 1 || node.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof field !== "string" || field.length < 1 || field.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (entry.op === "uidlSetNodeStyle") {
+      return { op: "uidlSetNodeStyle", source, node, field, value: entry.value };
+    }
+    const breakpoint = entry.breakpoint;
+    if (typeof breakpoint !== "string" || breakpoint.length < 1 || breakpoint.length > 16)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlSetNodeResponsive", source, node, field, breakpoint, value: entry.value };
+  }
+  if (entry.op === "uidlCopyNode") {
+    const node = entry.node;
+    const parent = entry.parent;
+    const index = entry.index;
+    if (typeof node !== "string" || node.length < 1 || node.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof parent !== "string" || parent.length < 1 || parent.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 10000)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlCopyNode", source, node, parent, index };
+  }
+  if (entry.op === "uidlMoveNode") {
+    const node = entry.node;
+    const parent = entry.parent;
+    const index = entry.index;
+    if (typeof node !== "string" || node.length < 1 || node.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof parent !== "string" || parent.length < 1 || parent.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 10000)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (entry.slot !== undefined && (typeof entry.slot !== "string" || !entry.slot || entry.slot.length > 128))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlMoveNode", source, node, parent, index, ...(typeof entry.slot === "string" ? { slot: entry.slot } : {}) };
+  }
+  if (entry.op === "uidlAddDefinition") {
+    const name = entry.name;
+    const node = entry.node;
+    if (typeof name !== "string" || name.length < 1 || name.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof node !== "object" || node === null || Array.isArray(node))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const record = node as Record<string, unknown>;
+    if (typeof record.id !== "string" || record.id.length < 1 || record.id.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof record.type !== "string" || record.type.length < 1 || record.type.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlAddDefinition", source, name, node: { id: record.id, type: record.type } };
+  }
+  if (entry.op === "uidlUseDefinition") {
+    const node = entry.node;
+    const definition = entry.definition;
+    if (typeof node !== "string" || node.length < 1 || node.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof definition !== "string" || definition.length < 1 || definition.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlUseDefinition", source, node, definition };
+  }
+  if (entry.op === "uidlAddNode") {
+    const node = entry.node;
+    if (typeof node !== "object" || node === null || Array.isArray(node))
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const record = node as Record<string, unknown>;
+    if (typeof record.id !== "string" || record.id.length < 1 || record.id.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    if (typeof record.type !== "string" || record.type.length < 1 || record.type.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    const parent = entry.parent;
+    if (typeof parent !== "string" || parent.length < 1 || parent.length > 64)
+      throw new StudioError("STUDIO_DRAFT_REQUEST");
+    return { op: "uidlAddNode", source, parent, node: { id: record.id, type: record.type } };
+  }
+  if (entry.op !== "uidlRemoveNode") throw new StudioError("STUDIO_DRAFT_REQUEST");
+  const node = entry.node;
+  if (typeof node !== "string" || node.length < 1 || node.length > 64)
+    throw new StudioError("STUDIO_DRAFT_REQUEST");
+  return { op: "uidlRemoveNode", source, node };
+}
+
 function parseDraftRequest(raw: string): DraftRequest {
   let value: unknown;
   try {
@@ -108,6 +299,14 @@ function parseDraftRequest(raw: string): DraftRequest {
     }
     if (entry.op === "setTransition") {
       operations.push(parseTransition(entry));
+      continue;
+    }
+    if (typeof entry.op === "string" && entry.op.startsWith("uidl")) {
+      operations.push(parseUidlOperation(entry));
+      continue;
+    }
+    if (typeof entry.op === "string" && entry.op.startsWith("journey")) {
+      operations.push(parseJourneyOperation(entry));
       continue;
     }
     if (entry.op !== "addEntityField" && entry.op !== "setEntityField") throw new StudioError("STUDIO_DRAFT_REQUEST");
@@ -290,6 +489,7 @@ function dedupeDiagnostics(diagnostics: StudioResponse["diagnostics"]): StudioRe
 }
 
 export async function startStudio(options: StudioOptions): Promise<StudioHost> {
+  const catalog = loadEditorCatalog();
   const project = await openProject(options.target);
   const token = options.token ?? randomBytes(32).toString("base64url");
   if (token.length < 32 || token.length > 128) throw new StudioError("STUDIO_FORBIDDEN");
@@ -332,7 +532,7 @@ export async function startStudio(options: StudioOptions): Promise<StudioHost> {
       excluded: snapshot.excluded,
     };
     const draft = draftRequest.operations.length
-      ? applyDraftOperations(base, { expectedRevision: snapshot.revision, operations: draftRequest.operations }, { validate: () => [] })
+      ? applyDraftOperations(base, { expectedRevision: snapshot.revision, operations: draftRequest.operations }, { validate: () => [], catalog })
       : {
           revision: sourceRevision(overlaid),
           sources: overlaid,

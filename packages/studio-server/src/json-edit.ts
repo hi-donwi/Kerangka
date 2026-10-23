@@ -214,3 +214,129 @@ export function insertEntry(text: string, node: JsonNode, key: string, valueText
 export function setValue(text: string, node: JsonNode, valueText: string): string {
   return `${text.slice(0, node.start)}${valueText}${text.slice(node.end)}`;
 }
+
+/** Append an item to a JSON array, keeping the author's formatting. */
+export function insertArrayItem(text: string, array: JsonNode, valueText: string): string {
+  if (array.kind !== "array") throw new JsonEditError("Insert target is not a JSON array");
+  const open = array.start;
+  const close = array.end - 1;
+  if (array.items.length === 0) {
+    return `${text.slice(0, open + 1)}${valueText}${text.slice(close)}`;
+  }
+  const last = array.items[array.items.length - 1]!;
+  const gap = text.slice(last.end, close);
+  if (gap.includes("\n")) {
+    const newline = gap.includes("\r\n") ? "\r\n" : "\n";
+    const closeIndent = gap.slice(gap.lastIndexOf(newline) + newline.length);
+    const lead = text.slice(open + 1, last.start);
+    const itemIndent = lead.includes("\n") ? lead.slice(lead.lastIndexOf("\n") + 1) : `${closeIndent}  `;
+    return `${text.slice(0, last.end)},${newline}${itemIndent}${valueText}${text.slice(last.end)}`;
+  }
+  return `${text.slice(0, last.end)}, ${valueText}${text.slice(last.end)}`;
+}
+
+/**
+ * Find a node in a document tree by its id.
+ *
+ * The tree is a document, not a flat list: a node may sit in its parent's `children` or
+ * in one of its `slots`. The caller needs the node itself and the array a new child
+ * would go into, so both are returned.
+ */
+export function findTreeNode(
+  text: string,
+  root: JsonNode,
+  id: string,
+): { node: JsonNode; children?: JsonNode; index?: number } | undefined {
+  if (root.kind !== "object") return undefined;
+  const childrenEntry = root.entries.find((entry) => entry.key === "children");
+  const children =
+    childrenEntry && childrenEntry.value.kind === "array" ? childrenEntry.value : undefined;
+  if (nodeId(text, root) === id) return { node: root, children };
+  if (children) {
+    for (const [index, item] of children.items.entries()) {
+      if (nodeId(text, item) === id) return { node: item, children, index };
+      const found = findTreeNode(text, item, id);
+      if (found) return found;
+    }
+  }
+  const slots = root.entries.find((entry) => entry.key === "slots");
+  if (slots && slots.value.kind === "object") {
+    for (const slot of slots.value.entries) {
+      if (slot.value.kind !== "array") continue;
+      for (const [index, item] of slot.value.items.entries()) {
+        if (nodeId(text, item) === id) return { node: item, children: slot.value, index };
+        const found = findTreeNode(text, item, id);
+        if (found) return found;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** The id a node carries, read from the source text. */
+function nodeId(text: string, node: JsonNode): string | undefined {
+  if (node.kind !== "object") return undefined;
+  const entry = node.entries.find((item) => item.key === "id");
+  if (!entry || entry.value.kind !== "string") return undefined;
+  const raw = text.slice(entry.value.start, entry.value.end);
+  try {
+    const value = JSON.parse(raw);
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Insert an item at a position in a JSON array, keeping the author's formatting.
+ *
+ * A position matters when a page is rearranged: a node that moves to the front has to
+ * end up in front, not at the end. The new item takes the indentation of the item it
+ * is placed before.
+ */
+export function insertArrayItemAt(
+  text: string,
+  array: JsonNode,
+  index: number,
+  valueText: string,
+): string {
+  if (array.kind !== "array") throw new JsonEditError("Insert target is not a JSON array");
+  const open = array.start;
+  const close = array.end - 1;
+  if (array.items.length === 0) {
+    return `${text.slice(0, open + 1)}${valueText}${text.slice(close)}`;
+  }
+  const at = Math.max(0, Math.min(index, array.items.length));
+  if (at >= array.items.length) return insertArrayItem(text, array, valueText);
+  const item = array.items[at]!;
+  // The new item takes the indentation of the item it is placed before.
+  const before = text.slice(open + 1, item.start);
+  const indent = before.includes("\n") ? before.slice(before.lastIndexOf("\n") + 1) : "";
+  return `${text.slice(0, item.start)}${valueText},${indent}${text.slice(item.start)}`;
+}
+
+/** Remove one item from a JSON array, keeping the author's formatting. */
+export function removeArrayItem(text: string, array: JsonNode, index: number): string {
+  if (array.kind !== "array") throw new JsonEditError("Remove target is not a JSON array");
+  const item = array.items[index];
+  if (!item) throw new JsonEditError("No such array item");
+  const open = array.start;
+  const close = array.end - 1;
+  if (array.items.length === 1) {
+    return `${text.slice(0, open + 1)}${text.slice(close)}`;
+  }
+  const after = text.slice(item.end, close);
+  const comma = after.indexOf(",");
+  if (comma >= 0) {
+    // The item is followed by a comma. Take the item, the comma, and the space that
+    // belonged to the item's line, so the next item keeps its place.
+    let end = item.end + comma + 1;
+    while (end < text.length && /\s/.test(text[end]!)) end++;
+    return `${text.slice(0, item.start)}${text.slice(end)}`;
+  }
+  // The item is the last one. Take the comma before it with it.
+  const before = text.slice(open + 1, item.start);
+  const lastComma = before.lastIndexOf(",");
+  if (lastComma < 0) return `${text.slice(0, open + 1)}${text.slice(close)}`;
+  return `${text.slice(0, open + 1 + lastComma)}${text.slice(item.end)}`;
+}

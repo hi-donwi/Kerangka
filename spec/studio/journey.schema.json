@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kerangka.dev/schema/studio/v0.1/journey.schema.json",
+  "title": "Kerangka Studio reference journey 0.1",
+  "description": "A reference index over existing UIDL pages and Kerangka operations. A journey names where a connection is realized; it never defines a behavior, an action, a role, or an effect of its own. See docs/studio/journey.md for the semantic gates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "version", "mode", "id", "name", "entry", "steps", "links"],
+  "properties": {
+    "$schema": { "const": "https://kerangka.dev/schema/studio/v0.1/journey.schema.json" },
+    "kind": { "const": "kerangka.studio.journey" },
+    "version": { "const": "0.1" },
+    "mode": { "const": "reference" },
+    "id": { "$ref": "#/$defs/id" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "entry": { "$ref": "#/$defs/id" },
+    "steps": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/step" } },
+    "links": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/link" } }
+  },
+  "$defs": {
+    "id": {
+      "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9-]*$",
+      "not": { "enum": ["constructor", "prototype"] }
+    },
+    "page": {
+      "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][a-z0-9-]*$",
+      "not": { "enum": ["constructor", "prototype"] }
+    },
+    "operation": {
+      "type": "string", "minLength": 3, "maxLength": 128,
+      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[A-Za-z][A-Za-z0-9]*$"
+    },
+    "pointer": {
+      "type": "string", "minLength": 6, "maxLength": 512,
+      "description": "A restricted JSON pointer into the UIDL document of the source page. It addresses the live node tree, never a reusable definition, and it carries no prototype or traversal escape.",
+      "pattern": "^/root(?:/(?:[A-Za-z0-9_.\\-]|~[01])+)*$",
+      "not": { "pattern": "(?:^|/)(?:__proto__|constructor|prototype)(?:/|$)" }
+    },
+    "step": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "kind", "page"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "kind": { "const": "page" },
+            "page": { "$ref": "#/$defs/page" },
+            "label": { "type": "string", "maxLength": 128 }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "kind", "operation"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" },
+            "kind": { "const": "operation" },
+            "operation": { "$ref": "#/$defs/operation" },
+            "label": { "type": "string", "maxLength": 128 }
+          }
+        }
+      ]
+    },
+    "link": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "from", "to", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "from": { "$ref": "#/$defs/id" },
+        "to": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["action", "navigation", "annotation"] },
+        "pointer": { "$ref": "#/$defs/pointer" },
+        "label": { "type": "string", "maxLength": 128 }
+      }
+    }
+  }
+}

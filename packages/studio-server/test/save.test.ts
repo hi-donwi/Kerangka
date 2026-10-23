@@ -95,13 +95,14 @@ describe("Studio save endpoint", () => {
     expect(await onDisk()).toBe(model);
   });
 
-  it("refuses to create a source, to edit a YAML source, and to accept an unsafe path", async () => {
+  it("refuses a new source that is not a document, to edit a YAML source, and to accept an unsafe path", async () => {
     await writeFile(join(root, "notes.kerangka.yaml"), "kerangka: '0.1'\n");
     const { base, sources } = await draft("note");
-    sources["new.kerangka.json"] = { format: "json", text: '{"kerangka":"0.1"}' };
+    // A new file is allowed now, but it has to be a document the runtime can render.
+    sources["new.uidl.json"] = { format: "json", text: '{"kerangka":"0.1"}' };
     const created = await save({ expectedRevision: base, sources });
     expect(created.status).toBe(422);
-    expect((await created.json()).code).toBe("STUDIO_SAVE_UNSUPPORTED");
+    expect((await created.json()).code).toBe("STUDIO_SAVE_NOT_DOCUMENT");
 
     const baseAfterDraft = await revision();
     const { sources: yamlSources } = await draft("note");
@@ -116,6 +117,32 @@ describe("Studio save endpoint", () => {
     expect((await unsafe.json()).code).toBe("STUDIO_SAVE_REQUEST");
     expect(await onDisk()).toBe(model);
     expect(await strayFiles()).toEqual([]);
+  });
+
+  it("refuses a valid UIDL document when the new source path has the wrong extension", async () => {
+    const { base, sources } = await draft("note");
+    sources["new.json"] = {
+      format: "json",
+      text: JSON.stringify({ version: "1.0", id: "page", name: "Page", root: { id: "root", type: "Container" } }),
+    };
+    const response = await save({ expectedRevision: base, sources });
+    expect(response.status).toBe(422);
+    expect((await response.json()).code).toBe("STUDIO_SAVE_PAGE_PATH");
+    expect(await readFile(join(root, "new.json")).catch(() => null)).toBeNull();
+  });
+
+  it("refuses malformed content when saving an existing UIDL source", async () => {
+    const page = JSON.stringify({ version: "1.0", id: "page", name: "Page", root: { id: "root", type: "Container" } });
+    await writeFile(join(root, "page.uidl.json"), page);
+    const { base, sources } = await draft("note");
+    sources["page.uidl.json"] = {
+      format: "json",
+      text: JSON.stringify({ version: "1.0", id: "page", name: "Page", root: { id: "root" } }),
+    };
+    const response = await save({ expectedRevision: base, sources });
+    expect(response.status).toBe(422);
+    expect((await response.json()).code).toBe("STUDIO_SAVE_NOT_DOCUMENT");
+    expect(await readFile(join(root, "page.uidl.json"), "utf8")).toBe(page);
   });
 
   it.each([

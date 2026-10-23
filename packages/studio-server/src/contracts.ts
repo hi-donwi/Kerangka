@@ -44,14 +44,34 @@ export interface EntityInfo {
     to?: string;
     guarded: boolean;
   }>;
+  /**
+   * The states the model declares, and which of them it calls initial and terminal.
+   *
+   * A state machine may lead back to an earlier state, so the initial state cannot be
+   * guessed from the transitions: the model says which one it is.
+   */
+  workflow?: { states: string[]; initial?: string; terminal: string[] };
   permissions?: Record<string, unknown>;
 }
+export interface JourneyInfo {
+  id: string;
+  name: string;
+  /** The source file the journey came from. */
+  source: string;
+  entry: string;
+  steps: Array<{ id: string; kind: "page" | "operation"; page?: string; operation?: string; label?: string }>;
+  links: Array<{ id: string; from: string; to: string; kind: string; pointer?: string; label?: string }>;
+  /** What is wrong with the journey, if anything. The console shows it as it is. */
+  diagnostics: Array<{ code: string; message: string; path?: string }>;
+}
+
 export interface Inspection {
   app: string;
   title: string;
   roles: string[];
   entities: EntityInfo[];
   screens: ScreenInfo[];
+  journeys: JourneyInfo[];
   synthetic: Record<string, Array<Record<string, unknown>>>;
   outputs: { openapi: string; postgres: string; sqlite: string };
   sandbox: { filesystemWrites: boolean; childProcesses: boolean };
@@ -86,11 +106,59 @@ export type FieldDefinitionInput = string | Record<string, unknown>;
  * Authoring operations Studio can apply to raw JSON source. The union grows as later
  * slices add constructs; an operation outside it is rejected with a diagnostic.
  */
+export type UidlDraftOperation =
+  | {
+      op: "uidlAddNode";
+      /** The UIDL file the node is added to. */
+      source: string;
+      /** The node the new child goes under. */
+      parent: string;
+      node: { id: string; type: string };
+    }
+  | { op: "uidlRemoveNode"; source: string; node: string }
+  | {
+      op: "uidlSetNodeProp";
+      source: string;
+      node: string;
+      prop: { key: string; value: unknown };
+    }
+  | { op: "uidlMoveNode"; source: string; node: string; parent: string; index: number; slot?: string }
+  | { op: "uidlSetTheme"; source: string; theme: string }
+  | { op: "uidlSetNodeThemeRef"; source: string; node: string; themeRef: string }
+  | { op: "uidlAddDefinition"; source: string; name: string; node: { id: string; type: string } }
+  | { op: "uidlUseDefinition"; source: string; node: string; definition: string }
+  | { op: "uidlSetNodeStyle"; source: string; node: string; field: string; value: unknown }
+  | {
+      op: "uidlSetNodeResponsive";
+      source: string;
+      node: string;
+      field: string;
+      breakpoint: string;
+      value: unknown;
+    }
+  | { op: "uidlCopyNode"; source: string; node: string; parent: string; index: number };
+
+export type JourneyDraftOperation =
+  | {
+      op: "journeyAddStep";
+      journey: string;
+      step: { id: string; kind: "page" | "operation"; page?: string; operation?: string; label?: string };
+    }
+  | { op: "journeyRemoveStep"; journey: string; step: string }
+  | {
+      op: "journeyAddLink";
+      journey: string;
+      link: { id: string; from: string; to: string; kind: string; pointer?: string; label?: string };
+    }
+  | { op: "journeyRemoveLink"; journey: string; link: string };
+
 export type DraftOperation =
   | { op: "addEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
   | { op: "setEntityField"; entity: string; field: string; definition: FieldDefinitionInput }
   | { op: "setFormSections"; view: string; sections: string[][]; sectionTitles: string[] }
-  | { op: "setTransition"; entity: string; transition: string; from: string[]; to: string; roles: string[]; when?: string };
+  | { op: "setTransition"; entity: string; transition: string; from: string[]; to: string; roles: string[]; when?: string }
+  | JourneyDraftOperation
+  | UidlDraftOperation;
 
 export interface DraftRequest {
   expectedRevision: string;
@@ -143,7 +211,11 @@ const messages = {
   STUDIO_SAVE_UNAVAILABLE: "Saving is not enabled for this Studio session.",
   STUDIO_SAVE_REQUEST: "The Studio save request is not a supported write.",
   STUDIO_SAVE_INVALID: "The edited model does not compile; nothing was written.",
-  STUDIO_SAVE_UNSUPPORTED: "A save may only rewrite a JSON source the project already has.",
+  STUDIO_SAVE_UNSUPPORTED: "This source format or path is not supported for saving.",
+  STUDIO_SAVE_PAGE_PATH: "A new page source must use the .uidl.json extension.",
+  STUDIO_SAVE_EXISTS: "The file is already there. Creating over it would replace work the console never saw.",
+  STUDIO_SAVE_NOT_DOCUMENT: "A page source must be a UIDL document the runtime can render.",
+  STUDIO_SAVE_NO_DIRECTORY: "The directory for a new page has to exist already.",
   STUDIO_WRITE_UNSUPPORTED: "Only existing JSON sources can be edited in this version. YAML stays source-only.",
 } as const;
 

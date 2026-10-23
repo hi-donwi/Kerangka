@@ -149,8 +149,36 @@ describe("Studio draft endpoint", () => {
     expect(await onDisk()).toBe(model);
   });
 
-  it("refuses a stale revision and leaves the source untouched", async () => {
-    const response = await post({
+  it("applies a typed page property and refuses a value the runtime does not declare", async () => {
+    await writeFile(join(root, "help.uidl.json"), JSON.stringify({
+      version: "1.0",
+      id: "help",
+      name: "Help",
+      root: { id: "help-root", type: "Container", children: [{ id: "help-text", type: "Text", props: { value: "Hello" } }] },
+    }, null, 2));
+    await host.close();
+    host = await startStudio({ target: root, port: 0, token });
+    const before = await revision();
+
+    const applied = await post({
+      expectedRevision: before,
+      operations: [{ op: "uidlSetNodeProp", source: "help.uidl.json", node: "help-text", prop: { key: "value", value: "Changed" } }],
+    });
+    expect(applied.status).toBe(200);
+    const body = await applied.json();
+    expect(body.applied).toEqual(["uidlSetNodeProp help.uidl.json"]);
+    expect(body.bundle.sources["help.uidl.json"].text).toContain('"value": "Changed"');
+
+    const refused = await post({
+      expectedRevision: before,
+      operations: [{ op: "uidlSetNodeProp", source: "help.uidl.json", node: "help-text", prop: { key: "heading", value: 7 } }],
+    });
+    const rejected = await refused.json();
+    expect(rejected.applied).toEqual([]);
+    expect(rejected.diagnostics.some((item: { code: string }) => item.code === "STUDIO_UIDL_PROPERTY")).toBe(true);
+  });
+
+  it("refuses a stale revision and leaves the source untouched", async () => {    const response = await post({
       expectedRevision: `sha256:${"0".repeat(64)}`,
       operations: [{ op: "addEntityField", entity: "Request", field: "note", definition: "string?" }],
     });

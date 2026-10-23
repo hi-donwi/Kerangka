@@ -6,3 +6,6 @@ export * from "./revision.js";
 export * from "./json-edit.js";
 export * from "./draft.js";
 export * from "./save.js";
+export * from "./journey.js";
+export * from "./scenario.js";
+export * from "./uidl-document.js";

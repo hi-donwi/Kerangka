@@ -2,20 +2,26 @@ import { useEffect, useRef, useState } from "react";
 import type { ScreenInfo } from "../../../packages/studio-server/src/contracts.js";
 import { studioBase } from "./studio-api";
 import { previewPayload } from "./preview-policy";
+import { previewHighlightMessage, readPreviewSelection } from "./preview-selection";
 
 export function PreviewFrame({
   screen,
   revision,
   synthetic,
+  onSelectNode,
 }: {
   screen: ScreenInfo;
   revision: string;
   synthetic: Record<string, Array<Record<string, unknown>>>;
+  /** Called when a person selects a node in the preview. */
+  onSelectNode?: (nodeId: string) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [channel] = useState(() => crypto.randomUUID());
   const [height, setHeight] = useState(600);
   const [error, setError] = useState<string | null>(null);
+  /** The node selected in the preview. The console marks it so the author sees it. */
+  const [selected, setSelected] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   let admission: string | null = null;
   let payload: ReturnType<typeof previewPayload> | null = null;
@@ -39,6 +45,14 @@ export function PreviewFrame({
       const data = event.data as Record<string, unknown>;
       if (data.channel !== channel) return;
       if (data.type === "studio.preview.ready") send();
+      if (data.type === "studio.preview.select") {
+        const nodeId = readPreviewSelection(data, channel, revision);
+        if (nodeId) {
+          setSelected(nodeId);
+          onSelectNode?.(nodeId);
+        }
+        return;
+      }
       if (
         data.type === "studio.preview.height" &&
         typeof data.height === "number" &&
@@ -51,7 +65,12 @@ export function PreviewFrame({
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [channel, revision, screen, synthetic]);
+  }, [channel, revision, screen, synthetic, onSelectNode]);
+
+  useEffect(() => {
+    if (!selected) return;
+    frame.current?.contentWindow?.postMessage(previewHighlightMessage(channel, revision, selected), "*");
+  }, [channel, revision, selected]);
   if (admission)
     return (
       <div className="empty-state" role="alert">
@@ -65,6 +84,9 @@ export function PreviewFrame({
       <div className="preview-heading">
         <div>
           <strong>Synthetic UIDL preview</strong>
+          <p data-testid="preview-selection">
+            {selected ? `Selected node: ${selected}` : "Select a node in the preview to inspect it."}
+          </p>
           <p>
             Static, read-only. Handlers and inline authored data are disabled; no authoring access is sent to this
             frame.

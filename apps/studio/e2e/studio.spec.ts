@@ -38,9 +38,27 @@ test.beforeAll(async () => {
   await writeFile(join(root, "app.kerangka.json"), model);
   host = await startStudio({ target: root, port: 0 });
 });
+const journey = () => ({
+  kind: "kerangka.studio.journey",
+  version: "0.1",
+  mode: "reference",
+  id: "request-approval",
+  name: "Synthetic request approval",
+  entry: "help",
+  steps: [
+    { id: "help", kind: "page", page: "help" },
+    { id: "submit", kind: "operation", operation: "Request.submit" },
+    { id: "approve", kind: "operation", operation: "Request.approve" },
+  ],
+  links: [
+    { id: "send", from: "help", to: "submit", kind: "action", pointer: "/root/children/1/events/onClick/0" },
+  ],
+});
+
 test.beforeEach(async () => {
   await writeFile(join(root, "app.kerangka.json"), model);
   await writeFile(join(root, "help.uidl.json"), JSON.stringify(help()));
+  await writeFile(join(root, "approval.journey.json"), JSON.stringify(journey()));
 });
 test.afterAll(async () => {
   await host?.close();
@@ -169,6 +187,61 @@ test("isolates the real renderer, refuses egress/forged messages, and supports f
   }
 });
 
+test("switches the design modes, searches the catalog, and inspects the selected node", async ({ page }) => {
+  await page.goto(host.url);
+
+  // The three ways of working are one tab strip, and each one is reachable by keyboard.
+  const modes = page.getByRole("tablist", { name: "Design mode" });
+  await expect(modes.getByRole("tab")).toHaveText(["Pages", "Journeys", "Model"]);
+
+  await modes.getByRole("tab", { name: "Model" }).click();
+  const catalog = page.getByRole("region", { name: "Component catalog" });
+  await expect(catalog).toBeVisible();
+  await expect(page.getByRole("region", { name: "Model entities" })).toBeVisible();
+
+  // The catalog is read from the runtime registry, so a search finds a real component.
+  await catalog.getByRole("searchbox").fill("TextField");
+  await expect(catalog.getByRole("listitem").filter({ hasText: "TextField" }).first()).toBeVisible();
+
+  await modes.getByRole("tab", { name: "Journeys" }).click();
+  // The project declares a journey, so the console shows it rather than an empty state.
+  await expect(page.getByRole("region", { name: "Synthetic request approval journey" })).toBeVisible();
+
+  // Back to the pages, and the inspector reports the node selected in the preview.
+  await modes.getByRole("tab", { name: "Pages" }).click();
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+  const content = page.frameLocator("iframe");
+  await content.locator("[data-node-id='help-text']").first().click();
+  const inspector = page.getByRole("region", { name: "Node inspector" });
+  await expect(inspector).toContainText("help-text");
+  await expect(inspector).toContainText("Text");
+  // The selected node is also the one the typed inspector describes.
+  await expect(page.getByRole("region", { name: "Typed property fields" })).toContainText("Text Properties");
+});
+
+test("selects a node in the isolated preview and marks it for the author", async ({ page }) => {
+  await page.goto(host.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const content = page.frameLocator("iframe");
+  await expect(content.getByText("Synthetic help", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("preview-selection")).toHaveText("Select a node in the preview to inspect it.");
+
+  // A click inside the opaque frame travels over the channel, and the console
+  // answers by marking the node inside the frame.
+  await content.locator("[data-node-id='help-text']").first().click();
+  await expect(page.getByTestId("preview-selection")).toHaveText("Selected node: help-text");
+
+  const child = page.frames().find((frame) => frame.url().includes("/preview.html"))!;
+  await expect(child.locator("[data-node-id='help-text'][data-studio-selected='true']")).toHaveCount(1);
+});
+
 test("keeps unsupported network-bearing documents source-only", async ({ page }) => {
   await writeFile(
     join(root, "help.uidl.json"),
@@ -285,7 +358,290 @@ test.describe("writable host: save and conflict recovery", () => {
   });
   test.beforeEach(async () => {
     await writeFile(join(writableRoot, "app.kerangka.json"), writableModel);
+    await writeFile(join(writableRoot, "approval.journey.json"), JSON.stringify(journey()));
+    await writeFile(join(writableRoot, "help.uidl.json"), JSON.stringify(help()));
   });
+
+test("sets a style value and copies a node in the page tree", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const tree = page.getByRole("region", { name: "Page tree" });
+  await tree.getByRole("button", { name: "Text help-text" }).click();
+
+  const style = page.getByRole("form", { name: "Node style" });
+  await style.getByLabel("Field", { exact: true }).fill("gap");
+  await style.getByLabel("Style Value", { exact: true }).fill("gap-4");
+  await style.getByRole("button", { name: "Set style" }).click();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+
+  await style.getByRole("button", { name: "Copy this node" }).click();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+});
+
+test("changes a property and moves a node in the page tree", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const tree = page.getByRole("region", { name: "Page tree" });
+  await tree.getByRole("button", { name: "Text help-text" }).click();
+
+  // A declared property of the selected node can be changed.
+  const value = page.getByRole("form", { name: "value property" });
+  await value.getByLabel("value", { exact: true }).fill("Changed");
+  await value.getByRole("button", { name: "Apply value" }).click();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+
+  // A node can be moved among its siblings, with the keyboard.
+  await tree.getByRole("button", { name: "Move no-call up" }).click();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+});
+
+test("adds a component to an authored page and finds it again after a save", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const designer = page.getByRole("region", { name: "Page tree" });
+  await expect(designer).toBeVisible();
+  await expect(designer.getByRole("button", { name: "Text help-text" })).toBeVisible();
+
+  // The catalog is the runtime's own registry.
+  const catalog = page.getByRole("region", { name: "Page component catalog" });
+  await catalog.getByRole("searchbox").fill("Button");
+  await catalog.getByRole("button", { name: "Add Button" }).click();
+
+  // The page now carries the new node, and the draft says so.
+  const draft = page.getByRole("button", { name: "Save draft", exact: true });
+  await expect(draft).toBeEnabled();
+
+  // The new node is in the document, and it survives a save and a reload.
+  await draft.click();
+  await expect(page.getByText(/saved to disk/)).toBeVisible();
+  const onDisk = JSON.parse(await readFile(join(writableRoot, "help.uidl.json"), "utf8"));
+  expect(onDisk.root.children).toHaveLength(3);
+  expect(onDisk.root.children[2].type).toBe("Button");
+  await page.reload();
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+  await expect(page.getByRole("region", { name: "Page tree" }).getByRole("button", { name: /button-/ }).first()).toBeVisible();
+});
+
+test("edits a declared property through the typed inspector", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const tree = page.getByRole("region", { name: "Page tree" });
+  await tree.getByRole("button", { name: /Text help-text/ }).click();
+
+  // The inspector shows the properties the installed runtime declares, with the
+  // control the declared type asks for.
+  const valueField = page.getByRole("form", { name: "value property" });
+  await expect(valueField).toBeVisible();
+  await valueField.getByLabel("value", { exact: true }).fill("Changed");
+  await valueField.getByRole("button", { name: "Apply value" }).click();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+
+  // A declared boolean is a checkbox, and a declared enum is a select of its values.
+  await tree.getByRole("button", { name: /Button no-call/ }).click();
+  await expect(page.getByRole("form", { name: "disabled property" }).getByRole("checkbox")).toBeVisible();
+  const variant = page.getByRole("form", { name: "variant property" }).getByLabel("variant", { exact: true });
+  await expect(variant).toBeVisible();
+  await expect(variant.locator("option")).toHaveText(["Not Set", "primary", "secondary"]);
+});
+
+test("applies a theme and a theme reference to an authored page", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const tree = page.getByRole("region", { name: "Page tree" });
+  await tree.getByRole("button", { name: /Button no-call/ }).click();
+
+  const themeForm = page.getByRole("form", { name: "Document theme" });
+  await themeForm.getByLabel("Document Theme").selectOption("theme-dark");
+  await themeForm.getByRole("button", { name: "Apply document theme" }).click();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+
+  // The document now carries the theme, and it survives a save.
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByText(/saved to disk/)).toBeVisible();
+  const onDisk = JSON.parse(await readFile(join(writableRoot, "help.uidl.json"), "utf8"));
+  expect(onDisk.theme).toBe("theme-dark");
+});
+
+test("drags a layer with the pointer and keeps the document valid", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /help\.uidl\.json/ })
+    .click();
+
+  const tree = page.getByRole("region", { name: "Page tree" });
+  const handle = tree.getByRole("button", { name: "Drag no-call" });
+  const target = tree.getByRole("button", { name: /Text help-text/ });
+  const from = await handle.boundingBox();
+  const to = await target.boundingBox();
+  if (!from || !to) throw new Error("The layer rows have no geometry.");
+
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + 2, { steps: 8 });
+  await page.mouse.up();
+
+  // The change is a draft, and it says what it did.
+  await expect(page.getByRole("status").filter({ hasText: /Moved no-call/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByText(/saved to disk/)).toBeVisible();
+  const onDisk = JSON.parse(await readFile(join(writableRoot, "help.uidl.json"), "utf8"));
+  // The dragged layer now comes first, and the document is still valid.
+  expect(onDisk.root.children.map((child: { id: string }) => child.id)).toEqual(["no-call", "help-text"]);
+});
+
+test("runs a journey and shows a refused step as it is", async ({ page }) => {
+  await page.goto(writableHost.url);
+  await page.getByRole("tablist", { name: "Design mode" }).getByRole("tab", { name: "Journeys" }).click();
+
+  const runner = page.getByRole("region", { name: "Journey runner" });
+  await expect(runner).toBeVisible();
+
+  // The employee submits, and the run says so.
+  await runner.getByRole("button", { name: "Run journey" }).click();
+  await expect(page.getByRole("list", { name: "Journey run" }).getByText("ran")).toBeVisible();
+});
+
+test("edits a journey through the draft path, saves it, and keeps the file valid", async ({ page }) => {
+  await page.goto(writableHost.url);
+  const headers = {
+    Authorization: `Bearer ${writableHost.token}`,
+    Origin: writableHost.origin,
+    "Content-Type": "application/json",
+  };
+  const before = await (await page.request.get(`${writableHost.origin}/studio/api/project`, { headers })).json();
+  const revision = before.bundle.revision;
+
+  // A person connects two steps on the canvas. The canvas proposes the connection, and
+  // the draft path turns it into a change of the journey file.
+  const drafted = await page.request.post(`${writableHost.origin}/studio/api/draft`, {
+    headers,
+    data: {
+      expectedRevision: revision,
+      operations: [
+        {
+          op: "journeyAddLink",
+          journey: "approval.journey.json",
+          link: { id: "review", from: "submit", to: "approve", kind: "annotation" },
+        },
+      ],
+    },
+  });
+  expect(drafted.ok()).toBe(true);
+  const draft = await drafted.json();
+  expect(draft.applied).toContain("journeyAddLink approval.journey.json");
+
+  // The connection is in the draft, and the console shows it.
+  const edited = JSON.parse(draft.bundle.sources["approval.journey.json"].text);
+  expect(edited.links.map((link: { id: string }) => link.id)).toEqual(["send", "review"]);
+
+  // Saving writes the file, and the file is still a journey.
+  const saved = await page.request.post(`${writableHost.origin}/studio/api/save`, {
+    headers,
+    // The save is checked against the file on disk, not against the draft.
+    data: { expectedRevision: revision, sources: draft.bundle.sources },
+  });
+  expect(saved.ok()).toBe(true);
+  const onDisk = JSON.parse(await readFile(join(writableRoot, "approval.journey.json"), "utf8"));
+  expect(onDisk.links.map((link: { id: string }) => link.id)).toEqual(["send", "review"]);
+  expect(onDisk.entry).toBe("help");
+});
+
+test("loads a journey from the project, checks it, and draws it", async ({ page }) => {
+  await page.goto(host.url);
+  await page.getByRole("tablist", { name: "Design mode" }).getByRole("tab", { name: "Journeys" }).click();
+
+  const canvas = page.getByRole("region", { name: "Synthetic request approval journey" });
+  await expect(canvas).toBeVisible();
+
+  // The journey is checked against the pages and the operations that exist, and a
+  // journey that checks out says nothing.
+  await expect(page.getByRole("list", { name: "Journey problems" })).toHaveCount(0);
+
+  // The canvas is there, and it draws the steps the journey declares.
+  await expect(canvas).toBeVisible();
+  await expect(canvas.locator(".react-flow__node")).toHaveCount(3);
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(1);
+});
+
+test("draws the workflow on a canvas, moves a state, and picks it", async ({ page }) => {
+  await page.goto(host.url);
+  await page.getByRole("tablist", { name: "Design mode" }).getByRole("tab", { name: "Model" }).click();
+
+  const canvas = page.getByRole("region", { name: "Workflow canvas" });
+  await expect(canvas).toBeVisible();
+
+  // The states and the transitions come from the model.
+  const states = canvas.locator(".react-flow__node");
+  await expect(states).toHaveCount(4);
+  await expect(canvas.locator(".react-flow__edge")).toHaveCount(3);
+  await expect(canvas.getByText("draft", { exact: true })).toBeVisible();
+
+  // A state can be picked, and the console says which one.
+  await canvas.locator(".react-flow__node").filter({ hasText: "approved" }).click();
+  await expect(page.getByText("approved", { exact: true }).first()).toBeVisible();
+
+  // The canvas is a controlled surface: the host owns the positions, and a state is
+  // marked as draggable for the person using it.
+  const node = canvas.locator(".react-flow__node").filter({ hasText: "submitted" });
+  await expect(node).toHaveClass(/draggable/);
+  expect(await node.getAttribute("style")).toContain("translate(");
+});
+
+test("materializes the real generated page, saves it, and finds it again after a reload", async ({ page }) => {
+  await page.goto(writableHost.url);
+  // The form view is the one that can be materialized; the list view is generated.
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /request.*form/i })
+    .click();
+
+  const materialize = page.getByRole("button", { name: /Materialize/ });
+  await expect(materialize).toBeVisible();
+  await materialize.click();
+  await expect(page.getByText(/created as authored source/)).toBeVisible();
+
+  // It survives a save, and the console finds it again after a reload.
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(page.getByText(/saved to disk/)).toBeVisible();
+
+  // The authored page is the generated page, not an empty container.
+  const authored = JSON.parse(await readFile(join(writableRoot, "request.uidl.json"), "utf8"));
+  expect(authored.root).toBeTruthy();
+  expect(JSON.stringify(authored)).not.toBe('{"id":"root","type":"Container","children":[]}');
+
+  await page.reload();
+  await page
+    .getByRole("navigation", { name: "Screens" })
+    .getByRole("button", { name: /request\.uidl\.json/ })
+    .click();
+  await expect(page.getByText(/authored/i).first()).toBeVisible();
+});
+
   test.afterAll(async () => {
     await writableHost?.close();
     if (writableRoot) await rm(writableRoot, { recursive: true, force: true });

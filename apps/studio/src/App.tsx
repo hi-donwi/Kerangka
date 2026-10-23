@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useStudio } from "./useStudio";
 import { SourceEditor, SourceView } from "./SourceView";
 import {
@@ -44,9 +44,13 @@ import { TargetProfile } from "./TargetProfile";
 import { ApiExplorer } from "./ApiExplorer";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
+import { JourneyWorkbench, ModelWorkbench, NodeInspector, PageWorkbench, WorkbenchModeBar } from "./workbench-panels.js";
+import type { JourneyRunResult } from "./JourneyRunner.js";
+import type { WorkbenchMode } from "./workbench-modes.js";
+import { findPage, firstActionPointer } from "./journey-pointer.js";
 import { Diagnostics } from "./Diagnostics";
 import { StudioConflict, StudioSaveRefused } from "./studio-api";
-import type { SourceText } from "../../../packages/studio-server/src/contracts.js";
+import type { SourceText, StudioResponse, UidlDraftOperation } from "../../../packages/studio-server/src/contracts.js";
 
 type Tab = "definition" | "openapi" | "postgres" | "sqlite" | "preview";
 const tabs: Array<[Tab, string]> = [
@@ -89,6 +93,19 @@ export function App() {
   const [scenarioResult, setScenarioResult] = useState<unknown>(null);
   const [scenarioBusy, setScenarioBusy] = useState(false);
   const [awaitingDisk, setAwaitingDisk] = useState(false);
+  /** The node selected inside the preview, so the console can show where the author is. */
+  const [previewSelection, setPreviewSelection] = useState<string | null>(null);
+  /** Which way of working the console is showing. It never changes the source. */
+  const [mode, setMode] = useState<WorkbenchMode>("page");
+  /** The workflow state picked on the canvas. It is a view of the model, not an edit. */
+  const [workflowState, setWorkflowState] = useState<string | null>(null);
+  /** The journey step picked on the canvas. It is a view, not an edit. */
+  const [journeyStep, setJourneyStep] = useState<string | null>(null);
+  /** The node picked in the page tree. */
+  const [pageNode, setPageNode] = useState<string | null>(null);
+  /** The outcome of running a journey, shown as it is. */
+  const [journeyRun, setJourneyRun] = useState<JourneyRunResult | null>(null);
+  const [journeyRunBusy, setJourneyRunBusy] = useState(false);
   const response = studio.response;
   const inspection = response?.inspection;
   const writable = response?.writable === true;
@@ -251,6 +268,202 @@ export function App() {
       }));
     }
   };
+  /**
+   * Connect two steps on a journey canvas.
+   *
+   * The link names where the connection is realized, so it carries the pointer of the
+   * action it points at. The server checks the link against the journey contract and
+   * the project before it is written.
+   */
+  const connectJourneySteps = async (journey: { source: string }, from: string, to: string) => {
+    if (!response || !history) return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const id = `${from}-${to}`;
+    const pointer = journeyPointer(response, from);
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [
+        {
+          op: "journeyAddLink",
+          journey: journey.source,
+          link: { id, from, to, kind: "action", ...(pointer ? { pointer } : {}) },
+        },
+      ],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "source", id: journey.source }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    } else {
+      setDraft((state) => ({ ...state, error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "The connection was refused." }));
+    }
+  };
+
+  /**
+   * The pointer of the action a connection starts from.
+   *
+   * The step that starts the connection names a page, and the page's own document
+   * holds the action. The pointer is found there, so it names something that exists.
+   */
+  const journeyPointer = (bundle: StudioResponse, step: string): string | undefined => {
+    const journey = bundle.inspection?.journeys.find((item) =>
+      item.steps.some((entry) => entry.id === step),
+    );
+    const page = journey?.steps.find((entry) => entry.id === step);
+    if (!page || page.kind !== "page" || !page.page) return undefined;
+    const screen = findPage(bundle.inspection?.screens ?? [], page.page);
+    if (!screen) return undefined;
+    return firstActionPointer(screen.document) ?? undefined;
+  };
+
+  /** Remove a step or a link from a journey. */
+  const removeJourneyEntry = async (journey: { source: string }, kind: "step" | "link", id: string) => {
+    if (!response || !history) return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [kind === "step" ? { op: "journeyRemoveStep", journey: journey.source, step: id } : { op: "journeyRemoveLink", journey: journey.source, link: id }],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "source", id: journey.source }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    }
+  };
+
+  /**
+   * Run the operations a journey names, in order, and show what happened.
+   *
+   * A step that is refused stops the run. The refusal is the engine's own, with the
+   * code it gave, so the console shows the same thing a host would see.
+   */
+  const runJourney = async (journey: { steps: Array<{ id: string; kind: string; operation?: string }> }, record: Record<string, unknown>, actor?: Record<string, unknown>) => {
+    if (!response || !studio.authorized) return;
+    const token = new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "";
+    const sourceText = response.bundle.sources[response.bundle.entry]?.text ?? "";
+    const steps: JourneyRunResult["steps"] = [];
+    let current = record;
+    for (const step of journey.steps) {
+      if (step.kind !== "operation" || !step.operation) continue;
+      const [entity, operation] = step.operation.split(".");
+      if (!entity || !operation) continue;
+      setJourneyRunBusy(true);
+      let result: { ok?: boolean; code?: string; error?: string; message?: string; record?: Record<string, unknown> };
+      try {
+        result = (await runScenarioRequest(token, { source: sourceText, entity, operation, record: current, actor })) as typeof result;
+      } catch (error) {
+        result = { ok: false, error: error instanceof Error ? error.message : "The scenario could not run." };
+      }
+      const ok = result.ok === true;
+      steps.push({
+        id: step.id,
+        operation: step.operation,
+        ok,
+        code: result.code,
+        message: result.error ?? result.message,
+        record: result.record,
+      });
+      if (!ok) break;
+      current = result.record ?? current;
+    }
+    setJourneyRun({ ok: steps.every((step) => step.ok), steps });
+    setJourneyRunBusy(false);
+  };
+
+  /**
+   * Add a component to an authored page.
+   *
+   * The page is the author's document, so the change is a change to that document and
+   * the host checks the result before it is written. A generated page is not editable
+   * until it is materialized, so there is nothing to add to.
+   */
+  const addPageComponent = async (type: string, parent: string) => {
+    if (!response || !history || !screen || screen.kind !== "authored") return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const id = `${type.toLowerCase()}-${Math.random().toString(36).slice(2, 7)}`;
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [{ op: "uidlAddNode", source: screen.source, parent, node: { id, type } }],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    } else {
+      setDraft((state) => ({
+        ...state,
+        error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "The component was refused.",
+      }));
+    }
+  };
+
+  /** The reusable definitions the selected page declares. */
+  const pageDefinitions = useMemo(() => {
+    const definitions = (screen?.document as { definitions?: Record<string, { type?: string }> } | undefined)?.definitions;
+    return Object.entries(definitions ?? {}).map(([name, value]) => ({ name, type: value?.type ?? "Node" }));
+  }, [screen?.document]);
+
+  const pageEditInFlight = useRef(false);
+  const applyPageOperation = async (operation: UidlDraftOperation) => {
+    if (!response || !history || !screen || screen.kind !== "authored" || draft.busy || pageEditInFlight.current) return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    pageEditInFlight.current = true;
+    setDraft((state) => ({ ...state, busy: true, error: null }));
+    try {
+      const next = await studio.applyDraft({ expectedRevision: history.baseRevision, operations: [operation], sources: currentSources });
+      if (next.applied.length) {
+        remember(pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }), `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`);
+      } else {
+        setDraft((state) => ({ ...state, error: next.diagnostics.find((item) => item.severity === "error")?.message ?? "No change was applied." }));
+      }
+    } catch (reason) {
+      setDraft((state) => ({ ...state, error: reason instanceof Error ? reason.message : "The page edit failed." }));
+    } finally {
+      pageEditInFlight.current = false;
+      setDraft((state) => ({ ...state, busy: false }));
+    }
+  };
+
+  const setPageProperty = (nodeId: string, key: string, value: unknown) =>
+    applyPageOperation({ op: "uidlSetNodeProp", source: screen?.source ?? "", node: nodeId, prop: { key, value } });
+
+  /** Move a node among its siblings. */
+  const movePageNode = (nodeId: string, parent: string, index: number, slot?: string) =>
+    applyPageOperation({ op: "uidlMoveNode", source: screen?.source ?? "", node: nodeId, parent, index, ...(slot ? { slot } : {}) });
+
+  /** Copy a node, with identifiers of its own. */
+  const copyPageNode = async (nodeId: string, parent: string) => {
+    if (!response || !history || !screen || screen.kind !== "authored") return;
+    const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : response.bundle.sources;
+    const next = await studio.applyDraft({
+      expectedRevision: history.baseRevision,
+      operations: [{ op: "uidlCopyNode", source: screen.source, node: nodeId, parent, index: 99 }],
+      ...(currentSources ? { sources: currentSources } : {}),
+    });
+    if (next.applied.length) {
+      remember(
+        pushHistory(history, { label: next.applied.join(", "), selection: { kind: "screen", id: screen.id }, response: next }),
+        `${next.applied.join(", ")} - preview only; the file on disk is unchanged.`,
+      );
+    }
+  };
+
+  /** Change one style value of a node, at a breakpoint when one is given. */
+  const setPageStyle = async (nodeId: string, field: string, value: unknown, breakpoint?: string) => {
+    await applyPageOperation(breakpoint
+      ? { op: "uidlSetNodeResponsive", source: screen?.source ?? "", node: nodeId, field, breakpoint, value }
+      : { op: "uidlSetNodeStyle", source: screen?.source ?? "", node: nodeId, field, value });
+  };
+
+  const setPageTheme = (theme: string) => applyPageOperation({ op: "uidlSetTheme", source: screen?.source ?? "", theme });
+  const setPageThemeRef = (node: string, themeRef: string) => applyPageOperation({ op: "uidlSetNodeThemeRef", source: screen?.source ?? "", node, themeRef });
+
   const setFormSections = async (view: string, sections: string[][], sectionTitles: string[]) => {
     if (!response || !history || !screen) return;
     const currentSources = unsavedHistory(history) ? currentStep(history).response.bundle.sources : undefined;
@@ -531,6 +744,7 @@ export function App() {
           <div className="workbench">
             <ProjectExplorer response={response} selected={selected} onSelect={select} />
             <main className="inspection-pane">
+              <WorkbenchModeBar mode={mode} onChange={setMode} />
               <div className="inspector-heading">
                 <div>
                   <p className="eyebrow">{selected?.kind ?? "source"}</p>
@@ -556,10 +770,12 @@ export function App() {
                   </button>
                 ))}
               </div>
+              <div hidden={mode !== "page"}>
               {screen?.kind === "form" ? (
                 <MaterializePage
                   view={screen.label}
                   sourceText={response?.bundle.sources[response.bundle.entry]?.text ?? ""}
+                  document={screen.document}
                   onMaterialize={(path, text) => {
                     void (async () => {
                       const currentSources = unsavedHistory(history ?? openHistory(response, selection)) ? currentStep(history!).response.bundle.sources : response.bundle.sources;
@@ -584,11 +800,62 @@ export function App() {
                   onApply={(sections, sectionTitles) => void setFormSections(screen.label, sections, sectionTitles)}
                 />
               ) : null}
+              </div>
+              <section
+                id="workbench-content"
+                className="inspection-content"
+                role="tabpanel"
+                aria-labelledby={`mode-${mode}`}
+                hidden={mode !== "page"}
+              >
+                <div className="workbench-views">
+                  <NodeInspector screen={screen} nodeId={previewSelection} />
+                </div>
+                <PageWorkbench
+                  screen={screen}
+                  selectedNode={pageNode}
+                  onSelectNode={setPageNode}
+                  onAdd={addPageComponent}
+                  onSetProp={setPageProperty}
+                  onMove={movePageNode}
+                  onCopy={copyPageNode}
+                  onSetStyle={setPageStyle}
+                  onSetTheme={setPageTheme}
+                  onSetThemeRef={setPageThemeRef}
+                  definitions={pageDefinitions}
+                  busy={draft.busy}
+                  error={draft.error}
+                />
+              </section>
+              {mode === "model" ? (
+                <section id="model-content" className="inspection-content" aria-label="Model view">
+                  <ModelWorkbench
+                    inspection={inspection ?? null}
+                    selectedState={workflowState}
+                    onSelectState={setWorkflowState}
+                  />
+                </section>
+              ) : null}
+              {mode === "journey" ? (
+                <section id="journey-content" className="inspection-content" aria-label="Journey view">
+                  <JourneyWorkbench
+                    inspection={inspection ?? null}
+                    selectedStep={journeyStep}
+                    onSelectStep={setJourneyStep}
+                    onConnect={connectJourneySteps}
+                    onRemove={removeJourneyEntry}
+                    onRun={runJourney}
+                    runBusy={journeyRunBusy}
+                    runResult={journeyRun}
+                  />
+                </section>
+              ) : null}
               <section
                 id="inspection-content"
                 className="inspection-content"
                 role="tabpanel"
                 aria-labelledby={`tab-${tab}`}
+                hidden={mode !== "page"}
               >
                 {missing ? (
                   <div className="empty-state">
@@ -726,6 +993,7 @@ export function App() {
                       screen={screen}
                       revision={response.bundle.revision}
                       synthetic={inspection.synthetic}
+                      onSelectNode={(id) => { setPreviewSelection(id); setPageNode(id); }}
                     />
                   ) : (
                     <div className="empty-state">
