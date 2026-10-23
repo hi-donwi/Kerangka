@@ -38,7 +38,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.4"
           cache: npm
 
       - uses: actions/setup-python@v5
@@ -123,7 +123,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.23.4"
           check-latest: true
           cache: npm
           cache-dependency-path: |

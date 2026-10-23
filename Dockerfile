@@ -7,7 +7,7 @@
 #   docker run --rm -i -v "$PWD/examples:/models:ro" kerangka-sidecar \
 #     serve /models/todo.kerangka.json --stdio < requests.jsonl
 
-FROM node:22-slim AS build
+FROM node:22.23.4-slim AS build
 WORKDIR /app
 
 COPY package.json package-lock.json tsconfig.json tsconfig.base.json ./
@@ -19,7 +19,7 @@ COPY examples ./examples
 RUN npm ci
 RUN npm run build
 
-FROM node:22-slim AS runtime
+FROM node:22.23.4-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
