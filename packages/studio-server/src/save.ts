@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { open, lstat, realpath, rename, unlink } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { link, open, lstat, realpath, rename, unlink } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import {
   PROJECT_BYTES,
   SOURCE_BYTES,
@@ -120,6 +120,7 @@ function journeyDiagnostics(path: string, text: string): StudioDiagnostic[] {
  * find out about it from a broken preview.
  */
 async function assertCreatable(root: string, path: string, text: string): Promise<void> {
+  if (!path.endsWith(".uidl.json")) throw new StudioError("STUDIO_SAVE_PAGE_PATH");
   const target = join(root, path);
   const parent = dirname(target);
   let parentStat;
@@ -154,21 +155,28 @@ async function assertCreatable(root: string, path: string, text: string): Promis
 async function createFile(root: string, path: string, text: string): Promise<void> {
   const target = join(root, path);
   const directory = dirname(target);
+  const temporary = join(directory, `.${basename(target)}.${randomBytes(6).toString("hex")}.tmp`);
   let handle;
   try {
-    // The exclusive flag is the guarantee: the file cannot be replaced, whatever the
-    // checks said a moment ago.
-    handle = await open(target, "wx", 0o644);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new StudioError("STUDIO_SAVE_EXISTS");
-    throw new StudioError("STUDIO_SOURCE_UNSAFE");
-  }
-  try {
+    handle = await open(temporary, "wx", 0o644);
     await handle.writeFile(text, "utf8");
     await handle.sync();
-  } finally {
     await handle.close();
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    await unlink(temporary).catch(() => undefined);
+    throw error;
   }
+  try {
+    // A same-directory hard link publishes the complete, synced inode without
+    // replacing a path another process created after the preflight check.
+    await link(temporary, target);
+  } catch (error) {
+    await unlink(temporary).catch(() => undefined);
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new StudioError("STUDIO_SAVE_EXISTS");
+    throw error;
+  }
+  await unlink(temporary).catch(() => undefined);
   const directoryHandle = await open(directory, "r");
   try {
     await directoryHandle.sync();
@@ -265,6 +273,7 @@ async function saveSourcesUnlocked(project: StudioProject, request: SaveRequest)
       diagnostics.push(...sourceDiagnostics(project.entry, text));
       continue;
     }
+    if (path.endsWith(".uidl.json") && !uidlDocument(text)) throw new StudioError("STUDIO_SAVE_NOT_DOCUMENT");
     if (path.endsWith(".journey.json")) {
       diagnostics.push(...journeyDiagnostics(path, text));
     }

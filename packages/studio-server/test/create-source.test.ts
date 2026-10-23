@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openProject, saveSources, sourceRevision, type SourceText } from "../src/index.js";
@@ -49,24 +49,25 @@ describe("creating an authored page", () => {
       expect(result.saved).toContain("requests.uidl.json");
       expect(await readFile(join(root, "requests.uidl.json"), "utf8")).toBe(document);
       expect(result.snapshot.sources["requests.uidl.json"]?.text).toBe(document);
+      expect((await readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     } finally {
       await cleanup();
     }
   });
 
-  it("refuses to create over a file that is already there", async () => {
+  it("refuses to overwrite a page created after the source snapshot", async () => {
     const { root, cleanup } = await project();
     try {
-      // A file the loader does not claim, so the create path is the one that meets it.
-      await writeFile(join(root, "taken.json"), document);
       const opened = await openProject(root);
       const before = await opened.read();
-      await expect(
-        saveSources(opened, {
-          expectedRevision: before.revision,
-          sources: { ...before.sources, "taken.json": { format: "json", text: "{}" } },
-        }),
-      ).rejects.toThrow(/already there/);
+      await writeFile(join(root, "taken.uidl.json"), document);
+      const result = await saveSources(opened, {
+        expectedRevision: before.revision,
+        sources: { ...before.sources, "taken.uidl.json": { format: "json", text: document } },
+      });
+      expect(result.status).toBe("conflict");
+      expect(result.saved).toEqual([]);
+      expect(await readFile(join(root, "taken.uidl.json"), "utf8")).toBe(document);
     } finally {
       await cleanup();
     }
@@ -89,6 +90,42 @@ describe("creating an authored page", () => {
           sources: { ...before.sources, "empty.uidl.json": { format: "json", text: "{}" } },
         }),
       ).rejects.toThrow(/UIDL document/);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("refuses a valid UIDL document at a non-UIDL source path", async () => {
+    const { root, cleanup } = await project();
+    try {
+      const opened = await openProject(root);
+      const before = await opened.read();
+      await expect(
+        saveSources(opened, {
+          expectedRevision: before.revision,
+          sources: { ...before.sources, "requests.json": { format: "json", text: document } },
+        }),
+      ).rejects.toThrow(/\.uidl\.json/);
+      await expect(readFile(join(root, "requests.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("refuses to save malformed content into an existing UIDL source", async () => {
+    const { root, cleanup } = await project();
+    try {
+      await writeFile(join(root, "requests.uidl.json"), document);
+      const opened = await openProject(root);
+      const before = await opened.read();
+      const broken = JSON.stringify({ version: "1.0", id: "requests", name: "Requests", root: { id: "root" } });
+      await expect(
+        saveSources(opened, {
+          expectedRevision: before.revision,
+          sources: { ...before.sources, "requests.uidl.json": { format: "json", text: broken } },
+        }),
+      ).rejects.toThrow(/UIDL document/);
+      expect(await readFile(join(root, "requests.uidl.json"), "utf8")).toBe(document);
     } finally {
       await cleanup();
     }
