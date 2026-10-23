@@ -1,0 +1,210 @@
+{
+  "measuredAt": "2026-10-21T02:42:43.739Z",
+  "fixture": {
+    "nodes": 250,
+    "edges": 500,
+    "selections": 30,
+    "drags": 30,
+    "zooms": 20,
+    "pans": 20
+  },
+  "bundles": [
+    {
+      "implementation": "react-flow",
+      "files": [
+        {
+          "file": "assets/index-DmOHncXa.js",
+          "bytes": 404078,
+          "gzipBytes": 125920
+        },
+        {
+          "file": "assets/index-DLioOiRN.css",
+          "bytes": 15413,
+          "gzipBytes": 2536
+        }
+      ],
+      "totalGzip": 128456,
+      "totalBytes": 419491
+    },
+    {
+      "implementation": "native-svg",
+      "files": [
+        {
+          "file": "assets/svg-xzPRAZ3X.js",
+          "bytes": 226153,
+          "gzipBytes": 70202
+        }
+      ],
+      "totalGzip": 70202,
+      "totalBytes": 226153
+    }
+  ],
+  "results": [
+    {
+      "implementation": "react-flow",
+      "workflowFacts": {
+        "nodes": 250,
+        "edges": 500,
+        "renderedNodes": 100,
+        "renderedEdges": 274,
+        "tabbableNodes": 100,
+        "connectionHandles": 200,
+        "mountMs": 102
+      },
+      "containmentFacts": {
+        "nodes": 250,
+        "edges": 249,
+        "renderedNodes": 100,
+        "renderedEdges": 159,
+        "tabbableNodes": 100,
+        "connectionHandles": 200,
+        "mountMs": 361
+      },
+      "cycleAccepted": true,
+      "containmentCycleRefused": true,
+      "containmentCycleReason": "The target is an ancestor.",
+      "keyboard": {
+        "focused": true,
+        "id": "n0",
+        "before": {
+          "x": 0,
+          "y": 0
+        },
+        "delta": 8
+      },
+      "probe": {
+        "nodeWrappers": 100,
+        "dataIdElements": 574,
+        "focusableWrappers": 100,
+        "activeTag": "DIV",
+        "activeClass": "react-flow__node react-flow__node-spike nopan selectable draggable",
+        "activeId": "n0"
+      },
+      "framePacing": {
+        "samples": 23,
+        "p50": 16.6,
+        "p95": 17.3
+      },
+      "metrics": {
+        "select": {
+          "count": 30,
+          "p50": 19.3,
+          "p95": 21.2,
+          "max": 34.700000000186265
+        },
+        "drag": {
+          "count": 30,
+          "p50": 29.5,
+          "p95": 30.3,
+          "max": 30.5
+        },
+        "zoom": {
+          "count": 20,
+          "p50": 33.3,
+          "p95": 33.4,
+          "max": 33.700000000186265
+        },
+        "pan": {
+          "count": 20,
+          "p50": 29.8,
+          "p95": 30.6,
+          "max": 31
+        }
+      },
+      "finalFacts": {
+        "nodes": 250,
+        "edges": 500,
+        "renderedNodes": 0,
+        "renderedEdges": 0,
+        "tabbableNodes": 0,
+        "connectionHandles": 0,
+        "mountMs": 14728
+      },
+      "visibleNodes": 100,
+      "errors": []
+    },
+    {
+      "implementation": "native-svg",
+      "workflowFacts": {
+        "nodes": 250,
+        "edges": 500,
+        "renderedNodes": 250,
+        "renderedEdges": 500,
+        "tabbableNodes": 250,
+        "connectionHandles": 0,
+        "mountMs": 72
+      },
+      "containmentFacts": {
+        "nodes": 250,
+        "edges": 249,
+        "renderedNodes": 250,
+        "renderedEdges": 249,
+        "tabbableNodes": 250,
+        "connectionHandles": 0,
+        "mountMs": 328
+      },
+      "cycleAccepted": true,
+      "containmentCycleRefused": true,
+      "containmentCycleReason": "The target is an ancestor.",
+      "keyboard": {
+        "focused": true,
+        "id": "n0",
+        "before": {
+          "x": 0,
+          "y": 0
+        },
+        "delta": 8
+      },
+      "probe": {
+        "nodeWrappers": 250,
+        "dataIdElements": 0,
+        "focusableWrappers": 250,
+        "activeTag": "text",
+        "activeClass": null,
+        "activeId": "n0"
+      },
+      "framePacing": {
+        "samples": 24,
+        "p50": 16.6,
+        "p95": 16.9
+      },
+      "metrics": {
+        "select": {
+          "count": 30,
+          "p50": 17.5,
+          "p95": 32.7,
+          "max": 33.5
+        },
+        "drag": {
+          "count": 30,
+          "p50": 31.1,
+          "p95": 31.6,
+          "max": 31.799999999813735
+        },
+        "zoom": {
+          "count": 20,
+          "p50": 33.2,
+          "p95": 33.3,
+          "max": 33.30000000074506
+        },
+        "pan": {
+          "count": 20,
+          "p50": 31.8,
+          "p95": 31.9,
+          "max": 32
+        }
+      },
+      "finalFacts": {
+        "nodes": 250,
+        "edges": 500,
+        "renderedNodes": 250,
+        "renderedEdges": 500,
+        "tabbableNodes": 250,
+        "connectionHandles": 0,
+        "mountMs": 14681
+      },
+      "visibleNodes": 100,
+      "errors": []
+    }
+  ]
+}
