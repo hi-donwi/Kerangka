@@ -74,7 +74,7 @@ Preview builds use `/docs/preview/` and must not shadow a released version. See
 | React | 19.3.1 | MIT |
 | Vite (portal toolchain) | 8.3.4 | MIT |
 | Vite (kitchen sink) | 6.4.4 | MIT |
-| `uidl-runtime` | 0.1.11 | MIT |
+| `uidl-runtime` | 0.1.12 | MIT |
 | Playwright | 1.64.1 | Apache-2.0 |
 
 Kerangka itself is Apache-2.0. Content is authored in this repository; no third-party
