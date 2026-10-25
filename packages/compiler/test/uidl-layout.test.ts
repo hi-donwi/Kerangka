@@ -67,4 +67,13 @@ describe("static UIDL form presentation", () => {
     expect(find(doc.root, "workspace-actions")?.props?.className).toBe("uidl-admin-actions");
     expect(find(doc.root, "field-status")?.type).toBe("Select");
   });
+
+  it("rejects an incomplete presentation preset reference", () => {
+    const model = {
+      kerangka: "0.1", app: "invalid-preset-reference",
+      entities: { Workspace: { fields: { name: "string" } } },
+      views: { workspace: { list: "Workspace", presentation: { preset: "dense-business" } } },
+    };
+    expect(validateModelStructure(model).some((diagnostic) => diagnostic.code === "VIEW_PRESENTATION_INVALID")).toBe(true);
+  });
 });

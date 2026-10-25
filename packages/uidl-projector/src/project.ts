@@ -15,7 +15,7 @@
  * the bridge can express is enough to compute, so the server evaluates it and this prints it.
  */
 
-import type { FieldDefinition, KIRDocument } from "@kerangka/compiler";
+import type { FieldDefinition, KIRDocument, PresentationPresetReference } from "@kerangka/compiler";
 import {
   compileDashboardPage,
   compileFormPage,
@@ -34,7 +34,7 @@ import {
 } from "uidl-runtime/recipes";
 
 /** The document type the recipes return, without importing the React-bearing entry. */
-export type Screen = ReturnType<typeof compileListPage>;
+export type Screen = ReturnType<typeof compileListPage> & { presentationPreset?: PresentationPresetReference };
 
 export interface ProjectorOptions {
   /** Labels and chrome language. Default "en". */
@@ -53,12 +53,14 @@ export type ScreenView =
       route: string;
       sections?: string[][];
       sectionTitles?: string[];
+      presentationPreset?: PresentationPresetReference;
     }
   | {
       id: string;
       kind: "dashboard";
       /** `/` for `home`, `/{id}` otherwise, as the shell links it. */
       route: string;
+      presentationPreset?: PresentationPresetReference;
     };
 
 /** One entry of a dashboard view, as the model declares it (`views.<id>.dashboard[]`). */
@@ -145,7 +147,7 @@ export class RecipeProjector {
       { name: viewId, label: both(humanize(viewId)), kpis },
       { hostCapabilities: this.capabilities(), uiPolicy: { lang: this.lang }, docId: viewId }
     );
-    return this.inShell({ ...document, route: view.route }, view.route);
+    return this.inShell(this.withPresentationPreset({ ...document, route: view.route }, view.presentationPreset), view.route);
   }
 
   /** The list screen for a list view. */
@@ -176,7 +178,7 @@ export class RecipeProjector {
       rowOpenActions: [{ navigate: { route: { $bind: "event.route" } } }],
       createNewActions: formView ? [{ navigate: { route: `/${formView.id}/new` } }] : [],
     });
-    return this.inShell({ ...document, route: view.route }, `/${viewId}`);
+    return this.inShell(this.withPresentationPreset({ ...document, route: view.route }, view.presentationPreset), `/${viewId}`);
   }
 
   /**
@@ -209,7 +211,7 @@ export class RecipeProjector {
       extraHeaderActions: record ? this.actionButtons(view.entity, entity) : [],
     });
     const route = record ? `/${viewId}/${record.id}` : `/${viewId}/new`;
-    return this.inShell({ ...document, route }, listView ? `/${listView.id}` : route);
+    return this.inShell(this.withPresentationPreset({ ...document, route }, view.presentationPreset), listView ? `/${listView.id}` : route);
   }
 
   // ------------------------------------------------------------------ internals
@@ -219,9 +221,22 @@ export class RecipeProjector {
     const views = (this.kir.views ?? {}) as Record<string, ViewDef>;
     for (const [id, def] of Object.entries(views)) {
       if (Array.isArray(def.dashboard)) {
-        screens.push({ id, kind: "dashboard", route: id === "home" ? "/" : `/${id}` });
+        const presentationPreset = this.presentationPreset(def);
+        screens.push({
+          id,
+          kind: "dashboard",
+          route: id === "home" ? "/" : `/${id}`,
+          ...(presentationPreset ? { presentationPreset } : {}),
+        });
       } else if (typeof def.list === "string" && this.kir.entities[def.list]) {
-        screens.push({ id, kind: "list", entity: def.list, route: `/${id}` });
+        const presentationPreset = this.presentationPreset(def);
+        screens.push({
+          id,
+          kind: "list",
+          entity: def.list,
+          route: `/${id}`,
+          ...(presentationPreset ? { presentationPreset } : {}),
+        });
       } else if (typeof def.form === "string" && this.kir.entities[def.form]) {
         const formScreen: {
           id: string;
@@ -230,6 +245,7 @@ export class RecipeProjector {
           route: string;
           sections?: string[][];
           sectionTitles?: string[];
+          presentationPreset?: PresentationPresetReference;
         } = {
           id,
           kind: "form",
@@ -238,6 +254,8 @@ export class RecipeProjector {
         };
         if (Array.isArray(def.sections)) formScreen.sections = def.sections as string[][];
         if (Array.isArray(def.sectionTitles)) formScreen.sectionTitles = def.sectionTitles as string[];
+        const presentationPreset = this.presentationPreset(def);
+        if (presentationPreset) formScreen.presentationPreset = presentationPreset;
         screens.push(formScreen);
       }
     }
@@ -288,6 +306,18 @@ export class RecipeProjector {
       ...(listViewId ? { resolveListRoute: () => `/${listViewId}` } : {}),
       ...(formViewId ? { resolveFormRoute: (_meta, id) => `/${formViewId}/${id}` } : {}),
     };
+  }
+
+  private presentationPreset(viewDef: ViewDef): PresentationPresetReference | undefined {
+    const presentation = viewDef.presentation;
+    if (!presentation || typeof presentation !== "object" || Array.isArray(presentation)) return undefined;
+    const reference = presentation as Record<string, unknown>;
+    if (typeof reference.preset !== "string" || typeof reference.version !== "string") return undefined;
+    return { id: reference.preset, version: reference.version };
+  }
+
+  private withPresentationPreset(document: Screen, reference?: PresentationPresetReference): Screen {
+    return reference ? { ...document, presentationPreset: reference } : document;
   }
 
   /** What the screens may name: every entity, and every transition and action of the model. */

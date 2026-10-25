@@ -41,6 +41,12 @@ export interface UIDLLayoutConfig {
   centered?: boolean;
 }
 
+/** A version-pinned presentation catalog entry selected by the model author. */
+export interface PresentationPresetReference {
+  id: string;
+  version: string;
+}
+
 export interface UIDLDocument {
   $schema?: string;
   version: string;
@@ -48,6 +54,7 @@ export interface UIDLDocument {
   name: string;
   route?: string;
   theme?: string;
+  presentationPreset?: PresentationPresetReference;
   layout?: UIDLLayoutConfig;
   state?: Record<string, unknown>;
   dataSources?: Record<string, unknown>;
@@ -254,6 +261,7 @@ export class UIDLGenerator {
       id: viewId,
       name: UIDLGenerator.capitalize(viewId),
       route,
+      ...UIDLGenerator.presentationPreset(viewDef),
       layout: DEFAULT_DOCUMENT_LAYOUT,
       state: {},
       dataSources: {
@@ -331,6 +339,7 @@ export class UIDLGenerator {
       id: viewId,
       name: UIDLGenerator.capitalize(viewId),
       route,
+      ...UIDLGenerator.presentationPreset(viewDef),
       layout: DEFAULT_DOCUMENT_LAYOUT,
       state: { page: 1, pageSize: 20, search: "" },
       dataSources: {
@@ -493,6 +502,7 @@ export class UIDLGenerator {
       id: viewId,
       name: `${entityName} Details`,
       route,
+      ...UIDLGenerator.presentationPreset(viewDef),
       layout: DEFAULT_DOCUMENT_LAYOUT,
       state: { params: {}, form: {}, mutation: {} },
       dataSources: {
@@ -540,6 +550,16 @@ export class UIDLGenerator {
         ],
       },
     };
+  }
+
+  private static presentationPreset(viewDef: Record<string, unknown>):
+    | { presentationPreset: PresentationPresetReference }
+    | Record<string, never> {
+    const presentation = viewDef.presentation;
+    if (!presentation || typeof presentation !== "object" || Array.isArray(presentation)) return {};
+    const reference = presentation as Record<string, unknown>;
+    if (typeof reference.preset !== "string" || typeof reference.version !== "string") return {};
+    return { presentationPreset: { id: reference.preset, version: reference.version } };
   }
 
   private static formActionHeader(viewId: string, entityName: string, actionButtons: UIDLNode[]): UIDLNode[] {

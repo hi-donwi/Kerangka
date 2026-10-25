@@ -171,7 +171,7 @@ describe("Studio draft endpoint", () => {
 
     const refused = await post({
       expectedRevision: before,
-      operations: [{ op: "uidlSetNodeProp", source: "help.uidl.json", node: "help-text", prop: { key: "heading", value: 7 } }],
+      operations: [{ op: "uidlSetNodeProp", source: "help.uidl.json", node: "help-text", prop: { key: "value", value: 7 } }],
     });
     const rejected = await refused.json();
     expect(rejected.applied).toEqual([]);

@@ -155,7 +155,7 @@ export const TEMPLATE_INSTANCE_KEYS = ["use", "with"] as const;
  * rest refine it. `filters` is declared by PLAN.md §5.1 and not read by the UIDL projector yet.
  */
 export const VIEW_KINDS = ["dashboard", "list", "form"] as const;
-export const VIEW_KEYS = [...VIEW_KINDS, "columns", "filters", "open", "actions", "sections", "sectionTitles"] as const;
+export const VIEW_KEYS = [...VIEW_KINDS, "columns", "filters", "open", "actions", "sections", "sectionTitles", "presentation"] as const;
 
 /** The keys one rule may declare. */
 export const RULE_KEYS = ["id", "field", "message", "check", "versions", "effectiveDate"] as const;
@@ -380,6 +380,23 @@ class StructuralValidator {
           this.error("VIEW_SECTION_TITLES_INVALID",
             "Form sectionTitles must contain one nonempty, unique title per section.",
             at("sectionTitles"), "Match sectionTitles to sections in the same order.");
+        }
+      }
+      if (view.presentation !== undefined) {
+        const presentation = view.presentation;
+        const valid = isPlainObject(presentation)
+          && typeof presentation.preset === "string"
+          && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(presentation.preset)
+          && typeof presentation.version === "string"
+          && presentation.version.trim().length > 0
+          && Object.keys(presentation).every((key) => key === "preset" || key === "version");
+        if (!valid) {
+          this.error(
+            "VIEW_PRESENTATION_INVALID",
+            "View presentation must provide a kebab-case preset id and a nonempty version.",
+            at("presentation"),
+            'Write "presentation": { "preset": "dense-business", "version": "0.1.0" }.',
+          );
         }
       }
       const loose = typeof view.type === "string" && (VIEW_KINDS as readonly string[]).includes(view.type);

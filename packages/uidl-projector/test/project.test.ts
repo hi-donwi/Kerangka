@@ -57,6 +57,27 @@ describe("RecipeProjector.list", () => {
     expect(nav?.props).toMatchObject({ variant: "primary", "aria-current": "page" });
     expect(find(root(screen), (n) => n.id.endsWith("-nav-home"))?.events?.onClick).toEqual([{ navigate: { route: "/" } }]);
   });
+
+  it("exposes the model's pinned presentation preset without copying theme values", () => {
+    const kir = compile(JSON.stringify({
+      kerangka: "0.1",
+      app: "projector-preset-reference",
+      entities: { Workspace: { fields: { name: "string" } } },
+      views: {
+        workspace: {
+          list: "Workspace",
+          presentation: { preset: "dense-business", version: "0.1.0" },
+        },
+      },
+    }));
+    const projector = new RecipeProjector(kir);
+    expect(projector.views()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "workspace", presentationPreset: { id: "dense-business", version: "0.1.0" } }),
+    ]));
+    const screen = projector.list("workspace");
+    expect(screen.presentationPreset).toEqual({ id: "dense-business", version: "0.1.0" });
+    expect(json(screen)).not.toContain("surface-container");
+  });
 });
 
 describe("RecipeProjector.form", () => {

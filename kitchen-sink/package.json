@@ -17,7 +17,7 @@
     "@kerangka/engine-ts": "file:../packages/engine-ts",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "uidl-runtime": "^0.1.8"
+    "uidl-runtime": "^0.1.11"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",

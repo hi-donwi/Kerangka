@@ -193,6 +193,25 @@ describe("Kerangka Projections", () => {
       expect(merged.state?.customFilter).toBe("active");
       expect(merged.state?.page).toBe(1);
     });
+
+    it("carries a version-pinned presentation preset reference without visual definitions", () => {
+      const model = compile({
+        kerangka: "0.1",
+        app: "preset-reference",
+        entities: { Record: { fields: { name: "string" } } },
+        views: {
+          records: {
+            list: "Record",
+            presentation: { preset: "dense-business", version: "0.1.0" },
+          },
+        },
+      } as never);
+
+      const document = generateUIDL(model).records!;
+      expect(document.presentationPreset).toEqual({ id: "dense-business", version: "0.1.0" });
+      expect(JSON.stringify(document)).not.toContain("primitives");
+      expect(JSON.stringify(document)).not.toContain("surface-container");
+    });
   });
 
   /**
