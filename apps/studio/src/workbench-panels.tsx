@@ -1,9 +1,14 @@
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState, type KeyboardEvent } from "react";
 import { defaultRegistry, type WidgetManifest } from "uidl-runtime";
-import type { Inspection, JourneyInfo, ScreenInfo } from "../../../packages/studio-server/src/contracts.js";
+import type { Inspection, JourneyInfo, ScreenInfo, StudioResponse } from "../../../packages/studio-server/src/contracts.js";
 import { findDocumentNode, nodeSummary, WORKBENCH_MODES, type WorkbenchMode } from "./workbench-modes.js";
 import { JourneyRunner, type JourneyRunResult } from "./JourneyRunner.js";
 import { PageDesigner } from "./PageDesigner.js";
+import { buildContextAtlasSnapshot } from "./context-atlas.js";
+
+const ContextCanvasHost = lazy(() => import("./context-canvas.js").then((module) => ({
+  default: module.ContextCanvasHost,
+})));
 
 /**
  * The canvas is loaded on demand. The graph library is a big dependency, and a person
@@ -315,17 +320,51 @@ export function JourneyWorkbench({
   );
 }
 
+export function ContextWorkbench({ response, onOpenSource }: {
+  response: StudioResponse | null;
+  onOpenSource?: (path: string) => void;
+}) {
+  const snapshot = useMemo(() => response ? buildContextAtlasSnapshot(response) : null, [response]);
+  return (
+    <div className="workbench-views">
+      <section className="catalog-panel" aria-label="Project context map">
+        {snapshot ? (
+          <Suspense fallback={<p className="muted" role="status">Loading the context map...</p>}>
+            <ContextCanvasHost snapshot={snapshot} onOpenSource={onOpenSource} />
+          </Suspense>
+        ) : <p className="muted" role="status">Load a project model to build its context map.</p>}
+      </section>
+    </div>
+  );
+}
+
 export function WorkbenchModeBar({ mode, onChange }: { mode: WorkbenchMode; onChange: (mode: WorkbenchMode) => void }) {
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | undefined;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % WORKBENCH_MODES.length;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + WORKBENCH_MODES.length) % WORKBENCH_MODES.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = WORKBENCH_MODES.length - 1;
+    if (nextIndex === undefined) return;
+    event.preventDefault();
+    const nextMode = WORKBENCH_MODES[nextIndex];
+    if (!nextMode) return;
+    onChange(nextMode.id);
+    document.getElementById(`mode-${nextMode.id}`)?.focus();
+  };
+
   return (
     <div className="output-tabs" role="tablist" aria-label="Design mode">
-      {WORKBENCH_MODES.map((definition) => (
+      {WORKBENCH_MODES.map((definition, index) => (
         <button
           key={definition.id}
           id={`mode-${definition.id}`}
           role="tab"
           aria-selected={mode === definition.id}
-          aria-controls="workbench-content"
+          aria-controls={definition.id === "page" ? "workbench-content" : `${definition.id}-content`}
+          tabIndex={mode === definition.id ? 0 : -1}
           title={definition.description}
+          onKeyDown={(event) => onKeyDown(event, index)}
           onClick={() => onChange(definition.id)}
         >
           {definition.label}

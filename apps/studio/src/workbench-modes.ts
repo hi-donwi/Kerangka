@@ -8,7 +8,7 @@ import type { UIDLDocument, UIDLNode } from "uidl-runtime";
  * The mode is a routing hint for the console, and it never changes what the source says.
  */
 
-export type WorkbenchMode = "page" | "journey" | "model";
+export type WorkbenchMode = "page" | "journey" | "model" | "context";
 
 export interface WorkbenchModeDefinition {
   id: WorkbenchMode;
@@ -31,6 +31,11 @@ export const WORKBENCH_MODES: readonly WorkbenchModeDefinition[] = [
     id: "model",
     label: "Model",
     description: "The entities, fields, and operations the application is built on.",
+  },
+  {
+    id: "context",
+    label: "Context",
+    description: "A read-only map of declared pages, journeys, operations, entities, and source references.",
   },
 ];
 

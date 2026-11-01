@@ -44,7 +44,7 @@ import { TargetProfile } from "./TargetProfile";
 import { ApiExplorer } from "./ApiExplorer";
 import { runScenarioRequest } from "./studio-api";
 import { TransitionEditor } from "./TransitionEditor";
-import { JourneyWorkbench, ModelWorkbench, NodeInspector, PageWorkbench, WorkbenchModeBar } from "./workbench-panels.js";
+import { ContextWorkbench, JourneyWorkbench, ModelWorkbench, NodeInspector, PageWorkbench, WorkbenchModeBar } from "./workbench-panels.js";
 import type { JourneyRunResult } from "./JourneyRunner.js";
 import type { WorkbenchMode } from "./workbench-modes.js";
 import { findPage, firstActionPointer } from "./journey-pointer.js";
@@ -745,7 +745,7 @@ export function App() {
             <ProjectExplorer response={response} selected={selected} onSelect={select} />
             <main className="inspection-pane">
               <WorkbenchModeBar mode={mode} onChange={setMode} />
-              <div className="inspector-heading">
+              <div className="inspector-heading" hidden={mode === "context"}>
                 <div>
                   <p className="eyebrow">{selected?.kind ?? "source"}</p>
                   <h2>{entity?.name ?? screen?.label ?? selected?.id}</h2>
@@ -754,7 +754,7 @@ export function App() {
                   {response.bundle.revision.slice(0, 19)}
                 </span>
               </div>
-              <div className="output-tabs" role="tablist" aria-label="Inspection view">
+              <div className="output-tabs" role="tablist" aria-label="Inspection view" hidden={mode === "context"}>
                 {tabs.map(([id, label], index) => (
                   <button
                     key={id}
@@ -827,17 +827,31 @@ export function App() {
                   error={draft.error}
                 />
               </section>
-              {mode === "model" ? (
-                <section id="model-content" className="inspection-content" aria-label="Model view">
+              <section
+                id="model-content"
+                className="inspection-content"
+                role="tabpanel"
+                aria-labelledby="mode-model"
+                hidden={mode !== "model"}
+                aria-label="Model view"
+              >
+                {mode === "model" ? (
                   <ModelWorkbench
                     inspection={inspection ?? null}
                     selectedState={workflowState}
                     onSelectState={setWorkflowState}
                   />
-                </section>
-              ) : null}
-              {mode === "journey" ? (
-                <section id="journey-content" className="inspection-content" aria-label="Journey view">
+                ) : null}
+              </section>
+              <section
+                id="journey-content"
+                className="inspection-content"
+                role="tabpanel"
+                aria-labelledby="mode-journey"
+                hidden={mode !== "journey"}
+                aria-label="Journey view"
+              >
+                {mode === "journey" ? (
                   <JourneyWorkbench
                     inspection={inspection ?? null}
                     selectedStep={journeyStep}
@@ -848,8 +862,26 @@ export function App() {
                     runBusy={journeyRunBusy}
                     runResult={journeyRun}
                   />
-                </section>
-              ) : null}
+                ) : null}
+              </section>
+              <section
+                id="context-content"
+                className="inspection-content"
+                role="tabpanel"
+                aria-labelledby="mode-context"
+                hidden={mode !== "context"}
+                aria-label="Project context"
+              >
+                {mode === "context" ? (
+                  <ContextWorkbench
+                    response={response}
+                    onOpenSource={(path) => {
+                      setMode("page");
+                      select({ kind: "source", id: path });
+                    }}
+                  />
+                ) : null}
+              </section>
               <section
                 id="inspection-content"
                 className="inspection-content"

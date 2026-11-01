@@ -1,9 +1,10 @@
 # Read-Only Studio (P1)
 
 P1 provides a local source/entity/screen explorer, sanitized source-linked diagnostics,
-projected OpenAPI/PostgreSQL/SQLite output, and a static synthetic UIDL preview. It does
-not edit sources, execute business actions, apply SQL, install model packages, connect to
-an identity provider/database, or expose the modeled business API.
+projected OpenAPI/PostgreSQL/SQLite output, a static synthetic UIDL preview, and a
+metadata-only Context map. It does not edit sources from the Context map, execute business
+actions there, apply SQL, install model packages, connect to an identity provider/database,
+or expose the modeled business API.
 
 ## Launch a Local Build
 
@@ -43,6 +44,15 @@ published in a registry release or deployed anywhere.
 5. Click a diagnostic to select the relative source and highlight its line where available.
    Fix the file externally and use Refresh source. Failed refresh explicitly retains a
    previous snapshot; it is not presented as a current successful build.
+6. Select **Context** to map declared pages, journeys, entity operations, entities, fields,
+   and relative source references. Choose Overview, Architecture, Journeys, Operations, or
+   Data model to change perspective. Select a node to inspect its declared details. Use a
+   source reference to return to that file in Pages.
+
+The Context map is a local projection of Context Atlas snapshot schema 1.0. It contains
+inspection metadata and relative source paths only; it does not copy source text, preview
+records, generated OpenAPI/SQL text, or draft write handlers. Detailed REST and database
+contracts remain available in their existing Studio views.
 
 The desktop workbench and stacked narrow layout use the same source snapshot. Code is
 a labelled, keyboard-scrollable text region, not raw HTML or a node per source line.

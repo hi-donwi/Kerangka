@@ -24,8 +24,8 @@ const document: UIDLDocument = {
 };
 
 describe("workbench modes", () => {
-  it("offers the three ways of working, each with an explanation", () => {
-    expect(WORKBENCH_MODES.map((mode) => mode.id)).toEqual(["page", "journey", "model"]);
+  it("offers the workbench modes, each with an explanation", () => {
+    expect(WORKBENCH_MODES.map((mode) => mode.id)).toEqual(["page", "journey", "model", "context"]);
     for (const mode of WORKBENCH_MODES) {
       expect(mode.label.length).toBeGreaterThan(0);
       expect(mode.description.length).toBeGreaterThan(0);
