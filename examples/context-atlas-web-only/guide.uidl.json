@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "id": "guide-home",
+  "name": "Guide home",
+  "route": "/guide",
+  "root": {
+    "id": "guide-root",
+    "type": "Container",
+    "children": [
+      { "id": "guide-title", "type": "Heading", "props": { "value": "Service guide" } },
+      { "id": "guide-copy", "type": "Text", "props": { "value": "A synthetic UIDL-only website example." } },
+      { "id": "guide-contact", "type": "Button", "props": { "label": "Contact support" } }
+    ]
+  }
+}

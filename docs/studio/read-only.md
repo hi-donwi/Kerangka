@@ -49,10 +49,16 @@ published in a registry release or deployed anywhere.
    Data model to change perspective. Select a node to inspect its declared details. Use a
    source reference to return to that file in Pages.
 
-The Context map is a local projection of Context Atlas snapshot schema 1.0. It contains
-inspection metadata and relative source paths only; it does not copy source text, preview
-records, generated OpenAPI/SQL text, or draft write handlers. Detailed REST and database
-contracts remain available in their existing Studio views.
+The Context map is a local projection of Context Atlas snapshot schema 1.0. Its API view
+summarizes generated endpoint methods and paths, parameters, request fields, and response
+shapes. Page details summarize UIDL component types, element ids, event names, and routes.
+It contains inspection metadata and relative source paths only; it does not copy source
+text, UIDL prop values, state/data-source values, preview records, OpenAPI descriptions or
+examples, generated OpenAPI/SQL documents, or draft write handlers. Detailed REST and
+database contracts remain available in their existing Studio views.
+
+See [Context Atlas Studio examples](../../examples/context-atlas-examples.md) for API-only,
+web-only, and full-stack sample projects and local launch instructions.
 
 The desktop workbench and stacked narrow layout use the same source snapshot. Code is
 a labelled, keyboard-scrollable text region, not raw HTML or a node per source line.
