@@ -1,0 +1,6 @@
+{
+  "kerangka": "0.1",
+  "app": "guide-site",
+  "meta": { "title": "Service Guide", "version": "1.0.0", "timezone": "UTC" },
+  "entities": {}
+}

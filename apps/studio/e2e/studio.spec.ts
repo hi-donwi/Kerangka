@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { startStudio, type StudioHost } from "../../../packages/studio-server/dist/index.js";
 
@@ -240,7 +241,7 @@ test("maps project context without source text or preview records and opens sour
     "Overview",
     "Architecture",
     "Synthetic request approval",
-    "Operations",
+    "API",
     "Data model",
   ]);
 
@@ -250,6 +251,19 @@ test("maps project context without source text or preview records and opens sour
   await context.getByRole("tab", { name: "Synthetic request approval" }).click();
   await expect(context.getByText("Synthetic request approval", { exact: true }).last()).toBeVisible();
   await expect(context.getByText("help.uidl.json", { exact: true })).toBeVisible();
+  await context.getByRole("tab", { name: "Architecture" }).click();
+  await context.getByText("help.uidl.json", { exact: true }).click();
+  const details = context.getByRole("complementary", { name: "Context item details" });
+  await expect(details).toContainText("UIDL: Container [help-root]");
+  await expect(details).toContainText("UIDL:   Button [no-call]");
+  await expect(details).toContainText("events: onClick");
+  await expect(details).not.toContainText("forbidden.invalid");
+  await context.getByRole("tab", { name: "API" }).click();
+  await context.getByText("POST /api/request", { exact: true }).click();
+  await expect(details).toContainText("Endpoint: POST /api/request");
+  await expect(details).toContainText("Request fields");
+  await expect(details).toContainText("Response 201");
+  await context.getByRole("tab", { name: "Synthetic request approval" }).click();
   await page.screenshot({ path: test.info().outputPath("context-wide.png"), fullPage: true });
 
   await page.setViewportSize({ width: 320, height: 900 });
@@ -276,13 +290,76 @@ test("maps project context without source text or preview records and opens sour
 
   await context.getByRole("tab", { name: "Overview" }).click();
   await context.getByText("Request", { exact: true }).click();
-  const details = context.getByRole("complementary", { name: "Context item details" });
   await expect(details).toContainText("Source pointer: /entities/Request");
   await details.getByRole("button", { name: /Open app\.kerangka\.json/ }).click();
   await expect(modes.getByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("textbox", { name: "Source editor text" })).toBeVisible();
   expect(await readFile(join(root, "app.kerangka.json"), "utf8")).toBe(model);
   expect(errors).toEqual([]);
+});
+
+test("dogfoods API-only, web-only, and full-stack Context examples", async ({ page }) => {
+  const samples = [
+    {
+      kind: "api-only",
+      directory: "context-atlas-api-only",
+      title: "Request Registry API",
+      views: ["Overview", "Architecture", "API", "Data model"],
+    },
+    {
+      kind: "web-only",
+      directory: "context-atlas-web-only",
+      title: "Service Guide",
+      views: ["Overview", "Architecture"],
+    },
+    {
+      kind: "full-stack",
+      directory: "context-atlas-full-stack",
+      title: "Request Desk",
+      views: ["Overview", "Architecture", "Request review", "API", "Data model"],
+    },
+  ];
+
+  for (const sample of samples) {
+    const target = fileURLToPath(new URL(`../../../examples/${sample.directory}`, import.meta.url));
+    const sampleHost = await startStudio({ target, port: 0 });
+    try {
+      await page.goto(sampleHost.url);
+      await expect(page.getByRole("heading", { name: sample.title, exact: true })).toBeVisible();
+      const modes = page.getByRole("tablist", { name: "Design mode" });
+      await modes.getByRole("tab", { name: "Context" }).click();
+      const context = page.getByRole("tabpanel", { name: "Context" });
+      const views = context.getByRole("tablist", { name: "Context view" });
+      await expect(views.getByRole("tab")).toHaveText(sample.views);
+
+      const details = context.getByRole("complementary", { name: "Context item details" });
+      if (sample.kind === "api-only") {
+        await views.getByRole("tab", { name: "API" }).click();
+        await context.getByText("POST /api/request", { exact: true }).click();
+        await expect(details).toContainText("Request body: required");
+        await expect(details).toContainText("Request fields");
+        await expect(details).toContainText("titlestring · required");
+        await expect(details).toContainText("Response 201");
+        await context.getByText("POST /api/request/{id}/actions/submit", { exact: true }).click();
+        await expect(details).toContainText("commentstring");
+        await expect(details).toContainText("Served by Request.submit");
+      } else if (sample.kind === "web-only") {
+        await views.getByRole("tab", { name: "Architecture" }).click();
+        await context.getByText("guide.uidl.json", { exact: true }).click();
+        await expect(details).toContainText("Route: /guide");
+        await expect(details).toContainText("UIDL: Container [guide-root]");
+        await expect(details).toContainText("UIDL:   Button [guide-contact]");
+      } else {
+        await views.getByRole("tab", { name: "Request review" }).click();
+        await expect(context.getByText("Request review", { exact: true }).last()).toBeVisible();
+        await views.getByRole("tab", { name: "API" }).click();
+        await context.getByText("POST /api/request/{id}/actions/submit", { exact: true }).click();
+        await expect(details).toContainText("Served by Request.submit");
+      }
+    } finally {
+      await sampleHost.close();
+    }
+  }
 });
 
 test("selects a node in the isolated preview and marks it for the author", async ({ page }) => {

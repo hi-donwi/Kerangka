@@ -1,0 +1,29 @@
+{
+  "kerangka": "0.1",
+  "app": "request-desk",
+  "meta": { "title": "Request Desk", "version": "1.0.0", "timezone": "UTC" },
+  "roles": ["requester", "reviewer"],
+  "entities": {
+    "Request": {
+      "fields": {
+        "id": "string!",
+        "title": "string!",
+        "status": "enum(draft, submitted, approved) = draft"
+      },
+      "workflow": {
+        "field": "status",
+        "states": ["draft", "submitted", "approved"],
+        "initial": "draft",
+        "terminal": ["approved"],
+        "transitions": {
+          "submit": { "from": "draft", "to": "submitted", "roles": ["requester"] },
+          "approve": { "from": "submitted", "to": "approved", "roles": ["reviewer"] }
+        }
+      }
+    }
+  },
+  "views": {
+    "requests": { "list": "Request", "columns": ["title", "status"], "open": "request" },
+    "request": { "form": "Request", "sections": [["title"], ["status"]], "sectionTitles": ["Request", "Status"] }
+  }
+}

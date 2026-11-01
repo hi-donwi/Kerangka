@@ -1,0 +1,17 @@
+{
+  "kind": "kerangka.studio.journey",
+  "version": "0.1",
+  "mode": "reference",
+  "id": "request-review",
+  "name": "Request review",
+  "entry": "open-requests",
+  "steps": [
+    { "id": "open-requests", "kind": "page", "page": "requests", "label": "Open requests" },
+    { "id": "submit-request", "kind": "operation", "operation": "Request.submit", "label": "Submit request" },
+    { "id": "approve-request", "kind": "operation", "operation": "Request.approve", "label": "Approve request" }
+  ],
+  "links": [
+    { "id": "submit", "from": "open-requests", "to": "submit-request", "kind": "action" },
+    { "id": "approve", "from": "submit-request", "to": "approve-request", "kind": "annotation" }
+  ]
+}
