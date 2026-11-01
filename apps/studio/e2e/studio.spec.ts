@@ -187,12 +187,12 @@ test("isolates the real renderer, refuses egress/forged messages, and supports f
   }
 });
 
-test("switches the design modes, searches the catalog, and inspects the selected node", async ({ page }) => {
+test("switches workbench modes, searches the catalog, and inspects the selected node", async ({ page }) => {
   await page.goto(host.url);
 
-  // The three ways of working are one tab strip, and each one is reachable by keyboard.
+  // The workbench perspectives are one tab strip, and each one is reachable by keyboard.
   const modes = page.getByRole("tablist", { name: "Design mode" });
-  await expect(modes.getByRole("tab")).toHaveText(["Pages", "Journeys", "Model"]);
+  await expect(modes.getByRole("tab")).toHaveText(["Pages", "Journeys", "Model", "Context"]);
 
   await modes.getByRole("tab", { name: "Model" }).click();
   const catalog = page.getByRole("region", { name: "Component catalog" });
@@ -249,11 +249,29 @@ test("maps project context without source text or preview records and opens sour
   await expect(context.getByText("employeeId", { exact: true })).toBeVisible();
   await context.getByRole("tab", { name: "Synthetic request approval" }).click();
   await expect(context.getByText("Synthetic request approval", { exact: true }).last()).toBeVisible();
+  await expect(context.getByText("help.uidl.json", { exact: true })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("context-wide.png"), fullPage: true });
 
   await page.setViewportSize({ width: 320, height: 900 });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
+  const graph = context.getByRole("region", { name: "Synthetic request approval map" });
+  const pageNode = context.getByText("help.uidl.json", { exact: true });
+  await expect(pageNode).toBeVisible();
+  await expect.poll(async () => {
+    const graphBox = await graph.boundingBox();
+    const nodeBox = await pageNode.boundingBox();
+    return Boolean(graphBox && nodeBox
+      && nodeBox.x >= graphBox.x
+      && nodeBox.x + nodeBox.width <= graphBox.x + graphBox.width
+      && nodeBox.y >= graphBox.y
+      && nodeBox.y + nodeBox.height <= graphBox.y + graphBox.height);
+  }).toBe(true);
+  const graphBounds = await graph.boundingBox();
+  const nodeBounds = await pageNode.boundingBox();
+  expect(graphBounds && nodeBounds).toBeTruthy();
+  expect(nodeBounds!.x).toBeGreaterThanOrEqual(graphBounds!.x);
+  expect(nodeBounds!.x + nodeBounds!.width).toBeLessThanOrEqual(graphBounds!.x + graphBounds!.width);
   await page.screenshot({ path: test.info().outputPath("context-narrow.png"), fullPage: true });
 
   await context.getByRole("tab", { name: "Overview" }).click();
@@ -262,7 +280,7 @@ test("maps project context without source text or preview records and opens sour
   await expect(details).toContainText("Source pointer: /entities/Request");
   await details.getByRole("button", { name: /Open app\.kerangka\.json/ }).click();
   await expect(modes.getByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("region", { name: "Source text" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Source editor text" })).toBeVisible();
   expect(await readFile(join(root, "app.kerangka.json"), "utf8")).toBe(model);
   expect(errors).toEqual([]);
 });

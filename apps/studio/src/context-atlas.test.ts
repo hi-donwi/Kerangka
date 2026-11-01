@@ -48,9 +48,9 @@ function studioResponse(): StudioResponse {
           id: "request-submit",
           name: "Submit request",
           source: "journeys/submit.json",
-          entry: "request-list",
+          entry: "Request list",
           steps: [
-            { id: "open", kind: "page", page: "request-list", label: "Open request list" },
+            { id: "open", kind: "page", page: "Request list", label: "Open request list" },
             { id: "submit", kind: "operation", operation: "Request.submit" },
           ],
           links: [{ id: "flow", from: "open", to: "submit", kind: "action" }],
@@ -89,6 +89,8 @@ describe("Context Atlas projection", () => {
       { name: "title", type: "string", required: true },
     ]);
     expect(snapshot.edges.some((edge) => edge.source === "entity:Request" && edge.target === "operation:Request.submit")).toBe(true);
+    expect(snapshot.edges.some((edge) => edge.source === "journey:request-submit" && edge.target === "page:request-list" && edge.relation === "starts-at")).toBe(true);
+    expect(snapshot.edges.some((edge) => edge.source === "page:request-list" && edge.target === "operation:Request.submit")).toBe(true);
     expect(snapshot.views.flatMap((view) => view.nodeIds).every((id) => nodeIds.has(id))).toBe(true);
     expect(snapshot.edges.every((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))).toBe(true);
     expect(snapshot.nodes.flatMap((node) => node.sourceIds).every((id) => snapshot.sources.some((source) => source.id === id))).toBe(true);

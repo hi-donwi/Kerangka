@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   Background,
   Controls,
@@ -11,6 +11,7 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { ContextAtlasNode, ContextAtlasSnapshot, ContextAtlasView } from "./context-atlas.js";
@@ -46,6 +47,8 @@ function ContextCanvas({ snapshot, onOpenSource }: {
   snapshot: ContextAtlasSnapshot;
   onOpenSource?: (path: string) => void;
 }) {
+  const graphElement = useRef<HTMLDivElement>(null);
+  const { fitView } = useReactFlow();
   const [activeViewId, setActiveViewId] = useState(snapshot.views[0]?.id ?? "");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const activeView = snapshot.views.find((view) => view.id === activeViewId) ?? snapshot.views[0];
@@ -89,6 +92,28 @@ function ContextCanvas({ snapshot, onOpenSource }: {
   const sources = selectedNode?.sourceIds
     .map((id) => snapshot.sources.find((source) => source.id === id))
     .filter((source): source is NonNullable<typeof source> => Boolean(source)) ?? [];
+
+  const refitGraph = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => void fitView({ padding: 0.2, minZoom: 0.15, maxZoom: 1.6 }));
+    });
+  }, [fitView]);
+
+  useEffect(() => {
+    refitGraph();
+  }, [activeView?.id, visibleNodes.length, refitGraph]);
+
+  useEffect(() => {
+    const element = graphElement.current;
+    if (!element) return;
+    const observer = new ResizeObserver(refitGraph);
+    observer.observe(element);
+    window.addEventListener("resize", refitGraph);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", refitGraph);
+    };
+  }, [refitGraph]);
 
   const onViewKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     let nextIndex: number | undefined;
@@ -147,7 +172,12 @@ function ContextCanvas({ snapshot, onOpenSource }: {
         aria-labelledby={`context-view-tab-${snapshot.views.findIndex((view) => view.id === activeView?.id)}`}
         tabIndex={0}
       >
-        <div className="context-atlas-graph" aria-label={`${activeView?.label ?? "Context"} map`}>
+        <div
+          ref={graphElement}
+          className="context-atlas-graph"
+          role="region"
+          aria-label={`${activeView?.label ?? "Context"} map`}
+        >
           {visibleNodes.length ? (
             <ReactFlow
               nodes={nodes}

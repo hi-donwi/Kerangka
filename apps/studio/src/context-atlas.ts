@@ -107,11 +107,20 @@ export function buildContextAtlasSnapshot(response: StudioResponse): ContextAtla
   const inspection = response.inspection;
   const pendingNodes: PendingNode[] = [];
   const pendingEdges: PendingEdge[] = [];
-  const screenIds = new Map<string, string>();
+  const screenIds = new Map<string, string[]>();
   const operationIds = new Map<string, string[]>();
   const journeyViews: ContextAtlasView[] = [];
 
   const entryPath = sourcePath(response, response.bundle.entry);
+  const addScreenReference = (reference: string, id: string) => {
+    const matches = screenIds.get(reference) ?? [];
+    if (!matches.includes(id)) screenIds.set(reference, [...matches, id]);
+  };
+  const resolveScreen = (reference: string | undefined): string | undefined => {
+    if (!reference) return undefined;
+    const matches = screenIds.get(reference) ?? [];
+    return matches.length === 1 ? matches[0] : undefined;
+  };
   pendingNodes.push({
     id: moduleId,
     kind: "module",
@@ -126,7 +135,10 @@ export function buildContextAtlasSnapshot(response: StudioResponse): ContextAtla
   for (const screen of inspection?.screens ?? []) {
     const id = `page:${encodedId(screen.id)}`;
     const path = sourcePath(response, screen.source);
-    screenIds.set(screen.id, id);
+    addScreenReference(screen.id, id);
+    addScreenReference(screen.label, id);
+    addScreenReference(screen.source, id);
+    addScreenReference(screen.source.replace(/(?:\.uidl)?\.(?:json|ya?ml)$/i, ""), id);
     pendingNodes.push({
       id,
       kind: "page",
@@ -234,7 +246,7 @@ export function buildContextAtlasSnapshot(response: StudioResponse): ContextAtla
     const resolvedSteps = journey.steps.flatMap((step) => {
       const operationMatches = operationIds.get(step.operation ?? "") ?? [];
       const target = step.kind === "page"
-        ? screenIds.get(step.page ?? step.id)
+        ? resolveScreen(step.page ?? step.id)
         : operationMatches.length === 1 ? operationMatches[0] : undefined;
       if (!target) return [];
       stepNodeById.set(step.id, target);
@@ -267,7 +279,7 @@ export function buildContextAtlasSnapshot(response: StudioResponse): ContextAtla
       });
     }
 
-    const entryNode = screenIds.get(journey.entry);
+    const entryNode = resolveScreen(journey.entry);
     if (entryNode && path) {
       pendingEdges.push({
         id: `starts:${encodedId(id)}`,
