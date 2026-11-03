@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sampleRoute } from "../kitchen-sink/src/sample-route";
+import { catalogView, sampleRoute } from "../kitchen-sink/src/sample-route";
 
 const ids = ["approval", "validation", "workflow"];
 
@@ -36,5 +36,17 @@ describe("ID-only sample URLs", () => {
 
   it("handles an empty manifest without inventing an ID", () => {
     expect(sampleRoute("https://example.invalid/app/?record=fixture", [])).toEqual({ id: "", path: "/app/" });
+  });
+
+  it("keeps only a declared catalog view in a sample URL", () => {
+    expect(sampleRoute("https://example.invalid/?record=fixture", ids, "workflow", "starters")).toEqual({
+      id: "workflow",
+      path: "/?sample=workflow&catalog=starters",
+    });
+  });
+
+  it("resolves only the supported catalog views", () => {
+    expect(catalogView("https://example.invalid/?catalog=presets")).toBe("presets");
+    expect(catalogView("https://example.invalid/?catalog=__proto__")).toBe("examples");
   });
 });

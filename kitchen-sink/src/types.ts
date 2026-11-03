@@ -1,5 +1,6 @@
 export interface ManifestInput {
   name: string;
+  description: string;
   run: string;
   record: Record<string, unknown>;
   input?: Record<string, unknown>;

@@ -12,6 +12,7 @@
     "inputs": [
       {
         "name": "submit-draft",
+        "description": "An employee submits a draft expense; the state moves to submitted.",
         "run": "Expense.submit",
         "record": {
           "description": "Train ticket",
@@ -26,6 +27,7 @@
       },
       {
         "name": "approve-as-manager",
+        "description": "A manager approves a submitted expense and advances its state.",
         "run": "Expense.approve",
         "record": {
           "description": "Train ticket",
@@ -40,6 +42,7 @@
       },
       {
         "name": "approve-as-employee",
+        "description": "An employee attempts manager-only approval and is denied by the role guard.",
         "run": "Expense.approve",
         "record": {
           "description": "Train ticket",
@@ -92,10 +95,51 @@
     "inputs": [
       {
         "name": "empty-invoice",
+        "description": "An empty draft is denied because sending requires at least one line with a positive total.",
         "run": "Invoice.send",
         "record": {
           "status": "draft",
           "lines": []
+        },
+        "actor": {
+          "roles": [
+            "billing"
+          ]
+        }
+      },
+      {
+        "name": "send-standard-invoice",
+        "description": "A billing user sends a $42 invoice; the ordinary-value audit branch is recorded.",
+        "run": "Invoice.send",
+        "record": {
+          "number": "INV-2026-001",
+          "customer": "customer-1",
+          "issuedOn": "2026-10-01",
+          "dueDate": "2026-10-31",
+          "lines": [
+            { "description": "Consulting", "qty": 1, "unitPrice": "42.00" }
+          ],
+          "status": "draft"
+        },
+        "actor": {
+          "roles": [
+            "billing"
+          ]
+        }
+      },
+      {
+        "name": "send-high-value-invoice",
+        "description": "A billing user sends a $1,500 invoice; the high-value audit branch is recorded.",
+        "run": "Invoice.send",
+        "record": {
+          "number": "INV-2026-002",
+          "customer": "customer-1",
+          "issuedOn": "2026-10-01",
+          "dueDate": "2026-10-31",
+          "lines": [
+            { "description": "Annual service", "qty": 1, "unitPrice": "1500.00" }
+          ],
+          "status": "draft"
         },
         "actor": {
           "roles": [
@@ -110,6 +154,22 @@
           "input": "empty-invoice",
           "status": "denied",
           "error": "GUARD_FAILED"
+        },
+        {
+          "input": "send-standard-invoice",
+          "status": "ok",
+          "record": {
+            "status": "sent",
+            "auditTrail": ["sent-INV-2026-001"]
+          }
+        },
+        {
+          "input": "send-high-value-invoice",
+          "status": "ok",
+          "record": {
+            "status": "sent",
+            "auditTrail": ["high-value-INV-2026-002"]
+          }
         }
       ]
     },
@@ -129,6 +189,7 @@
     "inputs": [
       {
         "name": "submit-2-days",
+        "description": "Two days of leave route to a team lead (the first routing threshold).",
         "run": "LeaveRequest.submit",
         "record": {
           "employeeId": "emp-1",
@@ -145,6 +206,7 @@
       },
       {
         "name": "submit-6-days",
+        "description": "Six days exceed the five-day threshold and route to the HR director.",
         "run": "LeaveRequest.submit",
         "record": {
           "employeeId": "emp-1",
@@ -152,6 +214,23 @@
           "status": "draft",
           "startDate": "2026-10-01",
           "endDate": "2026-10-07"
+        },
+        "actor": {
+          "roles": [
+            "employee"
+          ]
+        }
+      },
+      {
+        "name": "submit-5-days",
+        "description": "Exactly five days exercise the upper boundary and route to a department manager.",
+        "run": "LeaveRequest.submit",
+        "record": {
+          "employeeId": "emp-1",
+          "days": 5,
+          "status": "draft",
+          "startDate": "2026-10-01",
+          "endDate": "2026-10-06"
         },
         "actor": {
           "roles": [
@@ -176,6 +255,14 @@
           "record": {
             "status": "submitted",
             "assignedApproverRole": "hr-director"
+          }
+        },
+        {
+          "input": "submit-5-days",
+          "status": "ok",
+          "record": {
+            "status": "submitted",
+            "assignedApproverRole": "department-manager"
           }
         }
       ]

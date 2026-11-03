@@ -71,3 +71,27 @@ accepts only shipped fixtures; it is not a security sandbox for arbitrary code o
 preview uses an in-memory adapter that does not persist, and it has no mutation
 handler, so writes fail closed. Opening the preview is separate from engine
 execution and does not change the execution result.
+
+## Catalogs
+
+The catalog has three sections: runnable examples (the default),
+`?catalog=starters`, and `?catalog=presets`. Search stays in the page and never puts
+fixture records or actors in the URL.
+
+- **Examples** read `samples/manifest.json`; each runner model links to the exact file
+  compiled for its fixture, separately from any reference example link. Every scenario
+  has a plain-language description and runs as an isolated worker case against its declared
+  outcome; current examples include role, invoice-value, and workflow-threshold variants.
+- **Starters** read `packages/cli/starters/*/starter.json`, the same manifests used by
+  `kerangka init --list`. Cards preview files rendered from the actual starter templates
+  using the CLI's JSON substitution rules, with full generated output and source paths
+  available per starter.
+- **Logic presets** read `@kerangka/std` and the official `identity` and `admin` packs.
+  Every card shows a compilable Kerangka model usage example (or the lint configuration
+  shape); examples are explanatory and are not reported as execution results. Types, traits,
+  templates, and lint presets stay owned by Kerangka. Presentation recipes and widgets stay
+  owned by UIDL Runtime and are not copied into this catalog.
+
+The CLI `starters.test.ts` gate verifies every starter can be written, checked, verified,
+tested, emitted to contracts, and written as YAML; the browser catalog is a discovery
+surface over that source data, not a second starter implementation.
