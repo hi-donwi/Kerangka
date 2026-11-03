@@ -38,6 +38,10 @@ test.describe("kitchen sink execution", () => {
       "href",
       "https://hi-donwi.github.io/Kerangka/docs/v0.1.1/reference/samples/",
     );
+    await expect(page.getByRole("link", { name: "samples/approval/expense-approval.kerangka.json" })).toHaveAttribute(
+      "href",
+      "https://github.com/hi-donwi/Kerangka/blob/main/samples/approval/expense-approval.kerangka.json",
+    );
     await expect(page.getByRole("link", { name: "examples/expense-approval.kerangka.json" })).toHaveAttribute(
       "href",
       "https://github.com/hi-donwi/Kerangka/blob/main/examples/expense-approval.kerangka.json",
@@ -104,20 +108,94 @@ test.describe("kitchen sink execution", () => {
     await expect(page).toHaveURL(/\/\?sample=approval$/);
   });
 
+  test("searches examples and browses the source-driven starter and logic preset catalogs", async ({ page }) => {
+    await page.goto("/");
+    const search = page.getByRole("searchbox", { name: "Search this catalog" });
+    await search.fill("decision");
+    const samples = page.getByRole("navigation", { name: "samples" }).getByRole("button");
+    await expect(samples).toHaveCount(1);
+    await expect(samples.first()).toContainText("Action, Workflow, and Decision");
+
+    await page.getByRole("button", { name: /Starters/ }).click();
+    await expect(page).toHaveURL(/\?sample=approval&catalog=starters$/);
+    await expect(page.getByRole("heading", { name: "Starter catalog" })).toBeVisible();
+    const resultCount = page.locator('.catalog-toolbar p[aria-live="polite"]');
+    await expect(resultCount).toHaveText("8 of 8 starters");
+    await expect(page.locator('[aria-live="polite"]')).toHaveCount(1);
+    await expect(page.getByRole("article")).toHaveCount(8);
+    await expect(page.locator(".starter-preview")).toHaveCount(8);
+    await search.fill("identity");
+    await expect(resultCount).toHaveText("1 of 8 starters");
+    await expect(page.getByRole("article")).toHaveCount(1);
+    await expect(page.getByRole("heading", { name: "saas-auth", exact: true })).toBeVisible();
+    await expect(page.getByText("kerangka init saas-auth --name my-app")).toBeVisible();
+    await expect(page.locator(".starter-preview")).toContainText('"app": "my-app"');
+    await expect(page.locator(".starter-preview")).toContainText('"use": "identity:organization"');
+    await expect(page.getByText("npx kerangka verify my-app.kerangka.json")).toBeVisible();
+    await expect(page.getByRole("link", { name: "packages/cli/starters/saas-auth/starter.json" }))
+      .toHaveAttribute("href", "https://github.com/hi-donwi/Kerangka/blob/main/packages/cli/starters/saas-auth/starter.json");
+
+    await search.fill("commerce");
+    await expect(page.locator(".starter-preview")).toContainText("contexts/orders/context.kerangka.json");
+    await search.fill("");
+    await expect(page.getByRole("article")).toHaveCount(8);
+    await page.getByRole("button", { name: /Logic presets/ }).click();
+    await expect(page).toHaveURL(/\?sample=approval&catalog=presets$/);
+    await expect(page.getByRole("heading", { name: "Logic preset catalog" })).toBeVisible();
+    await expect(resultCount).toHaveText("12 of 12 logic presets");
+    await expect(page.locator('[aria-live="polite"]')).toHaveCount(1);
+    await expect(page.getByRole("article")).toHaveCount(12);
+    await expect(page.locator(".preset-preview")).toHaveCount(12);
+    await expect(page.getByRole("heading", { name: "std:approval", exact: true })).toBeVisible();
+    await expect(page.getByText("Presentation recipes and widgets remain owned by UIDL Runtime.")).toBeVisible();
+    await search.fill("approval");
+    await expect(page.getByRole("article")).toHaveCount(1);
+    await expect(page.getByRole("heading", { name: "std:approval", exact: true })).toBeVisible();
+    await expect(page.locator(".preset-preview")).toContainText('"use": "std:approval"');
+  });
+
+  test("catalog views survive reload and remain usable without horizontal overflow", async ({ page }) => {
+    await page.goto("/?catalog=presets");
+    await expect(page.getByRole("heading", { name: "Logic preset catalog" })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Logic preset catalog" })).toBeVisible();
+    for (const width of [320, 375, 768, 1440]) {
+      await page.setViewportSize({ width, height: 812 });
+      for (const [name, heading] of [
+        ["Examples", "Expense Approval"],
+        ["Starters", "Starter catalog"],
+        ["Logic presets", "Logic preset catalog"],
+      ]) {
+        await page.getByRole("button", { name: new RegExp(name) }).click();
+        await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        expect(overflow, `${name} catalog must not scroll horizontally at ${width}px`).toBeLessThanOrEqual(0);
+      }
+    }
+  });
+
   test("validation and workflow execute all declared inputs; reset clears results", async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/");
     const nav = page.getByRole("navigation", { name: "samples" });
     await nav.getByRole("button", { name: "Field, Expression, and Validation" }).click();
-    await page.getByRole("button", { name: "Run empty-invoice", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText("PASS: denied");
-    await expect(page.getByRole("status")).toContainText("GUARD_FAILED");
-    await nav.getByRole("button", { name: "Action, Workflow, and Decision" }).click();
-    for (const [input, role] of [["submit-2-days", "team-lead"], ["submit-6-days", "hr-director"]]) {
+    await expect(page.locator(".scenario-description")).toHaveCount(3);
+    for (const [input, status, output] of [
+      ["empty-invoice", "denied", "GUARD_FAILED"],
+      ["send-standard-invoice", "ok", "sent-INV-2026-001"],
+      ["send-high-value-invoice", "ok", "high-value-INV-2026-002"],
+    ]) {
       await page.getByRole("button", { name: `Run ${input}`, exact: true }).click();
-      await expect(page.getByRole("status")).toContainText("PASS: ok");
-      await expect(page.getByRole("status")).toContainText(`"assignedApproverRole": "${role}"`);
+      await expect(page.locator(".result-panel")).toContainText(`PASS: ${status}`);
+      await expect(page.locator(".result-panel")).toContainText(output);
+    }
+    await nav.getByRole("button", { name: "Action, Workflow, and Decision" }).click();
+    await expect(page.locator(".scenario-description")).toHaveCount(3);
+    for (const [input, role] of [["submit-2-days", "team-lead"], ["submit-5-days", "department-manager"], ["submit-6-days", "hr-director"]]) {
+      await page.getByRole("button", { name: `Run ${input}`, exact: true }).click();
+      await expect(page.locator(".result-panel")).toContainText("PASS: ok");
+      await expect(page.locator(".result-panel")).toContainText(`"assignedApproverRole": "${role}"`);
     }
     await page.getByRole("button", { name: "Reset sample" }).click();
     await expect(page.getByRole("status")).toContainText("Choose an input");
@@ -214,8 +292,15 @@ test.describe("kitchen sink execution", () => {
     await page.goto("/");
     await page.keyboard.press("Tab");
 
+    const catalog = page.getByRole("navigation", { name: "Catalog sections" });
+    await expect(catalog.getByRole("button", { name: /Examples/ })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+
     const nav = page.getByRole("navigation", { name: "samples" });
     const firstButton = nav.getByRole("button").first();
+    await page.keyboard.press("Tab");
     await expect(firstButton).toBeFocused();
 
     const outline = await firstButton.evaluate((el) => {

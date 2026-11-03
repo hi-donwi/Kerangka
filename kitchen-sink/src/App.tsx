@@ -1,188 +1,138 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import release from "../../docs-site/release.json";
+import { useEffect, useState } from "react";
 import manifest from "../../samples/manifest.json";
-import ExecutionWorker from "./execution.worker?worker&inline";
-import { LIMITS, type ExecutionReply } from "./execution";
-import { runInWorker } from "./runner";
-import { sampleRoute } from "./sample-route";
+import {
+  filterLogicPresetCatalog,
+  filterStarterCatalog,
+  logicPresetCatalog,
+  matchesCatalogSearch,
+  starterCatalog,
+} from "./catalog";
+import { LogicPresetCatalog, StarterCatalog } from "./catalog-view";
+import { catalogView, sampleRoute, type CatalogView } from "./sample-route";
+import { SampleView } from "./sample-view";
 import type { ManifestEntry } from "./types";
-import { publishedDocsHref, repositorySourceHref } from "./sample-links";
-import { uidlForSample } from "./uidl-files";
-
-const SampleUidlPreview = lazy(() => import("./uidl-preview").then((module) => ({ default: module.SampleUidlPreview })));
 
 const entries = manifest as ManifestEntry[];
 const sampleIds = entries.map((entry) => entry.id);
-const models = import.meta.glob<unknown>("../../generated/*/kir.json", { eager: true, import: "default" });
-const sources = import.meta.glob<string>("../../samples/*/*.kerangka.json", { eager: true, query: "?raw", import: "default" });
+
+const catalogSections: { id: CatalogView; label: string; count: number }[] = [
+  { id: "examples", label: "Examples", count: entries.length },
+  { id: "starters", label: "Starters", count: starterCatalog.length },
+  { id: "presets", label: "Logic presets", count: logicPresetCatalog.length },
+];
 
 export function App() {
   const [selected, setSelected] = useState(() => sampleRoute(window.location.href, sampleIds).id);
+  const [catalog, setCatalog] = useState(() => catalogView(window.location.href));
+  const [query, setQuery] = useState("");
+
   useEffect(() => {
     const sync = () => {
-      const route = sampleRoute(window.location.href, sampleIds);
+      const currentCatalog = catalogView(window.location.href);
+      const route = sampleRoute(window.location.href, sampleIds, undefined, currentCatalog);
       window.history.replaceState(null, "", route.path);
       setSelected(route.id);
+      setCatalog(currentCatalog);
+      setQuery("");
     };
     sync();
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
-  function select(id: string) {
-    const route = sampleRoute(window.location.href, sampleIds, id);
+
+  function selectSample(id: string) {
+    const route = sampleRoute(window.location.href, sampleIds, id, catalog);
     if (route.id === selected) return;
     window.history.pushState(null, "", route.path);
     setSelected(route.id);
   }
-  const entry = entries.find((e) => e.id === selected);
+
+  function selectCatalog(nextCatalog: CatalogView) {
+    if (nextCatalog === catalog) return;
+    const route = sampleRoute(window.location.href, sampleIds, selected, nextCatalog);
+    window.history.pushState(null, "", route.path);
+    setCatalog(nextCatalog);
+    setQuery("");
+  }
+
+  const entry = entries.find((sample) => sample.id === selected);
+  const visibleEntries = entries.filter((sample) => matchesCatalogSearch(query, [
+    sample.id,
+    sample.title,
+    sample.modelPath,
+    sample.docsPath,
+    sample.sourcePath ?? "",
+    ...sample.inputs.flatMap((input) => [input.name, input.run]),
+  ]));
+
   return (
     <main className="ks">
-      <header>
+      <header className="ks-header">
+        <p className="eyebrow">Kerangka / developer catalog</p>
         <h1>Kerangka Kitchen Sink</h1>
-        <p>Live, in-memory execution. No network writes, no filesystem access, no host calls.</p>
+        <p>Explore executable logic examples, tested starters, and reusable model presets. Logic runs in a disposable worker; UI presentation stays with UIDL Runtime.</p>
       </header>
-      <nav aria-label="samples">
-        {entries.map((e) => (
+      <nav className="catalog-tabs" aria-label="Catalog sections">
+        {catalogSections.map((section) => (
           <button
-            key={e.id}
-            className={e.id === selected ? "active" : ""}
-            onClick={() => select(e.id)}
-            aria-pressed={e.id === selected}
+            key={section.id}
             type="button"
+            className={catalog === section.id ? "active" : ""}
+            aria-pressed={catalog === section.id}
+            onClick={() => selectCatalog(section.id)}
           >
-            {e.title}
+            {section.label}<span>{section.count}</span>
           </button>
         ))}
       </nav>
-      {entry ? <SampleView key={entry.id} entry={entry} /> : <p>No sample selected.</p>}
+      <div className="catalog-toolbar">
+        <label className="catalog-search">
+          <span>Search this catalog</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            placeholder={catalog === "examples" ? "Search examples or operations…" : "Search names, packages, tags…"}
+          />
+        </label>
+        <p aria-live="polite">
+          {catalog === "examples" ? `${visibleEntries.length} of ${entries.length} examples` : null}
+          {catalog === "starters" ? `${filterStarterCatalog(query).length} of ${starterCatalog.length} starters` : null}
+          {catalog === "presets" ? `${filterLogicPresetCatalog(query).length} of ${logicPresetCatalog.length} logic presets` : null}
+        </p>
+      </div>
+
+      {catalog === "examples" ? (
+        <div className="example-layout">
+          <aside className="sample-sidebar">
+            <div className="sidebar-heading">
+              <div><h2>Logic examples</h2><p>Reference models with runnable fixtures</p></div>
+              <span>{visibleEntries.length}</span>
+            </div>
+            <nav aria-label="samples">
+              {visibleEntries.map((sample) => (
+                <button
+                  key={sample.id}
+                  className={sample.id === selected ? "active" : ""}
+                  onClick={() => selectSample(sample.id)}
+                  aria-pressed={sample.id === selected}
+                  type="button"
+                >
+                  <span>{sample.title}</span>
+                  <small>{sample.inputs.length} runnable {sample.inputs.length === 1 ? "fixture" : "fixtures"}</small>
+                </button>
+              ))}
+            </nav>
+            {visibleEntries.length === 0 ? <p className="sidebar-empty">No examples match that search.</p> : null}
+            <p className="ownership-note">Need a starting project? Browse tested CLI starters. Need widgets or page recipes? Those belong to UIDL Runtime.</p>
+          </aside>
+          <div className="sample-content">
+            {entry ? <SampleView key={entry.id} entry={entry} /> : <p>No sample selected.</p>}
+          </div>
+        </div>
+      ) : null}
+      {catalog === "starters" ? <StarterCatalog query={query} /> : null}
+      {catalog === "presets" ? <LogicPresetCatalog query={query} /> : null}
     </main>
-  );
-}
-
-function SourceLink({ sourcePath }: { sourcePath: string }) {
-  const href = repositorySourceHref(sourcePath);
-  return (
-    <p className="meta">
-      <strong>Source:</strong>{" "}
-      {href ? (
-        <a href={href} target="_blank" rel="noreferrer"><code>{sourcePath}</code></a>
-      ) : (
-        <code>{sourcePath}</code>
-      )}
-    </p>
-  );
-}
-
-function UidlSection({ sampleId }: { sampleId: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <section aria-label="UIDL preview">
-      <h3>UIDL preview</h3>
-      <p className="note">Generated screens for this sample. Nothing is stored or sent to a host.</p>
-      {open ? (
-        <Suspense fallback={<p>Loading UIDL preview...</p>}>
-          <SampleUidlPreview documents={uidlForSample(sampleId)} />
-        </Suspense>
-      ) : (
-        <button type="button" onClick={() => setOpen(true)}>Show UIDL preview</button>
-      )}
-    </section>
-  );
-}
-
-function SampleView({ entry }: { entry: ManifestEntry }) {
-  const [reply, setReply] = useState<ExecutionReply>();
-  const [running, setRunning] = useState<string | null>(null);
-  const controller = useRef<AbortController | null>(null);
-  useEffect(() => () => controller.current?.abort(), []);
-
-  async function run(inputName: string) {
-    controller.current?.abort();
-    const current = new AbortController();
-    controller.current = current;
-    setRunning(inputName);
-    setReply(undefined);
-    const result = await runInWorker(
-      { kir: models[`../../generated/${entry.id}/kir.json`], sample: entry, inputName },
-      () => new ExecutionWorker(), current.signal,
-    );
-    if (!current.signal.aborted) {
-      setReply(result);
-      setRunning(null);
-    }
-  }
-
-  function reset() {
-    controller.current?.abort();
-    setReply(undefined);
-    setRunning(null);
-  }
-
-  return (
-    <section className="sample">
-      <h2>{entry.title}</h2>
-      <p className="meta">
-        <strong>Model:</strong> <code>{entry.modelPath}</code>
-      </p>
-      <p className="meta">
-        <strong>Support:</strong> {entry.support} · <strong>Version:</strong> {entry.version}
-      </p>
-      <p className="meta">
-        <strong>Allowed modes:</strong> {entry.allowedModes.join(", ")}
-      </p>
-      <p className="meta">
-        <strong>Docs:</strong>{" "}
-        <a href={publishedDocsHref(entry.docsPath, release.site)} target="_blank" rel="noreferrer">
-          {entry.docsPath}
-        </a>
-      </p>
-      {entry.sourcePath ? <SourceLink sourcePath={entry.sourcePath} /> : null}
-      <h3>Inputs</h3>
-      <ul>
-        {entry.inputs.map((i) => (
-          <li key={i.name}>
-            <code>{i.name}</code>
-            {" "}<code>{i.run}</code>
-            <pre>{JSON.stringify(i.record, null, 2)}</pre>
-            {i.actor ? <pre className="actor">{JSON.stringify(i.actor)}</pre> : null}
-            <button type="button" disabled={running !== null} onClick={() => void run(i.name)}>
-              Run {i.name}
-            </button>
-          </li>
-        ))}
-      </ul>
-      <button type="button" onClick={reset}>Reset sample</button>
-      <section role="status" aria-label="Execution result" aria-live="polite" aria-busy={running !== null}>
-        <h3>Actual result</h3>
-        {running ? <p>Running {running} in an isolated worker...</p> : null}
-        {!running && !reply ? <p>Choose an input to run the real engine.</p> : null}
-        {reply?.kind === "result" ? <>
-          <p><strong>{reply.matched ? "PASS" : "MISMATCH"}: {reply.status}</strong> (engine: {reply.elapsedMs.toFixed(2)} ms)</p>
-          <pre>{reply.output}</pre>
-          {reply.truncated ? <p>Output truncated to {LIMITS.outputBytes} bytes. Expectation checked before truncation.</p> : null}
-        </> : null}
-        {reply?.kind === "fallback" ? <p><strong>Source-only fallback:</strong> {reply.reason}</p> : null}
-      </section>
-      <details open={reply?.kind === "fallback"}>
-        <summary>Model source</summary>
-        <pre>{sources[`../../${entry.modelPath}`] ?? "Source unavailable."}</pre>
-      </details>
-      <h3>Expected outcomes</h3>
-      <ul>
-        {entry.expected.outcomes.map((o) => (
-          <li key={o.input}>
-            <code>{o.input}</code> → <strong>{o.status}</strong>
-            {o.record ? <pre>{JSON.stringify(o.record)}</pre> : null}
-          </li>
-        ))}
-      </ul>
-      <UidlSection sampleId={entry.id} />
-      <p className="note">
-        One operation per fresh worker; {LIMITS.wallClockMs} ms deadline. Limits: 16 KiB inputs,
-        256 KiB KIR, 16 entities, 128 operations, depth 32, 20,000 structural nodes, 8 KiB output.
-        Effects are shown as data, never dispatched or persisted. The UIDL preview is read-only:
-        it does not persist data and has no permission to apply writes.
-      </p>
-    </section>
   );
 }
