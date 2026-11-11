@@ -40,7 +40,17 @@ function studioResponse(): StudioResponse {
           route: "/requests",
           source: "pages/requests.uidl.json",
           pointer: "/",
-          document: { root: { id: "request-root", type: "Container" } },
+          document: {
+            route: "/requests",
+            root: {
+              id: "request-root",
+              type: "Container",
+              children: [
+                { id: "request-title", type: "Text", props: { value: "PRIVATE_UIDL_TEXT" } },
+                { id: "submit-request", type: "Button", events: { onClick: [{ api: { url: "PRIVATE_UIDL_URL" } }] } },
+              ],
+            },
+          },
         },
       ],
       journeys: [
@@ -48,7 +58,7 @@ function studioResponse(): StudioResponse {
           id: "request-submit",
           name: "Submit request",
           source: "journeys/submit.json",
-          entry: "Request list",
+          entry: "open",
           steps: [
             { id: "open", kind: "page", page: "Request list", label: "Open request list" },
             { id: "submit", kind: "operation", operation: "Request.submit" },
@@ -91,6 +101,10 @@ describe("Context Atlas projection", () => {
     expect(snapshot.edges.some((edge) => edge.source === "entity:Request" && edge.target === "operation:Request.submit")).toBe(true);
     expect(snapshot.edges.some((edge) => edge.source === "journey:request-submit" && edge.target === "page:request-list" && edge.relation === "starts-at")).toBe(true);
     expect(snapshot.edges.some((edge) => edge.source === "page:request-list" && edge.target === "operation:Request.submit")).toBe(true);
+    const page = snapshot.nodes.find((node) => node.id === "page:request-list");
+    expect(page?.details?.notes).toContain("UIDL: Container [request-root]");
+    expect(page?.details?.notes).toContain("UIDL:   Text [request-title]");
+    expect(page?.details?.notes).toContain("UIDL:     events: onClick");
     expect(snapshot.views.flatMap((view) => view.nodeIds).every((id) => nodeIds.has(id))).toBe(true);
     expect(snapshot.edges.every((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))).toBe(true);
     expect(snapshot.nodes.flatMap((node) => node.sourceIds).every((id) => snapshot.sources.some((source) => source.id === id))).toBe(true);
@@ -115,5 +129,86 @@ describe("Context Atlas projection", () => {
 
     expect(second.nodes.map((node) => node.id)).toEqual(first.nodes.map((node) => node.id));
     expect(second.sources.map((source) => source.id)).toEqual(first.sources.map((source) => source.id));
+  });
+
+  it("maps generated HTTP endpoint and payload shapes without copying the OpenAPI document", () => {
+    const response = studioResponse();
+    response.inspection!.outputs.openapi = JSON.stringify({
+      paths: {
+        "/api/request": {
+          get: {
+            operationId: "listRequest",
+            tags: ["Request"],
+            responses: {
+              "200": {
+                content: {
+                  "application/json": {
+                    schema: { type: "array", items: { $ref: "#/components/schemas/Request" } },
+                  },
+                },
+              },
+            },
+          },
+          post: {
+            operationId: "createRequest",
+            tags: ["Request"],
+            requestBody: {
+              required: true,
+              content: { "application/json": { schema: { $ref: "#/components/schemas/CreateRequestRequest" } } },
+            },
+            responses: { "201": { content: { "application/json": { schema: { $ref: "#/components/schemas/Request" } } } } },
+          },
+        },
+        "/api/request/{id}/actions/submit": {
+          post: {
+            operationId: "request_action_submit",
+            tags: ["Request"],
+            requestBody: {
+              content: { "application/json": { schema: { type: "object", properties: { comment: { type: "string" } }, required: ["comment"] } } },
+            },
+            responses: { "200": { description: "PRIVATE_RESPONSE_DESCRIPTION" } },
+          },
+        },
+      },
+      components: {
+        schemas: {
+          Request: { type: "object", properties: { id: { type: "string" }, title: { type: "string" } }, required: ["id"] },
+          CreateRequestRequest: { type: "object", properties: { title: { type: "string" }, status: { type: "string" } }, required: ["title"] },
+        },
+      },
+    });
+
+    const snapshot = buildContextAtlasSnapshot(response);
+    const apiView = snapshot.views.find((view) => view.kind === "api");
+    const create = snapshot.nodes.find((node) => node.label === "POST /api/request");
+    const submit = snapshot.nodes.find((node) => node.label === "POST /api/request/{id}/actions/submit");
+
+    expect(snapshot.project.kind).toBe("full-stack");
+    expect(apiView?.nodeIds).toContain(create?.id);
+    expect(create?.details?.fields).toEqual([
+      { name: "title", type: "string", required: true },
+      { name: "status", type: "string", required: false },
+    ]);
+    expect(create?.details?.notes).toContain("Endpoint: POST /api/request");
+    expect(create?.details?.notes).toContain("Response 201: Request (id: string [required], title: string)");
+    expect(submit).toBeDefined();
+    expect(snapshot.edges.some((edge) => edge.source === "operation:Request.submit" && edge.target === submit?.id && edge.relation === "served-by")).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain("PRIVATE_");
+  });
+
+  it("classifies API-only and web-only snapshots from their inspected contents", () => {
+    const apiResponse = studioResponse();
+    apiResponse.inspection!.screens = [];
+    apiResponse.inspection!.journeys = [];
+    expect(buildContextAtlasSnapshot(apiResponse).project.kind).toBe("api");
+
+    const webResponse = studioResponse();
+    webResponse.inspection!.entities = [];
+    webResponse.inspection!.journeys = [];
+    webResponse.inspection!.outputs.openapi = "{}";
+    const webSnapshot = buildContextAtlasSnapshot(webResponse);
+    expect(webSnapshot.project.kind).toBe("website");
+    expect(webSnapshot.views.some((view) => view.kind === "api")).toBe(false);
+    expect(webSnapshot.views.some((view) => view.kind === "data")).toBe(false);
   });
 });

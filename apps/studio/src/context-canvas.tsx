@@ -213,7 +213,7 @@ function ContextCanvas({ snapshot, onOpenSource }: {
               <p>{selectedNode.description}</p>
               {selectedNode.details?.fields?.length ? (
                 <div>
-                  <h4>Fields</h4>
+                  <h4>{selectedNode.tags.includes("http") ? "Request fields" : "Fields"}</h4>
                   <ul className="context-atlas-details-list">
                     {selectedNode.details.fields.map((field) => (
                       <li key={field.name}>

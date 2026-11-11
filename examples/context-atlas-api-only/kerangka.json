@@ -1,0 +1,23 @@
+{
+  "kerangka": "0.1",
+  "app": "request-api",
+  "meta": { "title": "Request Registry API", "version": "1.0.0", "timezone": "UTC" },
+  "roles": ["requester"],
+  "entities": {
+    "Request": {
+      "fields": {
+        "id": "string!",
+        "title": "string!",
+        "status": "enum(draft, submitted) = draft",
+        "lastComment": "string"
+      },
+      "actions": {
+        "submit": {
+          "roles": ["requester"],
+          "input": { "comment": "string!" },
+          "run": { "status": "'submitted'", "lastComment": "input.comment" }
+        }
+      }
+    }
+  }
+}

@@ -1,4 +1,6 @@
 import type { StudioResponse } from "../../../packages/studio-server/src/contracts.js";
+import { summarizeOpenApi } from "./context-openapi.js";
+import { summarizeUidlDocument } from "./context-uidl.js";
 
 export type ContextViewKind = "overview" | "journey" | "architecture" | "api" | "data";
 export type ContextNodeKind = "module" | "journey" | "page" | "operation" | "entity";
@@ -50,7 +52,7 @@ export interface ContextAtlasView {
  * The Studio projection of Context Atlas schema 1.0.
  *
  * This intentionally models only the shared snapshot contract. It does not contain
- * source text, preview rows, generated OpenAPI/SQL, or draft mutation callbacks.
+ * source text, preview rows, raw generated OpenAPI/SQL, or draft mutation callbacks.
  */
 export interface ContextAtlasSnapshot {
   schemaVersion: "1.0";
@@ -135,6 +137,8 @@ export function buildContextAtlasSnapshot(response: StudioResponse): ContextAtla
   for (const screen of inspection?.screens ?? []) {
     const id = `page:${encodedId(screen.id)}`;
     const path = sourcePath(response, screen.source);
+    const uidl = summarizeUidlDocument(screen.document);
+    const route = screen.route || uidl.route || "";
     addScreenReference(screen.id, id);
     addScreenReference(screen.label, id);
     addScreenReference(screen.source, id);
@@ -143,13 +147,19 @@ export function buildContextAtlasSnapshot(response: StudioResponse): ContextAtla
       id,
       kind: "page",
       label: screen.label,
-      description: `Declared ${screen.kind} page at ${screen.route}.`,
+      description: `Declared ${screen.kind} page${route ? ` at ${route}` : ""}.`,
       moduleId,
       sourcePaths: path ? [path] : [],
       status: "implemented",
       evidence: "declared",
       tags: [screen.kind],
-      details: { notes: [`Route: ${screen.route}`, `Source pointer: ${screen.pointer}`] },
+      details: {
+        notes: [
+          `Route: ${route || "not declared"}`,
+          `Source pointer: ${screen.pointer}`,
+          ...uidl.notes,
+        ],
+      },
     });
     if (entryPath) {
       pendingEdges.push({
@@ -238,6 +248,55 @@ export function buildContextAtlasSnapshot(response: StudioResponse): ContextAtla
     }
   }
 
+  const entityNames = new Set((inspection?.entities ?? []).map((entity) => entity.name));
+  for (const endpoint of summarizeOpenApi(inspection?.outputs.openapi ?? "", entityNames)) {
+    const endpointId = `operation:http:${encodedId(`${endpoint.method}:${endpoint.path}`)}`;
+    const entityId = endpoint.entityName ? `entity:${encodedId(endpoint.entityName)}` : undefined;
+    const domainOperationId = endpoint.entityName && endpoint.actionName
+      ? operationIds.get(`${endpoint.entityName}.${endpoint.actionName}`)?.[0]
+      : undefined;
+    pendingNodes.push({
+      id: endpointId,
+      kind: "operation",
+      label: `${endpoint.method.toUpperCase()} ${endpoint.path}`,
+      description: "Generated REST endpoint from the inspected project model.",
+      moduleId,
+      sourcePaths: entryPath ? [entryPath] : [],
+      status: "implemented",
+      evidence: "declared",
+      tags: ["http", endpoint.method, ...(endpoint.entityName ? [endpoint.entityName] : [])],
+      details: {
+        ...(endpoint.requestFields.length ? { fields: endpoint.requestFields } : {}),
+        notes: [
+          ...endpoint.notes,
+          ...(domainOperationId && endpoint.entityName && endpoint.actionName
+            ? [`Served by ${endpoint.entityName}.${endpoint.actionName}`]
+            : []),
+        ],
+      },
+    });
+    if (entryPath && entityId) {
+      pendingEdges.push({
+        id: `exposes:${encodedId(endpointId)}`,
+        source: entityId,
+        target: endpointId,
+        relation: "exposes",
+        sourcePaths: [entryPath],
+        evidence: "declared",
+      });
+    }
+    if (entryPath && domainOperationId) {
+      pendingEdges.push({
+        id: `served-by:${encodedId(endpointId)}`,
+        source: domainOperationId,
+        target: endpointId,
+        relation: "served-by",
+        sourcePaths: [entryPath],
+        evidence: "declared",
+      });
+    }
+  }
+
   const operationNodeIds = pendingNodes.filter((node) => node.kind === "operation").map((node) => node.id);
   for (const journey of inspection?.journeys ?? []) {
     const id = `journey:${encodedId(journey.id)}`;
@@ -279,7 +338,7 @@ export function buildContextAtlasSnapshot(response: StudioResponse): ContextAtla
       });
     }
 
-    const entryNode = resolveScreen(journey.entry);
+    const entryNode = stepNodeById.get(journey.entry);
     if (entryNode && path) {
       pendingEdges.push({
         id: `starts:${encodedId(id)}`,
@@ -337,7 +396,7 @@ export function buildContextAtlasSnapshot(response: StudioResponse): ContextAtla
 
   const allNodeIds = nodes.map((node) => node.id);
   const architectureNodeIds = nodes
-    .filter((node) => ["module", "page", "journey", "entity", "operation"].includes(node.kind))
+    .filter((node) => ["module", "page", "journey", "entity", "operation"].includes(node.kind) && !node.tags.includes("http"))
     .map((node) => node.id);
   const capabilities: ContextViewKind[] = ["overview", "architecture"];
   const views: ContextAtlasView[] = [
@@ -366,8 +425,8 @@ export function buildContextAtlasSnapshot(response: StudioResponse): ContextAtla
     views.push({
       id: "view:api",
       kind: "api",
-      label: "Operations",
-      description: "Operations declared on project entities. REST contract details remain in Studio's API view.",
+      label: "API",
+      description: "Generated REST endpoints, request and response shapes, and declared model operations.",
       nodeIds: operationNodeIds,
     });
   }
